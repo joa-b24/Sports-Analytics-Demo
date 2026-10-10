@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sportsan"
+version = "0.1.0"
+description = "Analítica deportiva de fútbol a partir de video (tracking + etiquetado manual + app)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "pyyaml",
+    "plotly",
+    "streamlit",
+]
+
+[project.optional-dependencies]
+# Pesado: se instala en Colab/Kaggle, no hace falta en la laptop.
+tracking = ["ultralytics", "supervision==0.27.0", "opencv-python-headless", "scikit-learn", "umap-learn", "gdown"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

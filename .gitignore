@@ -1,0 +1,25 @@
+# Video y datos pesados: nunca al repo
+matches/*/video/*
+matches/*/segments/*
+matches/*/tracking/*
+matches/*/preview/*
+clips/*
+data/mock/*
+*.mp4
+*.mkv
+*.webm
+*.part
+*.parquet
+!**/.gitkeep
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Claude / agentes: se quedan en local
+.claude/
+CLAUDE.md
+AGENTS.md

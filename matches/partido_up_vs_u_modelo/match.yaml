@@ -1,0 +1,14 @@
+match_id: partido_up_vs_u_modelo
+kind: rival                     # video del próximo rival; primer video de prueba (cámara tras una red)
+own_team_name: "UP"             # sin revisar: en scouting, `own` debe ser el rival que se estudia
+analysis_stride: 5
+
+venue:
+  name: "REEMPLAZAR"
+  notes: "Sin medir. Cancha con líneas amarillas de otras canchas. Ver docs/roadmap.md."
+
+videos:
+  - video_id: v1
+    youtube_id: "REEMPLAZAR"
+    file: video/v1.mp4
+    fps: 60

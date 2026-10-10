@@ -1,0 +1,25 @@
+match_id: partido_2026_09_25
+kind: own                       # own = partido nuestro; rival = scouting
+date: "2026-09-25"
+own_team_name: "UP"
+other_team_name: "REEMPLAZAR"
+analysis_stride: 3
+
+venue:
+  name: "Estadio La Cueva del León"
+  pitch_length_m: 100           # medido por la analista sobre imagen satelital
+  pitch_width_m: 65
+  notes: "Campo de fútbol americano con las líneas de fútbol pintadas encima."
+
+# Un partido puede venir en varios videos. t_video es el tiempo dentro de cada video.
+videos:
+  - video_id: v1
+    period: 1
+    youtube_id: "_-utAbJNqhI"
+    file: video/v1.mp4
+    fps: 29.97002997        # 30000/1001 (ffprobe)
+  # - video_id: v2              # segundo tiempo: pendiente
+  #   period: 2
+  #   youtube_id: "REEMPLAZAR"
+  #   file: video/v2.mp4
+  #   fps: 30
