@@ -44,6 +44,36 @@ def test_evento_invalido_falla(mock_dir):
         validate_events(ev)
 
 
+def test_outcome_y_detail_dependen_del_tipo(mock_dir):
+    ev = load_events(mock_dir)
+    validate_events(ev)  # el mock trae un tiro con resultado y un córner con tipo de envío
+
+    wrong_outcome = ev.copy()
+    wrong_outcome.loc[wrong_outcome["type"] == "shot", "outcome"] = "inswing"
+    with pytest.raises(SchemaError, match="outcome"):
+        validate_events(wrong_outcome)
+
+    wrong_type = ev.copy()
+    wrong_type.loc[wrong_type["type"] == "foul", "detail"] = "short"  # una falta no admite detalle
+    with pytest.raises(SchemaError, match="detail"):
+        validate_events(wrong_type)
+
+
+def test_evento_sin_video_falla(mock_dir):
+    ev = load_events(mock_dir).copy()
+    ev.loc[0, "video_id"] = ""
+    with pytest.raises(SchemaError, match="video_id"):
+        validate_events(ev)
+
+
+def test_catalogo_ampliado_es_valido(mock_dir):
+    ev = load_events(mock_dir).copy()
+    ev.loc[ev["type"] == "throw_in", "type"] = "goal_kick"
+    ev.loc[ev["type"] == "goal_kick", "outcome"] = "kept"
+    ev.loc[ev["type"] == "goal_kick", "detail"] = "long"
+    validate_events(ev)
+
+
 def test_metricas_forma_equipo(mock_dir):
     tr = load_tracking(mock_dir)
     s = team_shape(tr, "own")

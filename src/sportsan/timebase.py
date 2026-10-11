@@ -26,10 +26,14 @@ def parse_hms(value) -> float:
 
 
 SEGMENT_COLUMNS = ("segment_id", "start", "end", "tipo")
+DEFAULT_VIDEO_ID = "v1"
 
 
-def load_segments(path: str | Path) -> pd.DataFrame:
-    """Lee segments.csv y agrega start_s, end_s, duration_s.
+def load_segments(path: str | Path, video_id: str | None = None) -> pd.DataFrame:
+    """Lee segments.csv y agrega video_id, start_s, end_s, duration_s.
+
+    Un partido puede venir en varios videos: la columna opcional `video_id` dice a cuál pertenece cada fila
+    (sin ella, todas son de `v1`). Con `video_id=...` se devuelven solo las filas de ese video.
 
     Tolerante con lo que suele pasar al editar el CSV a mano o en Excel: BOM, separador `;` o tab,
     columnas extra (notas) y valores sobrantes al final de una fila (se ignoran con un aviso).
@@ -45,6 +49,7 @@ def load_segments(path: str | Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"segments.csv: faltan las columnas {missing}; encabezado leído: {header}")
     idx = [header.index(c) for c in SEGMENT_COLUMNS]
+    video_idx = header.index("video_id") if "video_id" in header else None
 
     data = []
     for n, row in enumerate(rows[1:], start=2):
@@ -55,15 +60,23 @@ def load_segments(path: str | Path) -> pd.DataFrame:
         if len(row) > len(header):
             warnings.warn(f"segments.csv línea {n}: tiene {len(row)} valores y el encabezado {len(header)}; "
                           f"se ignoran los sobrantes: {row[len(header):]}", stacklevel=2)
-        data.append({c: row[i].strip() for c, i in zip(SEGMENT_COLUMNS, idx)})
+        rec = {c: row[i].strip() for c, i in zip(SEGMENT_COLUMNS, idx)}
+        vid = row[video_idx].strip() if video_idx is not None and video_idx < len(row) else ""
+        rec["video_id"] = vid or DEFAULT_VIDEO_ID
+        data.append(rec)
 
-    df = pd.DataFrame(data, columns=list(SEGMENT_COLUMNS))
+    df = pd.DataFrame(data, columns=[*SEGMENT_COLUMNS, "video_id"])
+    if df["segment_id"].duplicated().any():
+        dup = sorted(df.loc[df["segment_id"].duplicated(), "segment_id"].unique())
+        raise ValueError(f"segments.csv: segment_id repetido {dup}; deben ser únicos en todo el partido, también entre videos")
     df["start_s"] = df["start"].map(parse_hms)
     df["end_s"] = df["end"].map(parse_hms)
     df["duration_s"] = df["end_s"] - df["start_s"]
     if (df["duration_s"] <= 0).any():
         bad = df.loc[df["duration_s"] <= 0, "segment_id"].tolist()
         raise ValueError(f"segments.csv: end <= start en {bad}")
+    if video_id is not None:
+        df = df[df["video_id"] == video_id].reset_index(drop=True)
     return df
 
 

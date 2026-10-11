@@ -84,7 +84,7 @@ Cada paso tiene un entregable que se puede usar aunque el siguiente falle.
 |---|---|---|---|
 | A1. Calibrar un frame a mano (**construido**, falta probarlo en el navegador) | Pantalla "Calibración": se carga el clip local, se hace clic en puntos de referencia y se elige a cuál corresponde cada uno en el esquema de la cancha. La homografía se calcula en el navegador y la cancha se dibuja reproyectada sobre el frame para ver si calza | `web/` | Error < 1.5 m en puntos de control que no se usaron para ajustar, en los 20 frames del banco |
 | A2. Modelo de cancha de la sede | Catálogo de puntos de referencia con sus coordenadas: líneas blancas y también cruces de líneas amarillas (dejan de ser un estorbo y pasan a ser referencias) | contrato + `web/` | Cualquier frame del banco tiene al menos 4 puntos visibles no colineales |
-| A3. Propagar entre anclas | Estimación del movimiento de cámara frame a frame (OpenCV en CPU, enmascarando jugadoras, marcador y poste) encadenada desde cada ancla; entre dos anclas se mezclan la propagación hacia adelante y hacia atrás | `src/sportsan/tracking/` | En una jugada de 15 s bastan 3 a 5 anclas para mantener el error < 2 m |
+| A3. Propagar entre anclas (**primera versión construida**, falta probarla con anclas reales) | Estimación del movimiento de cámara frame a frame (OpenCV en CPU, enmascarando jugadoras, marcador y poste) encadenada desde cada ancla; entre dos anclas se mezclan la propagación hacia adelante y hacia atrás | `src/sportsan/tracking/` | En una jugada de 15 s bastan 3 a 5 anclas para mantener el error < 2 m |
 | A4. Detección y tracks en píxeles | YOLO + ByteTrack sobre el clip, sin homografía. Equipos por muestras de color elegidas a mano (clic en 3 a 5 jugadoras por equipo). Probar primero un detector genérico de personas a 1280 px | `src/sportsan/tracking/` (Colab, o CPU para clips cortos) | Informe por clip: % de jugadoras detectadas y nº de cambios de identidad, contados a mano en el banco |
 | A5. Mesa de corrección | Sobre el video con los tracks dibujados: unir y partir tracks, borrar falsos, cambiar equipo, asignar `player_id`, marcar el balón a mano en keyframes | `web/` | Una jugada de 15 s queda corregida en un tiempo que la analista considere aceptable (se mide) |
 | A6. Salida medida | Tracks corregidos + calibración → posiciones en metros → keyframes de la animación, rotulados como **medidos** y no como esquema | `web/` + validación en `schema.py` | La animación de una jugada del banco coincide con el video |
@@ -98,7 +98,7 @@ Notas:
 
 ## Línea B. Metodología de métricas y gráficos (propuesta 2)
 
-Se parte de preguntas del cuerpo técnico, no de la lista de métricas posibles.
+Se parte de preguntas del cuerpo técnico, no de la lista de métricas posibles. El borrador de preguntas, el catálogo de eventos propuesto y los cuestionarios del auxiliar están en `docs/preguntas_cuerpo_tecnico.md` (2026-10-11), pendientes de revisar con el cuerpo técnico.
 
 1. **Levantar preguntas** con el cuerpo técnico, ordenadas por momento del juego: ataque organizado, transición defensiva, defensa organizada, transición ofensiva y balón parado. Meta: 3 a 5 preguntas por momento, separando rival y partido propio.
 2. **Una ficha por métrica** en `docs/metricas/`: pregunta que responde, definición exacta, datos que exige, gráfico, límites de validez (encuadre, tamaño de muestra) y cómo se prueba.
@@ -164,3 +164,65 @@ A, B y C avanzan en paralelo. El contrato v2 espera a las tres; la base de datos
 - "Homografía por frame": pasa a anclas + propagación.
 - "Carga de tracking en la app" deja de estar fuera de alcance: pasa a ser la mesa de corrección.
 - Se mantiene: **la app sirve completa solo con eventos manuales.**
+
+## Estado de A3 (2026-10-11)
+
+`src/sportsan/tracking/propagate.py` estima el movimiento de cámara cuadro a cuadro (seguimiento de puntos + RANSAC, CPU), encadena
+desde cada ancla y mezcla las dos direcciones entre anclas. Escribe `calib_<video>_<inicio>_<fin>.json`, que Calibración carga para
+dibujar la rejilla punteada. Lo medido hasta ahora sobre `v1.mp4`, **sin anclas reales todavía**:
+
+| Prueba | Resultado |
+|---|---|
+| Velocidad | ~32 ms por cuadro en la laptop (10 s de video en ~10 s) |
+| Cadena en una dirección contra emparejamiento directo entre el primer y el último cuadro, 10 s con paneo de ~60 px | 9 px de media, 15 px máximo |
+| Lo mismo con paneo de ~300 px | 17 px de media, 37 px máximo |
+| Lo mismo en 15 s con paneo de ~1800 px | 104 px de media: demasiado; un paneo amplio necesita anclas intermedias |
+| Tubería completa con tres anclas sintéticas en 10 s | Ancla de control a 0.69 m de media, en una escala de metros **arbitraria** (no es el error real) |
+
+Falta: marcar anclas reales en dos o tres jugadas del banco y leer el error del ancla de control (criterio: < 2 m con 3 a 5 anclas
+en 15 s). No se enmascaran jugadoras ni se usa un modelo de paneo-inclinación-zoom; son las dos mejoras previstas si la deriva no baja.
+
+## Biblioteca de calibración (2026-10-11)
+
+Idea de la analista: calibrar una sola vez un recorrido de lado a lado (un barrido de la cámara antes del partido, o una jugada que
+cruce la cancha) y usarlo como referencia para todo el video. `src/sportsan/tracking/library.py` lo implementa: `build` toma un tramo
+calibrado y guarda cuadros de referencia; `locate` empareja cada segundo de una jugada con las referencias más parecidas, descarta
+las ubicaciones que no cuadran con el movimiento de cámara medido y propaga entre las demás.
+
+Con esto las anclas a mano dejan de crecer con el número de jugadas: son las del barrido (5 a 8), una vez por sede y posición de cámara.
+
+Medido sobre `v1.mp4`, con un barrido de 15 s del minuto 15 calibrado con **anclas sintéticas** (escala de metros arbitraria):
+
+| Prueba | Resultado |
+|---|---|
+| Biblioteca | 22 referencias, 5.6 MB |
+| Cuadros ubicados en tramos de 10 s de los minutos 6, 25, 33 y 37 | 44 de 44 |
+| Anclas automáticas contra sus vecinas | 0.05 a 0.20 m de media por tramo; peor caso 0.49 m |
+| Diferencia entre las referencias combinadas | 0.04 a 0.13 m de media |
+| Descartadas por no cuadrar | 1 de 44 |
+| Tiempo | 25 a 35 s por tramo de 10 s |
+
+Qué dicen y qué no: los cuadros se reconocen a lo largo de todo el tiempo y las ubicaciones son estables entre sí. **No** miden el
+error real en metros, que depende de lo bien calibrado que esté el barrido; con anclas sintéticas el propio barrido tenía hasta
+~1 m de error en sus anclas de control. Antes de combinar varias referencias por cuadro, referencias distintas llegaban a diferir
+varios metros en algunos encuadres: por eso se combinan las tres mejores.
+
+Para grabar el barrido en los próximos partidos: desde el mismo sitio y altura que el partido, sin mover el trípode después; lento
+(10 a 20 s de banda a banda); con el zoom que se usa en el juego, y si se usa mucho zoom, un segundo barrido con él; mejor con la
+cancha vacía. Para el video actual sirve una jugada que cruce la cancha.
+
+Falta: repetirlo con anclas reales, y decidir si el barrido se guarda por partido o por sede.
+
+## Primera medición con anclas reales (2026-10-11)
+
+La analista marcó 6 anclas a mano en el recorrido de 15:00 a 15:17 de `v1.mp4` (cuadros 26973 a 27475) y corrió `propagate`:
+
+| Medida | Resultado |
+|---|---|
+| Cuadros sin movimiento fiable | 0 de 502 |
+| Discrepancia adelante/atrás | media 1.08 m, máxima 1.68 m |
+| Anclas de control (cada ancla interior quitada) | medias de 0.40, 0.45, 0.77 y 0.63 m; máximo 1.50 m |
+
+Cumple el criterio de A3 (< 2 m). Con ese tramo se construyó la biblioteca y se ubicó otra jugada; revisada a la vista en
+Calibración, la rejilla calza ("quedó bastante bien"). Falta ponerle número a esa segunda parte: un ancla a mano en una jugada
+ubicada por la biblioteca, comparada con la posición que da la biblioteca.

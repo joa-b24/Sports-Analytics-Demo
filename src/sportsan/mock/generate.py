@@ -80,13 +80,16 @@ def generate(out_dir: str | Path | None = None, duration_s: int = 120, video_fps
     events = pd.DataFrame({
         "event_id": [f"mock_e{i+1}" for i in range(len(kinds))],
         "match_id": match_id,
+        "video_id": "v1",
         "t_video": t_video[idx],
         "period": 1,
         "type": [k[0] for k in kinds],
         "team": [k[1] for k in kinds],
         "player_id": pd.Series([pd.NA] * len(kinds), dtype="string"),
         "x": ball["x"].to_numpy()[idx], "y": ball["y"].to_numpy()[idx],
-        "outcome": pd.Series([pd.NA] * len(kinds), dtype="string"),
+        # El primero es un tiro: lleva resultado. El resto queda sin anotar.
+        "outcome": pd.Series(["on_target"] + [pd.NA] * (len(kinds) - 1), dtype="string"),
+        "detail": pd.Series([pd.NA, "inswing"] + [pd.NA] * (len(kinds) - 2), dtype="string"),
         "note": ["evento de ejemplo"] * len(kinds),
     })
 

@@ -1,27 +1,68 @@
 "use client";
 
 import { useState } from "react";
-import { CompareBars, ShotMap, StatTile, ZoneMap } from "@/components/charts";
-import { Card, input } from "@/components/Shell";
+import { BinChart, CompareBars, EventTimeline, PartsDuo, RateDuo, ShotMap, StatTile, ZoneMap, type PartsRow } from "@/components/charts";
+import { Locked } from "@/components/Locked";
+import { COLORS, Pitch } from "@/components/Pitch";
+import { Reveal } from "@/components/motion";
+import { Card, Section, input } from "@/components/Shell";
+import {
+  BIN_MEASURES,
+  COUNTERPRESS_WINDOW_S,
+  SHOT_WINDOW_S,
+  boxEntries,
+  crosses,
+  finalThirdEntries,
+  firstPass,
+  goalKicks,
+  recoveryHeight,
+  setPieces,
+  shotBreakdown,
+  timeBins,
+  transitions,
+  type BinMeasure,
+  type Lanes,
+  type Tally,
+} from "@/lib/analysis";
+import { segmentAt, totalSeconds, type Segment } from "@/lib/segments";
 import { countByType, shotsOf, zoneCounts } from "@/lib/stats";
-import { EVENT_LABELS, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
+import { EVENT_DETAILS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
 
-export function AnalysisTab({ match, events }: { match: Match; events: MatchEvent[] }) {
+type Side = "own" | "opp";
+const SIDES: Side[] = ["own", "opp"];
+
+// Each card answers one question of docs/preguntas_cuerpo_tecnico.md; the code (A1, B2...) is shown as its note.
+type Props = {
+  match: Match;
+  // Whole match on one time axis (lib/videos.ts): with several videos, t_video here is not a video time.
+  events: MatchEvent[];
+  segments: Segment[];
+  // How to write the moment of an event when the axis is not the video's.
+  timeLabel?: (e: MatchEvent) => string;
+};
+
+export function AnalysisTab({ match, events, segments, timeLabel }: Props) {
   const [zoneType, setZoneType] = useState<EventType>("recovery");
-  const [zoneTeam, setZoneTeam] = useState<"own" | "opp">("own");
+  const [zoneTeam, setZoneTeam] = useState<Side>("own");
   const [period, setPeriod] = useState<0 | 1 | 2>(0);
+  const [binMin, setBinMin] = useState<5 | 10>(5);
+  const [binMeasure, setBinMeasure] = useState<BinMeasure>("shots");
+  const [counterTeam, setCounterTeam] = useState<Side>("own");
 
   const evs = period === 0 ? events : events.filter((e) => e.period === period);
   const a = countByType(evs, "own");
   const b = countByType(evs, "opp");
   const A = match.focus_team;
   const B = match.other_team;
+  const name = (s: Side) => (s === "own" ? A : B);
+  const color = (s: Side) => (s === "own" ? COLORS.own : COLORS.opp);
+  const outside = segments.length === 0 ? 0 : evs.filter((e) => segmentAt(segments, e.t_video)?.tipo !== "juego").length;
   const zones = zoneCounts(evs.filter((e) => e.type === zoneType && e.team === zoneTeam));
 
   if (events.length === 0) {
     return (
       <Card>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-muted">
           Aún no hay eventos etiquetados en este partido. Los gráficos de esta pestaña se calculan solo con lo que etiquetes en
           «Video y etiquetado».
         </p>
@@ -29,76 +70,256 @@ export function AnalysisTab({ match, events }: { match: Match; events: MatchEven
     );
   }
 
+  const tr = { own: transitions(evs, "own"), opp: transitions(evs, "opp") };
+  const bins = timeBins(evs, segments, binMin);
+  const counterZones = zoneCounts(tr[counterTeam].recoveriesToShot);
+
+  // Rows for the split charts: one per team, with the labels of the contract values.
+  const tallyRows = (get: (s: Side) => Tally, labels: Record<string, string>): PartsRow[] =>
+    SIDES.map((s) => {
+      const t = get(s);
+      return { who: name(s), color: color(s), parts: Object.entries(labels).map(([k, label]) => ({ label, value: t.counts[k] ?? 0 })), unknown: t.unknown };
+    });
+  const laneRows = (get: (s: Side) => Lanes): PartsRow[] =>
+    SIDES.map((s) => {
+      const l = get(s);
+      return {
+        who: name(s),
+        color: color(s),
+        parts: [
+          { label: "Izquierda", value: l.left },
+          { label: "Centro", value: l.center },
+          { label: "Derecha", value: l.right },
+        ],
+        unknown: l.missing,
+      };
+    });
+  const shotRows: PartsRow[] = SIDES.map((s) => {
+    const sh = shotBreakdown(evs, s);
+    return {
+      who: name(s),
+      color: color(s),
+      parts: [
+        { label: "A puerta (con goles)", value: sh.onTarget },
+        { label: "Fuera", value: sh.offTarget },
+        { label: "Bloqueado", value: sh.blocked },
+      ],
+      unknown: sh.unknown,
+    };
+  });
+  const heightRows: PartsRow[] = SIDES.map((s) => {
+    const h = recoveryHeight(evs, s);
+    return {
+      who: name(s),
+      color: color(s),
+      parts: [
+        { label: "Campo rival", value: h.rival },
+        { label: "Medio", value: h.middle },
+        { label: "Campo propio", value: h.own },
+      ],
+      unknown: h.missing,
+    };
+  });
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 text-sm text-slate-600">
-        <label className="flex items-center gap-1.5">
-          Periodo
-          <select className={input} value={period} onChange={(e) => setPeriod(Number(e.target.value) as 0 | 1 | 2)}>
-            <option value={0}>Todo el partido</option>
-            <option value={1}>1.º tiempo</option>
-            <option value={2}>2.º tiempo</option>
-          </select>
-        </label>
-        <span className="text-xs text-slate-500">{evs.length} eventos etiquetados a mano.</span>
+    <div className="space-y-12">
+      <div className="space-y-8">
+        <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
+          <div className="seg">
+            {([0, 1, 2] as const).map((p) => (
+              <button key={p} type="button" aria-pressed={period === p} onClick={() => setPeriod(p)} className="seg-opt">
+                {p === 0 ? "Todo el partido" : `${p}.º tiempo`}
+              </button>
+            ))}
+          </div>
+          <span className="text-xs text-faint">
+            {evs.length} eventos etiquetados a mano.
+            {segments.length > 0 &&
+              ` ${Math.round(totalSeconds(segments, "juego") / 60)} min de juego marcados; ${outside} evento(s) caen fuera de un tramo de juego.`}
+          </span>
+        </div>
+
+        {/* Headline comparison, unboxed: the figures are the hierarchy. */}
+        <Reveal className="grid grid-cols-2 gap-x-8 gap-y-7 lg:grid-cols-4">
+          <StatTile label="Goles" a={a.goal} b={b.goal} aLabel={A} bLabel={B} />
+          <StatTile label="Tiros (incluye goles)" a={shotsOf(evs, "own").length} b={shotsOf(evs, "opp").length} aLabel={A} bLabel={B} />
+          <StatTile label="Recuperaciones" a={a.recovery} b={b.recovery} aLabel={A} bLabel={B} />
+          <StatTile label="Pérdidas" a={a.loss} b={b.loss} aLabel={A} bLabel={B} />
+        </Reveal>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="Goles" a={a.goal} b={b.goal} aLabel={A} bLabel={B} />
-        <StatTile label="Tiros (incluye goles)" a={shotsOf(evs, "own").length} b={shotsOf(evs, "opp").length} aLabel={A} bLabel={B} />
-        <StatTile label="Recuperaciones" a={a.recovery} b={b.recovery} aLabel={A} bLabel={B} />
-        <StatTile label="Pérdidas" a={a.loss} b={b.loss} aLabel={A} bLabel={B} />
-      </div>
+      <Section title="Ataque organizado">
+        <div className="grid gap-5 xl:grid-cols-2">
+          <Card title="¿Desde dónde tiran?" note="A1">
+            <ShotMap events={evs} aLabel={A} bLabel={B} />
+          </Card>
+          <div className="space-y-5">
+            <Card title="¿Cuántos tiros van a puerta?" note="A1" delay={80}>
+              <PartsDuo rows={shotRows} unknownLabel="sin resultado anotado" />
+            </Card>
+            <Card title="¿Cuántas entradas al área acaban en tiro?" note={`A3 · tiro en menos de ${SHOT_WINDOW_S} s`} delay={140}>
+              <RateDuo a={boxEntries(evs, "own")} b={boxEntries(evs, "opp")} aLabel={A} bLabel={B} unit="entradas al área" />
+            </Card>
+          </div>
+          <Card title="¿Por qué carril llegan al último tercio?" note="A2 · visto por quien ataca">
+            <PartsDuo rows={laneRows((s) => finalThirdEntries(evs, s))} unknownLabel="sin posición" />
+          </Card>
+          <Card title="¿Cómo salen desde su portería?" note="A4" delay={80}>
+            <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).length, EVENT_DETAILS.goal_kick ?? {})} />
+            <div className="hr-fade my-4" />
+            <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).outcome, EVENT_OUTCOMES.goal_kick ?? {})} />
+          </Card>
+          <Card title="Centros: ¿desde qué banda y cuántos se rematan?" note="A5" className="xl:col-span-2">
+            <div className="grid gap-6 md:grid-cols-2">
+              <PartsDuo rows={laneRows((s) => crosses(evs, s).lanes)} unknownLabel="sin posición" />
+              <PartsDuo rows={tallyRows((s) => crosses(evs, s).outcome, EVENT_OUTCOMES.cross ?? {})} />
+            </div>
+          </Card>
+        </div>
+      </Section>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card title="Eventos por tipo">
-          <CompareBars aLabel={A} bLabel={B} rows={EVENT_TYPES.map((t) => ({ label: EVENT_LABELS[t], a: a[t], b: b[t] }))} />
-          <details className="mt-3 text-xs text-slate-600">
-            <summary className="cursor-pointer">Ver como tabla</summary>
-            <table className="mt-2 w-full text-left">
-              <thead>
-                <tr className="text-slate-500">
-                  <th className="font-medium">Tipo</th>
-                  <th className="font-medium">{A}</th>
-                  <th className="font-medium">{B}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {EVENT_TYPES.map((t) => (
-                  <tr key={t} className="border-t border-slate-100">
-                    <td>{EVENT_LABELS[t]}</td>
-                    <td className="tabular-nums">{a[t]}</td>
-                    <td className="tabular-nums">{b[t]}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </details>
-        </Card>
-
-        <Card title="Mapa de tiros">
-          <ShotMap events={evs} aLabel={A} bLabel={B} />
-        </Card>
-
-        <Card title="Dónde ocurre: zonas de la cancha" className="xl:col-span-2">
-          <div className="mb-2 flex flex-wrap gap-2">
-            <select className={input} value={zoneType} aria-label="Tipo de evento" onChange={(e) => setZoneType(e.target.value as EventType)}>
-              {EVENT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {EVENT_LABELS[t]}
-                </option>
+      <Section title="Transiciones" note="al perder y al recuperar el balón">
+        <div className="grid gap-5 xl:grid-cols-3">
+          <Card title="Pérdidas que acaban en tiro del contrario" note={`B2 · en menos de ${SHOT_WINDOW_S} s`}>
+            <RateDuo a={tr.own.lossToShotAgainst} b={tr.opp.lossToShotAgainst} aLabel={A} bLabel={B} unit="pérdidas" />
+          </Card>
+          <Card title="Pérdidas que recuperan enseguida" note={`B3 · en menos de ${COUNTERPRESS_WINDOW_S} s`} delay={80}>
+            <RateDuo a={tr.own.counterpress} b={tr.opp.counterpress} aLabel={A} bLabel={B} unit="pérdidas" />
+          </Card>
+          <Card title="Recuperaciones que acaban en tiro propio" note={`D1 · en menos de ${SHOT_WINDOW_S} s`} delay={160}>
+            <RateDuo a={tr.own.recoveryToShot} b={tr.opp.recoveryToShot} aLabel={A} bLabel={B} unit="recuperaciones" />
+          </Card>
+          <Card title="¿Desde dónde salen las recuperaciones que acaban en tiro?" note="D2" className="xl:col-span-2">
+            <div className="mb-3 seg">
+              {SIDES.map((s) => (
+                <button key={s} type="button" aria-pressed={counterTeam === s} onClick={() => setCounterTeam(s)} className="seg-opt">
+                  {name(s)}
+                </button>
               ))}
-            </select>
-            <select className={input} value={zoneTeam} aria-label="Equipo" onChange={(e) => setZoneTeam(e.target.value as "own" | "opp")}>
-              <option value="own">{A}</option>
-              <option value="opp">{B}</option>
-            </select>
-          </div>
-          <div className="mx-auto max-w-2xl">
+            </div>
+            {tr[counterTeam].recoveriesToShot.length === 0 ? (
+              <p className="text-sm text-faint">Ninguna recuperación de {name(counterTeam)} acabó en tiro en esta selección.</p>
+            ) : (
+              <div className="mx-auto max-w-xl">
+                <ZoneMap grid={counterZones.grid} missing={counterZones.missing} />
+              </div>
+            )}
+          </Card>
+          <Card title="Tras recuperar, ¿adelante o atrás?" note="D3 · primer pase" delay={80}>
+            <PartsDuo rows={tallyRows((s) => firstPass(evs, s), EVENT_DETAILS.recovery ?? {})} />
+          </Card>
+        </div>
+      </Section>
+
+      <Section title="Defensa organizada">
+        <div className="grid gap-5 xl:grid-cols-2">
+          <Card title="¿A qué altura recuperan?" note="C1">
+            <PartsDuo rows={heightRows} unknownLabel="sin posición" />
+            <p className="mt-4 text-xs text-pretty text-faint">
+              Los tiros en contra de cada equipo están en el mapa de tiros de arriba, y por qué carril les llegan, en las entradas al último
+              tercio del contrario (C2).
+            </p>
+          </Card>
+          <Card title="¿Dónde ocurre? Zonas de la cancha" note="B1, C3 · elige el evento" delay={80}>
+            <div className="mb-2 flex flex-wrap gap-2">
+              <select className={input} value={zoneType} aria-label="Tipo de evento" onChange={(e) => setZoneType(e.target.value as EventType)}>
+                {EVENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {EVENT_LABELS[t]}
+                  </option>
+                ))}
+              </select>
+              <select className={input} value={zoneTeam} aria-label="Equipo" onChange={(e) => setZoneTeam(e.target.value as Side)}>
+                <option value="own">{A}</option>
+                <option value="opp">{B}</option>
+              </select>
+            </div>
             <ZoneMap grid={zones.grid} missing={zones.missing} />
-          </div>
-        </Card>
-      </div>
+          </Card>
+        </div>
+      </Section>
+
+      <Section title="Balón parado">
+        <div className="grid gap-5 xl:grid-cols-3">
+          <Card title="Córners: ¿cómo acaban?" note="E1">
+            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).corners, EVENT_OUTCOMES.corner ?? {})} />
+          </Card>
+          <Card title="Córners: ¿cómo los mandan?" note="E2" delay={80}>
+            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).delivery, EVENT_DETAILS.corner ?? {})} />
+          </Card>
+          <Card title="Tiros libres: ¿cómo acaban?" note="E1" delay={160}>
+            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).freeKicks, EVENT_OUTCOMES.free_kick ?? {})} />
+          </Card>
+        </div>
+        <p className="mt-3 text-xs text-pretty text-faint">
+          Quién los cobra y a quién buscan (E3), y cómo defienden en contra (E4), se anotan en el número de jugadora y en la nota de cada evento:
+          se leen en la tabla de eventos, no se cuentan.
+        </p>
+      </Section>
+
+      <Section title="A lo largo del partido">
+        <div className="space-y-5">
+          <Card
+            title="¿En qué tramo generan y reciben más?"
+            note={
+              bins.basis === "juego"
+                ? `F1 · minutos de juego${bins.skipped ? ` · ${bins.skipped} evento(s) en pausa fuera` : ""}`
+                : "F1 · minutos de video desde el primer evento: marca los tramos para contar minutos de juego"
+            }
+          >
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <div className="seg">
+                {([5, 10] as const).map((m) => (
+                  <button key={m} type="button" aria-pressed={binMin === m} onClick={() => setBinMin(m)} className="seg-opt">
+                    Cada {m} min
+                  </button>
+                ))}
+              </div>
+              <select className={input} value={binMeasure} aria-label="Qué se cuenta" onChange={(e) => setBinMeasure(e.target.value as BinMeasure)}>
+                {Object.entries(BIN_MEASURES).map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <BinChart key={`${binMin}-${binMeasure}`} bins={bins.bins.map((x) => ({ label: x.label, a: x.own[binMeasure], b: x.opp[binMeasure] }))} aLabel={A} bLabel={B} />
+            <p className="mt-3 text-xs text-pretty text-faint">
+              Para ver si cambian tras el descanso (F2), compara «1.º tiempo» y «2.º tiempo» con el selector de arriba.
+            </p>
+          </Card>
+          <Card title="Línea de tiempo" note="un carril por tipo de evento">
+            <EventTimeline events={evs} segments={segments} aLabel={A} bLabel={B} timeLabel={timeLabel} />
+          </Card>
+          <Card title="Todos los eventos por tipo">
+            <CompareBars aLabel={A} bLabel={B} rows={EVENT_TYPES.map((t) => ({ label: EVENT_LABELS[t], a: a[t], b: b[t] }))} />
+          </Card>
+        </div>
+      </Section>
+
+      <Section title="Con posiciones medidas" note="preguntas B4 y C4 · todavía no funcionan">
+        <div className="grid gap-4 lg:grid-cols-3">
+          {[
+            ["Jugadoras por detrás del balón al perderlo", "B4. Cuántas quedan en posición de defender en el instante de cada pérdida."],
+            ["Altura y anchura del bloque", "C4. Qué tan alto y qué tan ancho defienden cuando el rival tiene el balón, y la distancia entre líneas."],
+            ["Mapa de calor y red de pases", "De la propuesta de diseño. Dónde pasa más tiempo cada equipo y quién combina con quién."],
+          ].map(([title, text], n) => (
+            <Locked
+              key={title}
+              reason="tracking"
+              delay={n * 80}
+              title={title}
+              why={`${text} Necesita posiciones medidas de las jugadoras; con eventos etiquetados a mano no se puede calcular.`}
+            >
+              <Pitch showDirection={false} />
+            </Locked>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-faint">
+          Dependen de la calibración propagada y del tracking por jugada (pasos A3 a A6 de la hoja de ruta), y solo valdrán dentro de lo que la
+          cámara ve. Ninguna muestra datos hasta entonces.
+        </p>
+      </Section>
     </div>
   );
 }

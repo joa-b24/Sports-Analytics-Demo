@@ -17,7 +17,23 @@ PERIODS = (1, 2)
 EVENT_TYPES = (
     "shot", "goal", "loss", "recovery", "foul", "corner",
     "free_kick", "throw_in", "penalty", "key_pass", "other",
+    # Catálogo ampliado (2026-10-11, docs/preguntas_cuerpo_tecnico.md)
+    "final_third_entry", "box_entry", "goal_kick", "cross",
 )
+# Valores permitidos de `outcome` y `detail` por tipo de evento. Los dos son opcionales (nulos = no se anotó);
+# un tipo que no aparece aquí no admite ese campo.
+EVENT_OUTCOMES = {
+    "shot": ("on_target", "off_target", "blocked"),
+    "corner": ("shot", "cleared", "play_on"),
+    "free_kick": ("shot", "cleared", "play_on"),
+    "cross": ("shot", "cleared", "play_on"),
+    "goal_kick": ("kept", "lost"),
+}
+EVENT_DETAILS = {
+    "corner": ("inswing", "outswing", "short"),
+    "goal_kick": ("short", "long"),
+    "recovery": ("forward", "backward"),      # primer pase tras recuperar
+}
 
 TRACKING_COLUMNS = [
     "match_id", "segment_id", "frame", "t_local", "t_video",
@@ -37,8 +53,8 @@ CALIB_COLUMNS = [                                    # calib_<segmento>.parquet
 ]
 
 EVENT_COLUMNS = [
-    "event_id", "match_id", "t_video", "period", "type", "team",
-    "player_id", "x", "y", "outcome", "note",
+    "event_id", "match_id", "video_id", "t_video", "period", "type", "team",
+    "player_id", "x", "y", "outcome", "detail", "note",
 ]
 
 
@@ -92,6 +108,8 @@ def validate_events(df: pd.DataFrame) -> pd.DataFrame:
     _require(df, EVENT_COLUMNS, "events")
     if df["event_id"].duplicated().any():
         raise SchemaError("events: event_id duplicado")
+    if df["video_id"].isna().any() or (df["video_id"].astype(str).str.strip() == "").any():
+        raise SchemaError("events: video_id vacío (un partido de un solo video usa 'v1')")
     if not df["type"].isin(EVENT_TYPES).all():
         raise SchemaError(f"events: type inválido; permitidos {EVENT_TYPES}")
     if not df["team"].isin(TEAMS).all():
@@ -100,5 +118,10 @@ def validate_events(df: pd.DataFrame) -> pd.DataFrame:
         raise SchemaError(f"events: period inválido; permitidos {PERIODS}")
     if (df["t_video"] < 0).any():
         raise SchemaError("events: t_video no puede ser negativo")
+    for column, allowed in (("outcome", EVENT_OUTCOMES), ("detail", EVENT_DETAILS)):
+        filled = df[df[column].notna()]
+        bad = [(t, v) for t, v in zip(filled["type"], filled[column]) if v not in allowed.get(t, ())]
+        if bad:
+            raise SchemaError(f"events: {column} inválido para su tipo: {sorted(set(bad))}; permitidos {allowed}")
     _check_in_pitch(df, "events")
     return df

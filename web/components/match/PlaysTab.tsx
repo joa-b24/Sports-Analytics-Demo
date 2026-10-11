@@ -1,7 +1,9 @@
 "use client";
 
+import { Play as PlayIcon, Plus } from "@phosphor-icons/react";
 import { useRef, useState, type RefObject } from "react";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
+import { LockedRow } from "@/components/Locked";
 import { Card, btn, btnPrimary, input } from "@/components/Shell";
 import type { PlayerHandle } from "@/components/VideoPlayer";
 import { fmtT } from "@/lib/format";
@@ -11,6 +13,7 @@ import type { Keyframe, Match, Play } from "@/lib/types";
 
 type Props = {
   match: Match;
+  videoId: string;
   plays: Play[];
   time: number;
   playerRef: RefObject<PlayerHandle | null>;
@@ -20,7 +23,7 @@ type Props = {
 // A keyframe counts as "open for editing" while the video sits on it.
 const KF_TOLERANCE = 0.75;
 
-export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
+export function PlaysTab({ match, videoId, plays, time, playerRef, playClip }: Props) {
   const [selId, setSelId] = useState<string | null>(plays[0]?.play_id ?? null);
   const [selKf, setSelKf] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -35,7 +38,7 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
     const t = Math.round(time * 10) / 10;
     mutate((s) => ({
       ...s,
-      plays: [...s.plays, { play_id: id, match_id: match.match_id, title: `Jugada ${fmtT(t)}`, t_start: t, t_end: t + 15, note: "", keyframes: [] }],
+      plays: [...s.plays, { play_id: id, match_id: match.match_id, video_id: videoId, title: `Jugada ${fmtT(t)}`, t_start: t, t_end: t + 15, note: "", keyframes: [] }],
     }));
     setSelId(id);
     setSelKf(null);
@@ -67,7 +70,7 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <Card title="Jugadas">
         <div className="flex flex-wrap gap-2">
           {plays.map((p) => (
@@ -78,22 +81,24 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
                 setSelId(p.play_id);
                 setSelKf(null);
               }}
-              className={`rounded-md border px-3 py-1.5 text-left text-sm ${
-                p.play_id === selId ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-800"
+              aria-pressed={p.play_id === selId}
+              className={`rounded-2xl border px-4 py-2 text-left text-sm transition-[background-color,border-color,transform] duration-200 hover:-translate-y-0.5 ${
+                p.play_id === selId ? "border-accent bg-accent/20 text-accent-100" : "border-line bg-transparent text-ink-2 hover:border-line-strong"
               }`}
             >
               <div className="font-medium">{p.title}</div>
-              <div className="font-mono text-[11px] opacity-70">
+              <div className="tc text-[11px] opacity-70">
                 {fmtT(p.t_start)} – {fmtT(p.t_end)}
               </div>
             </button>
           ))}
           <button type="button" className={btn} onClick={create}>
-            + Nueva jugada en {fmtT(time)}
+            <Plus size={14} />
+            Nueva jugada en <span className="tc">{fmtT(time)}</span>
           </button>
         </div>
         {plays.length === 0 && (
-          <p className="mt-2 text-sm text-slate-500">
+          <p className="mt-2 text-sm text-faint">
             Una jugada es un tramo del video (inicio y fin). También puedes crearla desde un evento con «+ jugada».
           </p>
         )}
@@ -109,22 +114,23 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
               onChange={(e) => patch(play.play_id, { title: e.target.value })}
             />
             <button type="button" className={btnPrimary} onClick={() => playClip(play.t_start, play.t_end)}>
-              ▶ Reproducir clip
+              <PlayIcon size={14} weight="fill" />
+              Reproducir clip
             </button>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            <span className="font-mono tabular-nums">
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+            <span className="tc">
               Inicio {fmtT(play.t_start)} · Fin {fmtT(play.t_end)} · Ahora {fmtT(time)}
             </span>
-            <button type="button" className="underline" onClick={() => patch(play.play_id, { t_start: Math.round(time * 10) / 10 })}>
+            <button type="button" className="link" onClick={() => patch(play.play_id, { t_start: Math.round(time * 10) / 10 })}>
               inicio = ahora
             </button>
-            <button type="button" className="underline" onClick={() => patch(play.play_id, { t_end: Math.round(time * 10) / 10 })}>
+            <button type="button" className="link" onClick={() => patch(play.play_id, { t_end: Math.round(time * 10) / 10 })}>
               fin = ahora
             </button>
             <button
               type="button"
-              className="ml-auto text-red-700 underline"
+              className="ml-auto text-danger underline"
               onClick={() => {
                 mutate((s) => ({ ...s, plays: s.plays.filter((x) => x.play_id !== play.play_id) }));
                 setSelId(null);
@@ -134,11 +140,13 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
             </button>
           </div>
 
-          <div className="mt-4 border-t border-slate-100 pt-3">
+          <div className="hr-fade mt-5" />
+          <div className="pt-4">
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-slate-900">Animación de cancha</span>
+              <span className="font-display text-base text-ink">Animación de cancha</span>
               <button type="button" className={btn} onClick={addKeyframe}>
-                + Keyframe en {fmtT(time)}
+                <Plus size={14} />
+                Keyframe en <span className="tc">{fmtT(time)}</span>
               </button>
               {kfs.map((k, i) => (
                 <span key={k.t} className="inline-flex items-center">
@@ -149,8 +157,8 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
                       playerRef.current?.seek(k.t);
                       setSelKf(i);
                     }}
-                    className={`rounded-l-md border px-2 py-1 font-mono text-xs ${
-                      editing === i ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"
+                    className={`tc rounded-l-full border py-1 pr-2 pl-3 text-xs transition-colors ${
+                      editing === i ? "border-accent bg-accent/20 text-accent-100" : "border-line bg-transparent text-ink-2"
                     }`}
                   >
                     {fmtT(k.t)}
@@ -162,14 +170,14 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
                       patch(play.play_id, { keyframes: kfs.filter((_, j) => j !== i) });
                       setSelKf(null);
                     }}
-                    className="rounded-r-md border border-l-0 border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-500"
+                    className="rounded-r-full border border-l-0 border-line py-1 pr-2.5 pl-1.5 text-xs text-faint transition-colors hover:text-danger"
                   >
                     ×
                   </button>
                 </span>
               ))}
             </div>
-            <p className="mb-2 text-xs text-slate-600">
+            <p className="mb-2 text-xs text-muted">
               {kfs.length === 0
                 ? "Pausa el video en un momento clave y añade un keyframe: coloca a las jugadoras arrastrándolas. Con dos o más, la app interpola el movimiento y lo sincroniza con el clip."
                 : editing !== null
@@ -208,11 +216,11 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
                       <circle
                         r={isBall ? 1.1 : 1.9}
                         fill={isBall ? COLORS.ball : tk.team === "own" ? COLORS.own : COLORS.opp}
-                        stroke="#ffffff"
+                        stroke="var(--color-bg)"
                         strokeWidth={0.4}
                       />
                       {!isBall && (
-                        <text y={0.85} textAnchor="middle" fontSize={2.2} fontWeight={600} fill="#ffffff" pointerEvents="none">
+                        <text y={0.85} textAnchor="middle" fontSize={2.2} fontWeight={600} fill="var(--color-bg)" pointerEvents="none">
                           {tk.label}
                         </text>
                       )}
@@ -220,7 +228,7 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
                   );
                 })}
             </Pitch>
-            <div className="mt-1 flex flex-wrap gap-4 text-xs text-slate-600">
+            <div className="mt-1 flex flex-wrap gap-4 text-xs text-muted">
               <span className="inline-flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: COLORS.own }} />
                 {match.focus_team}
@@ -233,7 +241,7 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: COLORS.ball }} />
                 Balón
               </span>
-              <span className="text-slate-500">Posiciones colocadas a mano: son un esquema, no una medición.</span>
+              <span className="text-faint">Posiciones colocadas a mano: son un esquema, no una medición.</span>
             </div>
           </div>
 
@@ -246,6 +254,12 @@ export function PlaysTab({ match, plays, time, playerRef, playClip }: Props) {
           />
         </Card>
       )}
+
+      <LockedRow
+        reason="tracking"
+        title="Posiciones medidas en la animación"
+        why="Hoy los keyframes se colocan a mano y son un esquema. Cuando el tracking por jugada dé posiciones utilizables, se cargarán aquí con el mismo formato de keyframes."
+      />
     </div>
   );
 }

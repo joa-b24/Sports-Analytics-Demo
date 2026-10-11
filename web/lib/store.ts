@@ -9,7 +9,7 @@ import type { State } from "./types";
 
 const KEY = "sportsan:v1";
 
-export const EMPTY: State = { matches: [], events: [], plays: [], sessions: [], anchors: [] };
+export const EMPTY: State = { matches: [], events: [], plays: [], sessions: [], anchors: [], segments: [], venues: [] };
 
 let state: State | null = null;
 const listeners = new Set<() => void>();
@@ -58,4 +58,42 @@ export function useHydrated(): boolean {
 
 export function uid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+// Interface preferences of this browser (not data: they are not part of the backup).
+const PREFS_KEY = "sportsan:ui";
+let prefs: Record<string, string> | null = null;
+const prefListeners = new Set<() => void>();
+
+function loadPrefs(): Record<string, string> {
+  if (prefs) return prefs;
+  try {
+    prefs = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Record<string, string>;
+  } catch {
+    prefs = {};
+  }
+  return prefs;
+}
+
+export function setPref(key: string, value: string) {
+  prefs = { ...loadPrefs(), [key]: value };
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Blocked storage: the preference lasts for this session only.
+  }
+  prefListeners.forEach((l) => l());
+}
+
+export function usePref(key: string, fallback = ""): string {
+  return useSyncExternalStore(
+    (l) => {
+      prefListeners.add(l);
+      return () => {
+        prefListeners.delete(l);
+      };
+    },
+    () => loadPrefs()[key] ?? fallback,
+    () => fallback,
+  );
 }

@@ -3,6 +3,7 @@
 Uso (desde la raíz del repo):
     python -m sportsan.ingest.cut_segments                    # corta los que falten del partido por defecto
     python -m sportsan.ingest.cut_segments --match <match_id>  # otro partido
+    python -m sportsan.ingest.cut_segments --video v2          # otro video del partido (segundo tiempo)
     python -m sportsan.ingest.cut_segments --force            # recorta todo otra vez
 No modifica el video original ni segments.csv.
 """
@@ -29,13 +30,14 @@ def find_ffmpeg() -> str:
 
 
 def cut_segments(config_path: str | None = None, tipo: str = "juego", force: bool = False,
-                 match: str | None = None) -> None:
-    cfg = load_config(config_path, match)
+                 match: str | None = None, video: str | None = None) -> None:
+    cfg = load_config(config_path, match, video)
     root = project_root()
     src = root / cfg["paths"]["raw_video"]
     out_dir = root / cfg["paths"]["segments_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
-    segments = load_segments(root / cfg["paths"]["segments_csv"])
+    # Solo los tramos de este video: los tiempos de segments.csv son tiempos dentro de su video.
+    segments = load_segments(root / cfg["paths"]["segments_csv"], cfg["video_id"])
     ffmpeg = find_ffmpeg()
 
     for row in segments[segments["tipo"] == tipo].itertuples():
@@ -55,7 +57,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
     ap.add_argument("--match", default=None, help="match_id (carpeta en matches/)")
+    ap.add_argument("--video", default=None, help="video_id del partido (por defecto, el primero)")
     ap.add_argument("--tipo", default="juego")
     ap.add_argument("--force", action="store_true")
     a = ap.parse_args()
-    cut_segments(a.config, a.tipo, a.force, a.match)
+    cut_segments(a.config, a.tipo, a.force, a.match, a.video)

@@ -7,9 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test lib/homography.test.mjs"
+    "test": "node --test lib/homography.test.mjs lib/segments.test.mjs lib/analysis.test.mjs lib/load.test.mjs lib/videos.test.mjs"
   },
   "dependencies": {
+    "@phosphor-icons/react": "2.1.10",
     "next": "16.3.8",
     "react": "19.2.8",
     "react-dom": "19.2.8"

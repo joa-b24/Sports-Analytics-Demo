@@ -8,6 +8,9 @@ export type PlayerHandle = {
   seek(t: number, play?: boolean): void;
   play(): void;
   pause(): void;
+  toggle(): void;
+  // Playback speed. YouTube only accepts multiples of 0.25.
+  setRate(rate: number): void;
 };
 
 type YTPlayer = {
@@ -15,6 +18,8 @@ type YTPlayer = {
   seekTo(t: number, allowSeekAhead: boolean): void;
   playVideo(): void;
   pauseVideo(): void;
+  getPlayerState(): number;
+  setPlaybackRate(rate: number): void;
   destroy(): void;
 };
 type YTApi = { Player: new (el: HTMLElement, opts: unknown) => YTPlayer };
@@ -59,6 +64,7 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600
   const vt = useRef(0);
   const [vtShown, setVtShown] = useState(0);
   const [vPlaying, setVPlaying] = useState(false);
+  const rate = useRef(1);
   const modeRef = useRef(mode);
   const onTimeRef = useRef(onTime);
   useEffect(() => {
@@ -100,6 +106,23 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600
       else if (m === "youtube") yt.current?.pauseVideo();
       else setVPlaying(false);
     },
+    toggle() {
+      const m = modeRef.current;
+      if (m === "file" && videoRef.current) {
+        if (videoRef.current.paused) void videoRef.current.play();
+        else videoRef.current.pause();
+      } else if (m === "youtube" && yt.current) {
+        // 1 = playing, 3 = buffering.
+        const s = yt.current.getPlayerState?.();
+        if (s === 1 || s === 3) yt.current.pauseVideo();
+        else yt.current.playVideo();
+      } else if (m === "virtual") setVPlaying((p) => !p);
+    },
+    setRate(r) {
+      rate.current = r;
+      if (videoRef.current) videoRef.current.playbackRate = r;
+      yt.current?.setPlaybackRate?.(r);
+    },
   }));
 
   useEffect(() => {
@@ -120,6 +143,7 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600
         events: {
           onReady: () => {
             yt.current = player;
+            if (rate.current !== 1) player?.setPlaybackRate?.(rate.current);
           },
         },
       });
@@ -139,7 +163,7 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600
   useEffect(() => {
     const id = setInterval(() => {
       if (modeRef.current === "virtual" && vPlaying) {
-        vt.current = Math.min(virtualMax, vt.current + 0.1);
+        vt.current = Math.min(virtualMax, vt.current + 0.1 * rate.current);
         setVtShown(vt.current);
       }
       onTimeRef.current?.(getTime());
@@ -148,20 +172,30 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600
   }, [vPlaying, virtualMax]);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-black">
+    <div className="overflow-hidden rounded-3xl bg-black shadow-[0_0_0_1px_rgba(255,255,255,.06),0_24px_60px_-30px_rgba(0,0,0,.9)]">
       <div className="aspect-video w-full">
-        {mode === "file" && <video ref={videoRef} src={fileUrl} controls className="h-full w-full" />}
+        {mode === "file" && (
+          <video
+            ref={videoRef}
+            src={fileUrl}
+            controls
+            className="h-full w-full"
+            onLoadedMetadata={(e) => {
+              e.currentTarget.playbackRate = rate.current;
+            }}
+          />
+        )}
         {mode === "youtube" && <div ref={ytHost} className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full" />}
         {mode === "virtual" && (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-slate-800 px-6 text-center text-slate-200">
+          <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-pitch px-6 text-center text-ink-2">
             <div className="text-sm">Sin video conectado. Pega el enlace de YouTube o abre el archivo local arriba.</div>
-            <div className="text-xs text-slate-400">Mientras tanto, este reloj manual hace de tiempo del video.</div>
-            <div className="font-mono text-2xl tabular-nums">{fmtT(vtShown)}</div>
+            <div className="text-xs text-faint">Mientras tanto, este reloj manual hace de tiempo del video.</div>
+            <div className="num text-6xl text-ink">{fmtT(vtShown)}</div>
             <div className="flex w-full max-w-md items-center gap-3">
               <button
                 type="button"
                 onClick={() => setVPlaying((p) => !p)}
-                className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-slate-900"
+                className="btn btn-primary"
               >
                 {vPlaying ? "Pausa" : "Reproducir"}
               </button>

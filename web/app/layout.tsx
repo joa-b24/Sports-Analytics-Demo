@@ -1,17 +1,13 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Barlow_Condensed, Bricolage_Grotesque, Inter, JetBrains_Mono } from "next/font/google";
 import { Shell } from "@/components/Shell";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+// Four roles: body text, display headings, condensed figures/eyebrows, and timecodes.
+const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
+const bricolage = Bricolage_Grotesque({ variable: "--font-bricolage", subsets: ["latin"] });
+const barlow = Barlow_Condensed({ variable: "--font-barlow", subsets: ["latin"], weight: ["500", "600"] });
+const jetbrains = JetBrains_Mono({ variable: "--font-jetbrains", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Sports Analytics · Fútbol",
@@ -20,7 +16,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="es" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html
+      lang="es"
+      className={`${inter.variable} ${bricolage.variable} ${barlow.variable} ${jetbrains.variable} h-full antialiased`}
+    >
       <body className="min-h-full">
         <Shell>{children}</Shell>
       </body>
