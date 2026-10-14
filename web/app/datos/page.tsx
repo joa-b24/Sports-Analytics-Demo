@@ -10,9 +10,10 @@ import { downloadText, parseCsv, toCsv } from "@/lib/format";
 import { isSensitiveColumn } from "@/lib/load";
 import { EMPTY, mutate, uid, useStore } from "@/lib/store";
 import { DEFAULT_VIDEO, videoOf } from "@/lib/videos";
+import { cleanEnd } from "@/lib/tagging";
 import { EVENT_TYPES, type EventType, type MatchEvent, type SessionRow, type State, type Team } from "@/lib/types";
 
-const EVENT_COLUMNS = ["event_id", "match_id", "video_id", "t_video", "period", "type", "team", "player_id", "x", "y", "outcome", "detail", "note"];
+const EVENT_COLUMNS = ["event_id", "match_id", "video_id", "t_video", "period", "type", "team", "player_id", "x", "y", "outcome", "detail", "note", "x_end", "y_end", "goal_y", "goal_z"];
 const SESSION_KEYS = ["date", "session_id", "player_id"];
 
 // Empty or non-numeric cells become null (the contract's NaN): never filled in.
@@ -137,6 +138,7 @@ export default function Page() {
       outcome: r.outcome || null,
       detail: r.detail || null,
       note: r.note || null,
+      ...cleanEnd(r.type as EventType, { x_end: num(r.x_end), y_end: num(r.y_end), goal_y: num(r.goal_y), goal_z: num(r.goal_z) }),
     }));
     mutate((s) => ({ ...s, events: [...s.events, ...parsed] }));
     setMsg(`${parsed.length} eventos importados. ${rows.length - valid.length} filas omitidas (sin t_video o con type desconocido).`);

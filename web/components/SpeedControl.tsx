@@ -3,7 +3,7 @@
 import { Gauge } from "@phosphor-icons/react";
 import { useState } from "react";
 
-const PRESETS = [0.25, 0.5, 1, 1.5, 2];
+const PRESETS = [0.25, 0.5, 1, 1.5, 2, 3, 5];
 
 type Props = {
   rate: number;
@@ -11,10 +11,12 @@ type Props = {
   // Smallest step of the slider. YouTube only plays at multiples of 0.25.
   step?: number;
   min?: number;
+  // Fastest speed offered. A local file takes up to x5; YouTube stops at x2.
+  max?: number;
 };
 
 // Playback speed: a button with the current value; the slider only appears after clicking it.
-export function SpeedControl({ rate, onChange, step = 0.05, min = 0.1 }: Props) {
+export function SpeedControl({ rate, onChange, step = 0.05, min = 0.1, max = 5 }: Props) {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative" onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
@@ -46,13 +48,13 @@ export function SpeedControl({ rate, onChange, step = 0.05, min = 0.1 }: Props) 
               aria-label="Velocidad de reproducción"
               className="mt-3 w-full"
               min={min}
-              max={2}
+              max={max}
               step={step}
               value={rate}
               onChange={(e) => onChange(Number(e.target.value))}
             />
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {PRESETS.map((r) => (
+              {PRESETS.filter((r) => r >= min && r <= max).map((r) => (
                 <button
                   key={r}
                   type="button"

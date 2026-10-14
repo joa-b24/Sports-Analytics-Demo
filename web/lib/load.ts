@@ -44,7 +44,31 @@ export interface LoadRow {
   load: number | null;
 }
 
-export function sessionLoads(sessions: SessionRow[]): LoadRow[] {
+// How the load of a session is measured. "rpe": perceived effort x minutes (questionnaire after training).
+// "relative_effort": Strava's relative effort, from the time in each heart-rate zone. They are not comparable, so one
+// method is used for all the sessions shown.
+export type LoadMethod = "rpe" | "relative_effort";
+export const LOAD_LABELS: Record<LoadMethod, string> = { rpe: "RPE × minutos", relative_effort: "esfuerzo relativo (Strava)" };
+
+// RPE when any session has it (it is what the staff asks for), otherwise Strava's relative effort; null with neither.
+export function loadMethod(sessions: SessionRow[]): LoadMethod | null {
+  if (sessions.some((s) => s.metrics.rpe != null)) return "rpe";
+  if (sessions.some((s) => s.metrics.relative_effort != null)) return "relative_effort";
+  return null;
+}
+
+export function sessionLoads(sessions: SessionRow[], method: LoadMethod = "rpe"): LoadRow[] {
+  if (method === "relative_effort") {
+    return sessions.map((s) => ({
+      date: s.date,
+      session_id: s.session_id,
+      player_id: s.player_id,
+      rpe: s.metrics.rpe ?? null,
+      duration_min: s.metrics.duration_min ?? null,
+      durationFrom: s.metrics.duration_min != null ? "own" : null,
+      load: s.metrics.relative_effort ?? null,
+    }));
+  }
   const durations = new Map<string, number[]>();
   for (const s of sessions) {
     const d = s.metrics.duration_min;

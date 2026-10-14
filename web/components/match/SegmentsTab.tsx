@@ -1,11 +1,12 @@
 "use client";
 
 import { DownloadSimple, FlagCheckered, Pause, Play as PlayIcon, UploadSimple, Warning } from "@phosphor-icons/react";
-import type { RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Card, btn } from "@/components/Shell";
 import type { PlayerHandle } from "@/components/VideoPlayer";
 import { downloadText, fmtT, parseCsv } from "@/lib/format";
 import { marksFromCsvRows, segmentAt, segmentsCsv, segmentsFromMarks, totalSeconds, type Segment } from "@/lib/segments";
+import { writeLocal } from "@/lib/local";
 import { mutate, uid } from "@/lib/store";
 import { videoOf } from "@/lib/videos";
 import { SEGMENT_KINDS, SEGMENT_LABELS, type Match, type SegmentKind, type SegmentMark } from "@/lib/types";
@@ -32,6 +33,7 @@ const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)
 
 export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, time, playerRef }: Props) {
   const sameVideo = (m: SegmentMark) => m.match_id === match.match_id && videoOf(m) === videoId;
+  const [saved, setSaved] = useState("");
   const segments = segmentsFromMarks(marks);
   const sorted = [...marks].sort((a, b) => a.t_video - b.t_video);
   const current = segmentAt(segments, time);
@@ -50,6 +52,22 @@ export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, 
       ],
     }));
   };
+  // Shortcuts: G (game) starts play, P a pause, X a stretch that cannot be measured, E ends the open one.
+  const addRef = useRef(add);
+  useEffect(() => {
+    addRef.current = add;
+  });
+  useEffect(() => {
+    const keys: Record<string, SegmentKind | "fin"> = { g: "juego", p: "pausa", x: "no_medible", e: "fin" };
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
+      const tipo = keys[e.key.toLowerCase()];
+      if (tipo) addRef.current(tipo);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const patch = (id: string, p: Partial<SegmentMark>) =>
     mutate((s) => ({ ...s, segments: s.segments.map((m) => (m.mark_id === id ? { ...m, ...p } : m)) }));
   const remove = (id: string) => mutate((s) => ({ ...s, segments: s.segments.filter((m) => m.mark_id !== id) }));
@@ -79,19 +97,19 @@ export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, 
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn btn-primary" onClick={() => add("juego")}>
             <PlayIcon size={14} weight="fill" />
-            Empieza juego
+            Empieza juego <kbd className="kbd ml-1">G</kbd>
           </button>
           <button type="button" className={btn} onClick={() => add("pausa")}>
             <Pause size={14} weight="fill" />
-            Empieza pausa
+            Empieza pausa <kbd className="kbd ml-1">P</kbd>
           </button>
           <button type="button" className={btn} onClick={() => add("no_medible")}>
             <Warning size={14} />
-            Empieza no medible
+            Empieza no medible <kbd className="kbd ml-1">X</kbd>
           </button>
           <button type="button" className={btn} onClick={() => add("fin")} title="Cierra el tramo anterior sin empezar otro">
             <FlagCheckered size={14} />
-            Fin aquí
+            Fin aquí <kbd className="kbd ml-1">E</kbd>
           </button>
         </div>
 
@@ -206,11 +224,16 @@ export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, 
             type="button"
             className={btn}
             disabled={Object.values(segmentsByVideo).every((list) => list.every((s) => s.end === null))}
-            onClick={() => downloadText("segments.csv", segmentsCsv(videoIds, segmentsByVideo), "text/csv")}
+            onClick={() => {
+              const text = segmentsCsv(videoIds, segmentsByVideo);
+              downloadText("segments.csv", text, "text/csv");
+              if (match.folder) void writeLocal(`matches/${match.folder}/segments.csv`, text).then((ok) => setSaved(ok ? `Guardado en matches/${match.folder}/segments.csv.` : ""));
+            }}
           >
             <DownloadSimple size={15} />
             Exportar segments.csv
           </button>
+          {saved && <span className="text-xs text-ok">{saved}</span>}
           <label className={`${btn} relative cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`}>
             <UploadSimple size={15} />
             Importar segments.csv

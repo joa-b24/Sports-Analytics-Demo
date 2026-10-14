@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { acwr, isSensitiveColumn, sessionLoads } from "./load.ts";
+import { acwr, isSensitiveColumn, loadMethod, sessionLoads } from "./load.ts";
 
 const row = (date, player_id, metrics, session_id = "s") => ({ date, session_id, player_id, metrics });
 
@@ -56,4 +56,13 @@ test("loads older than 28 days and rows without load are ignored", () => {
 test("health columns are recognised by name", () => {
   for (const c of ["illness", "enfermedad", "period", "ciclo_menstrual", "mood", "estado_de_animo", "molestia"]) assert.equal(isSensitiveColumn(c), true, c);
   for (const c of ["rpe", "sleep_q", "stress", "fatigue", "soreness", "energy", "duration_min", "sprints"]) assert.equal(isSensitiveColumn(c), false, c);
+});
+
+test("without RPE the load can come from Strava's relative effort", () => {
+  const s = (date, m) => ({ date, session_id: date, player_id: "Joana", metrics: m });
+  const rows = [s("2026-10-01", { duration_min: 90, relative_effort: 120 }), s("2026-10-02", { duration_min: 60 })];
+  assert.equal(loadMethod(rows), "relative_effort");
+  assert.deepEqual(sessionLoads(rows, "relative_effort").map((r) => r.load), [120, null]);
+  assert.equal(loadMethod([...rows, s("2026-10-03", { rpe: 6, duration_min: 50 })]), "rpe");
+  assert.equal(loadMethod([s("2026-10-03", { duration_min: 50 })]), null);
 });

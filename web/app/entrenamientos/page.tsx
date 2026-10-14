@@ -9,7 +9,7 @@ import { CountUp, Reveal } from "@/components/motion";
 import { COLORS } from "@/components/Pitch";
 import { Card, DemoBadge, PageHeader, Section, btnPrimary, input } from "@/components/Shell";
 import { fmtNum } from "@/lib/format";
-import { SAFE_ACWR, WELLNESS, acwr, sessionLoads } from "@/lib/load";
+import { LOAD_LABELS, SAFE_ACWR, WELLNESS, acwr, loadMethod, sessionLoads } from "@/lib/load";
 import { mean } from "@/lib/stats";
 import { useStore } from "@/lib/store";
 import type { SessionRow } from "@/lib/types";
@@ -24,7 +24,9 @@ const METRIC_LABELS: Record<string, string> = {
   hr_avg: "FC media (lpm)",
   hr_max: "FC máxima (lpm)",
   // Computed here, not a column of the CSV.
-  session_load: "Carga de la sesión (RPE × min)",
+  session_load: "Carga de la sesión",
+  relative_effort: "Esfuerzo relativo (Strava)",
+  football: "Sesión de fútbol (1 = sí)",
   // Questionnaire columns, when the staff adds them to the same CSV (docs/preguntas_cuerpo_tecnico.md).
   rpe: "Esfuerzo percibido (RPE, 1–10)",
   sleep_hours: "Horas de sueño",
@@ -41,10 +43,13 @@ const SUBTITLE = "Carga de trabajo por jugadora a partir de los datos de sensore
 
 export default function Page() {
   const { sessions: stored } = useStore();
-  // Session load is derived from RPE and minutes; it joins the other metrics so every chart can show it.
-  const loads = sessionLoads(stored);
-  const hasRpe = loads.some((l) => l.rpe !== null);
-  const sessions: SessionRow[] = hasRpe ? stored.map((s, i) => ({ ...s, metrics: { ...s.metrics, session_load: loads[i].load } })) : stored;
+  // Session load comes from RPE x minutes or, without RPE, from Strava's relative effort. Every session counts for the
+  // load (a run too); the charts of the other metrics only show football sessions when the file says which they are.
+  const method = loadMethod(stored);
+  const loads = sessionLoads(stored, method ?? "rpe");
+  const hasRpe = method !== null;
+  const withLoad: SessionRow[] = hasRpe ? stored.map((s, i) => ({ ...s, metrics: { ...s.metrics, session_load: loads[i].load } })) : stored;
+  const sessions = withLoad.some((s) => s.metrics.football != null) ? withLoad.filter((s) => s.metrics.football !== 0) : withLoad;
   const ratio = acwr(loads);
   const borrowed = loads.filter((l) => l.load !== null && l.durationFrom === "session").length;
   const wellness = WELLNESS.filter((w) => stored.some((s) => s.metrics[w.key] !== null && s.metrics[w.key] !== undefined));
@@ -211,7 +216,7 @@ export default function Page() {
               <Card title="Carga aguda : crónica" note={ratio.asOf ? `al ${ratio.asOf} · franja de referencia ${SAFE_ACWR[0]} – ${SAFE_ACWR[1]}` : undefined}>
                 <AcwrChart players={ratio.players} band={SAFE_ACWR} onPick={setPlayer} />
                 <p className="mt-4 text-xs text-pretty text-faint">
-                  Carga de la sesión = RPE × minutos. La razón compara los últimos 7 días con la media semanal de los últimos 28. La franja
+                  Carga de la sesión = {method ? LOAD_LABELS[method] : ""}{method === "relative_effort" ? " (sale del tiempo en cada zona de frecuencia cardiaca; Strava no publica la fórmula)" : ""}. La razón compara los últimos 7 días con la media semanal de los últimos 28. La franja
                   es una referencia habitual para conversar con la jugadora, no un límite médico.
                   {borrowed > 0 &&
                     ` En ${borrowed} fila(s) sin duración propia se usó la de la sesión (mediana de quienes sí la registraron).`}
@@ -286,8 +291,8 @@ export default function Page() {
               reason="data"
               delay={80}
               title="Carga aguda : crónica y alertas"
-              why="La carga de cada sesión sale del cuestionario posterior al entrenamiento (RPE × minutos). Este CSV no trae la columna rpe, así que no hay con qué calcularla."
-              need="añadir las columnas rpe y duration_min al CSV de entrenamientos; la razón aparece con cuatro semanas de historial."
+              why="La carga de cada sesión sale del cuestionario posterior al entrenamiento (RPE × minutos) o del esfuerzo relativo de Strava. Este CSV no trae ni rpe ni relative_effort, así que no hay con qué calcularla."
+              need="añadir las columnas rpe y duration_min (o relative_effort, que trae el sessions.csv de Strava); la razón aparece con cuatro semanas de historial."
             >
               <SkBars rows={5} />
             </Locked>

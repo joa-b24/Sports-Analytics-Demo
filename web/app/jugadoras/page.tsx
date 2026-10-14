@@ -4,6 +4,7 @@ import { ArrowRight } from "@phosphor-icons/react";
 import Link from "next/link";
 import { Locked, SkBars, SkRadar, SkTiles } from "@/components/Locked";
 import { Pitch } from "@/components/Pitch";
+import { RosterCard } from "@/components/RosterCard";
 import { Reveal } from "@/components/motion";
 import { Card, DemoBadge, PageHeader, Section } from "@/components/Shell";
 import { useStore } from "@/lib/store";
@@ -36,8 +37,10 @@ export default function Page() {
       <PageHeader
         eyebrow="Análisis individual"
         title="Jugadoras"
-        subtitle="El perfil por jugadora y el comparador de la propuesta necesitan una plantilla que todavía no existe. Aquí está lo que sí se sabe hoy y qué falta para lo demás."
+        subtitle="La plantilla, lo que ya se sabe de cada jugadora y lo que falta para su perfil."
       />
+
+      <RosterCard />
 
       <Card
         title="Identificadores con datos"

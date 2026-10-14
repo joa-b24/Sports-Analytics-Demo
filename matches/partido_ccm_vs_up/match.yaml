@@ -1,0 +1,19 @@
+match_id: partido_ccm_vs_up
+kind: own                       # own = partido nuestro; rival = scouting
+date: "REEMPLAZAR"              # el video se subió el 2026-10-13; falta la fecha del partido
+own_team_name: "Tec CCM"
+other_team_name: "UP"         # jornada 2
+analysis_stride: 3
+
+venue:
+  name: "REEMPLAZAR"
+  notes: "Sin medir. Cámara más lejana y casi fija: se ve casi toda la cancha (piloto 2 de tracking y calibración)."
+
+# Grabado en 3 partes; por ahora solo la primera.
+videos:
+  - video_id: v1
+    period: 1
+    youtube_id: "OIvhk-vNs5c"   # BORREGOS CCM VS UP PRIMERA PARTE 1 (18:10)
+    file: video/v1.mp4
+    fps: 30                     # 30/1 (ffprobe)
+    # jersey_colors: elegir en la app (Corrección de tracks → Uniformes) y escribir aquí

@@ -14,9 +14,27 @@ Fuente de verdad en código: `src/sportsan/schema.py`. Si cambias algo, actualiz
 - **Dirección de ataque en eventos manuales:** el equipo analizado (`own`) ataca siempre hacia `x = 105`, en los dos periodos. La analista marca la posición ya normalizada.
 - **`track_id`:** local a cada segmento (no sobrevive entre segmentos). La identidad real de una jugadora es `player_id`, que se llena en la validación manual.
 
+## `matches/videos.csv` (registro de videos, versionado)
+
+Una fila por video de cada partido: `match_id, kind, date, own_team, other_team, video_id, period, label, url, note`
+(qué parte es en `label`, por ejemplo «1.er tiempo» o «Parte 2»). Lo usa `python -m sportsan.ingest.download_videos`, que
+baja los que falten a `matches/<match_id>/video/<video_id>.mp4`, mide su fps con ffprobe y los añade a `match.yaml`. Una
+fila sin `url` se salta.
+
 ## Carpeta del partido
 
-`matches/<match_id>/` contiene `match.yaml`, `segments.csv`, `video/`, `segments/`, `tracking/` y `events/`. `match.yaml` lleva: `match_id` (igual al nombre de la carpeta), `kind` (`own` o `rival`), `date`, `own_team_name`, `other_team_name`, `analysis_stride`, `venue` (`name`, `pitch_length_m`, `pitch_width_m`, `notes`) y `videos`, una lista de `{video_id, period, youtube_id, file, fps}`. Se lee con `sportsan.config.load_config(match=...)`.
+**Nombre:** `aaaa_mm_dd_<local>_vs_<visitante>`, en minúsculas, sin acentos ni espacios (letras, números y `_`), con la fecha
+del partido. Ejemplos: `2026_09_25_up_vs_anahuac`, `2011_05_28_barcelona_vs_manchester_united` (un video de referencia
+sigue la misma regla). El `match_id` de `match.yaml` es el nombre de la carpeta. Para renombrar sin romper nada:
+`python -m sportsan.ingest.rename_match <viejo> <nuevo>`. Las dos carpetas de antes de esta regla (`partido_2026_09_25`,
+`partido_ccm_vs_up`) se renombran cuando se sepa el rival de la primera y la fecha de la segunda.
+
+En `match.yaml`, cada video puede llevar `jersey_colors` (si no, se usan los del partido) y `own_attacks` (`right` o `left`:
+hacia dónde ataca el equipo analizado en ese video, en la cancha de la calibración; lo usan las alturas de las métricas de
+equipo).
+
+
+`matches/<match_id>/` contiene `match.yaml` (con `jersey_colors` opcional para asignar equipos en el tracking), `segments.csv`, `video/`, `segments/`, `tracking/` y `events/`. `match.yaml` lleva: `match_id` (igual al nombre de la carpeta), `kind` (`own` o `rival`), `date`, `own_team_name`, `other_team_name`, `analysis_stride`, `venue` (`name`, `pitch_length_m`, `pitch_width_m`, `notes`) y `videos`, una lista de `{video_id, period, youtube_id, file, fps}`. Se lee con `sportsan.config.load_config(match=...)`.
 
 ## `segments.csv` (entrada, en la carpeta del partido)
 
@@ -72,6 +90,8 @@ Resultado de la calibración de cada frame: `n_keypoints` (visibles y confiables
 | outcome | str | sí | resultado, según el tipo (tabla siguiente) |
 | detail | str | sí | segundo dato, según el tipo (tabla siguiente) |
 | note | str | sí | texto libre |
+| x_end, y_end | float | sí | **opcionales**. Solo `cross` y `corner`: dónde cayó el balón, en la cancha (mismo sistema que `x`, `y`) |
+| goal_y, goal_z | float | sí | **opcionales**. Solo `shot`, `goal`, `free_kick`, `penalty`: dónde cruzó la línea de gol, visto de frente desde quien remata. `goal_y` en metros desde el poste izquierdo (0 a 7.32 entre postes), `goal_z` la altura (0 a 2.44 bajo el larguero); un tiro fuera cae fuera de esos rangos (se admiten hasta 5 m alrededor; la app deja marcar hasta 2.5 m a los lados y 1.6 m por encima) |
 
 `outcome` y `detail` son opcionales: nulo significa que no se anotó, no que no ocurrió. Solo se admiten estos valores
 (`EVENT_OUTCOMES` y `EVENT_DETAILS` en `schema.py`, y los mismos en `web/lib/types.ts`):
@@ -85,19 +105,26 @@ Resultado de la calibración de cada frame: `n_keypoints` (visibles y confiables
 | goal_kick | `kept` (conservan el balón), `lost` | `short`, `long` |
 | recovery | | `forward`, `backward` (primer pase tras recuperar) |
 
+Las dos parejas de destino van juntas (las dos o ninguna). Un archivo sin esas columnas es válido: se anotan en la tercera
+pasada del etiquetado y casi siempre faltarán. Un tiro libre que es un centro se anota como `cross` si interesa dónde cayó.
+
 `final_third_entry` y `box_entry` no llevan resultado: si acaban en tiro se deduce de los eventos siguientes.
 
 ## Tablas de la app web (`web/lib/types.ts`)
 
 Viven en el navegador y se exportan como un JSON de respaldo. Los eventos usan las columnas de arriba.
 
-- **`matches`:** `match_id`, `name`, `kind` (`rival` o `own`), `date`, `focus_team`, `other_team`, `youtube_id`, `report` (texto del informe por sección), `is_demo`.
+- **`matches`:** `match_id`, `name`, `kind` (`own`: nuestro partido, `rival`: partido de un rival, `reference`: video de referencia de otros equipos), `date`, `focus_team`, `other_team`, `youtube_id`, `report` (texto del informe por sección), `is_demo`.
 - **`plays`:** `play_id`, `match_id`, `title`, `t_start` y `t_end` (segundos de `t_video`), `note`, `keyframes`. Cada keyframe es `{t, pos}` con `t` en `t_video` y `pos` un mapa `token → [x, y]` en metros. Tokens: `o1..o11` (equipo analizado), `r1..r11` (contrario), `ball`. Entre keyframes la posición se interpola linealmente. Los keyframes puestos a mano son un esquema, no una medición.
 - **`sessions`** (entrenamientos, una fila por jugadora y sesión): `date` (AAAA-MM-DD), `session_id`, `player_id` y `metrics`, un mapa `nombre → número` con las columnas numéricas del CSV del sensor. Nombres sugeridos: `duration_min, total_distance_m, hsr_distance_m, sprints, max_speed_kmh, player_load, hr_avg, hr_max`. Celda vacía = valor faltante.
 
 - **`anchors`** (calibración manual, una fila por cuadro calibrado): `anchor_id`, `match_id`, `video_id`, `venue_id`, `frame` (índice en el video original), `t_video` (`frame / fps`), `image_w`, `image_h` y `points`, una lista de `{landmark_id, px, py}` con el punto de referencia de la sede y su posición en píxeles. La homografía no se guarda: se recalcula con los puntos. Se exportan como `anchors_<match_id>_<video_id>.json` con `schema_version` (2), `match_id`, `video_id`, `fps`, `venue` (`venue_id`, `name`, `length_m`, `width_m`) y `anchors`; en la exportación cada punto lleva además `x_m`, `y_m` (su posición en metros reales en la sede), para que Python no tenga que repetir el modelo de la sede. La versión 1 no traía esos campos y `sportsan.tracking.propagate` la rechaza.
 - **`sessions`**: columnas reconocidas además de las del sensor: `rpe` (1 a 10, cuestionario posterior), `duration_min`, y del cuestionario previo `sleep_hours`, `sleep_q`, `stress`, `fatigue`, `soreness` (1 a 7, **1 es lo mejor**) y `energy` (1 a 10, 10 es lo mejor). La carga de la sesión es `rpe * duration_min` (`web/lib/load.ts`); si falta la duración de una jugadora se usa la mediana de su sesión y se indica. Las columnas de salud (enfermedad, periodo menstrual, ánimo, molestias) se descartan al importar.
-- **`matches`**: además de sus datos, `videos`, una lista de `{video_id, youtube_id, label}` (uno por tiempo, normalmente). Para analizar el partido entero la app pone los videos en fila sobre un solo eje (`web/lib/videos.ts`); ese eje no se guarda.
+- **`matches`**: además de sus datos, `videos`, una lista de `{video_id, youtube_id, label, period}`. Un tiempo puede venir en varios videos: `period` (1 o 2) dice a cuál pertenece cada uno; sin él, el primer video es el 1.er tiempo y los demás el 2.º. Para analizar el partido entero la app pone los videos en fila sobre un solo eje (`web/lib/videos.ts`); ese eje no se guarda.
+- **`trackEdits`** (correcciones de la mesa de corrección, una fila por parte procesada): `key` (`<match_id>|<video_id>|<inicio>_<fin>`), `identity` (`"<track>"` o `"i<identidad>"` -> identidad a la que pertenece), `people` (por identidad: `team` puesto a mano y `player_id`), `removed` (identidades que no son jugadoras), `splits` (`{track, frame, identity}`: desde ese cuadro el track es otra persona) y `manual` (`{identity, frame, px, py}`: pies marcados a mano donde el detector la perdió). El archivo de tracks nunca se modifica.
+- **`matches`** también puede llevar `folder` (nombre de su carpeta en `matches/`, para la calibración y el tracking dentro del partido) y `venue_id` (la sede elegida en su calibración).
+- **`roster`** (plantilla): `{player_id, number}`. `player_id` es el nombre con que se identifica a la jugadora en eventos, tracks y sesiones; `number` es su número habitual y puede cambiar. Los números desde 99 hacia abajo son provisionales (no se sabía el número).
+- **`jerseys`**: colores de camiseta por `match_id` de la carpeta del partido, `{own, opp, ref, own_gk, opp_gk}` en `#rrggbb`. La app puede escribirlos en `jersey_colors` de `match.yaml`.
 - **`segments`** (marcas de corte del video, una fila por marca): `mark_id`, `match_id`, `video_id`, `t_video` y `tipo` (`juego`, `pausa`, `no_medible` o `fin`). Desde cada marca hasta la siguiente el video es de ese tipo; `fin` cierra el tramo anterior sin abrir otro. De ahí sale un solo `segments.csv` por partido (`web/lib/segments.ts`), con los videos en orden y la columna `video_id`; un último tramo sin cerrar no se exporta.
 - **`venues`** (sedes creadas o editadas en la app): `venue_id`, `name`, `kind` (`soccer` o `football_overlay`), `length_m`, `width_m`, `hash_far_m`, `hash_near_m`, `grid_dx_m`, `grid_dy_m`, `soccer_color`, `grid_color`. Una sede guardada con el `venue_id` de una del código la reemplaza.
 
@@ -160,3 +187,99 @@ sede y los cuadros del barrido.
 
 Vale solo mientras la cámara esté en el mismo sitio que durante el barrido, y para encuadres parecidos a alguno de él. Un cuadro
 que no se parece a ninguna referencia queda sin ubicar; no se inventa.
+
+## `tracks_<video_id>_<inicio>_<fin>.json` (detecciones en píxeles, `matches/<match_id>/tracking/`)
+
+Lo escribe `python -m sportsan.tracking.detect`, una por parte del video (60 s por defecto). Todo en **píxeles del video original**;
+la conversión a metros se hace después con la calibración. Los `track_id` son locales a cada parte.
+
+| campo | descripción |
+|---|---|
+| schema_version, kind | `1` (solo cajas, de `detect`) o `3` (con posición, equipo, identidad propuesta y calibración, de `process`); `"tracks_px"` |
+| match_id, video_id, fps, image_w, image_h, model, tracker | del video y de la corrida |
+| start_frame, end_frame, stride | cuadros del video original (final exclusivo); se procesa 1 de cada `stride` |
+| box_columns | nombres de las columnas de cada caja |
+| frames | lista de `{frame, H, boxes}`; cada caja es `[track_id, x1, y1, x2, y2, conf, lab_l, lab_a, lab_b]`. `H` (solo con `process`) es la calibración del cuadro, imagen px -> metros reales, o `null` |
+| quality | indicadores de la parte |
+
+- Con `python -m sportsan.tracking.process` (detección + biblioteca de calibración) cada caja lleva cuatro columnas más: `x`, `y` (pie de la caja en la cancha normalizada 105 x 68; `null` si ese cuadro no tiene calibración), `on_pitch` (dentro de la cancha con el margen del contrato) y `team` (`own`, `opp`, `ref` o `unk`). `quality` suma `calibrated_share`, `library_anchors`, `library_dropped`, `on_pitch_median`, `on_pitch_tracks`, `on_pitch_tracks_long`, `on_pitch_tracks_short`, `on_pitch_tracks_per_person` y `teams`.
+- La misma corrida escribe `tracking_<video_id>_<inicio>_<fin>.parquet`: la tabla `tracking` de este contrato (validada con `validate_tracking`), solo con las personas dentro de la cancha, `segment_id = <video_id>_<inicio>_<fin>`, `frame` contado desde el inicio de la parte y `px`, `py` con el pie en píxeles. `player_id` va vacío hasta la corrección manual.
+- El equipo sale del color de la camiseta comparado con `jersey_colors` de `match.yaml` (`{own, opp, ref}` en `#rrggbb`); se decide por track, con el color mediano de sus cajas. Sin esa clave, todo queda en `unk`.
+- Con `process`, la última columna de cada caja es `identity`: la identidad propuesta tras unir fragmentos sobre la cancha (`sportsan.tracking.stitch`: un track que termina y otro del mismo color que empieza cerca poco después). Es una propuesta que la mesa de corrección puede deshacer; `track_id` conserva el identificador original del seguidor. `quality` suma `identities` e `identities_per_person`.
+- **Detecciones sueltas.** El seguidor solo devuelve los tracks que da por confirmados y deja fuera parte de lo que el detector ve. Esas detecciones se guardan con `track_id` a partir de 1 000 000 (una por cuadro); la unión de fragmentos las asigna después por posición. `quality` trae `loose_boxes` y `loose_absorbed` (las que rellenaron el hueco de un track).
+- `jersey_colors` admite también `own_gk` y `opp_gk` (porteras): cuentan para su equipo.
+- `lab_*`: color de la camiseta en Lab (escala de OpenCV, 0 a 255): mediana del torso sin contar los píxeles de césped. Al comparar dos colores la luminosidad pesa la mitad.
+- `quality`: `frames`, `people_median`, `people_min`, `tracks`, `tracks_long` (duran al menos el 80 % de la parte),
+  `tracks_per_person`, `low_visibility` (pares de cuadros entre los que se ven menos de 6 personas durante 2 s o más) y
+  `low_visibility_share`.
+- Incluye a todas las personas detectadas, también banca, grada y árbitra: no se filtra nada hasta tener metros.
+- El balón no está: un detector genérico lo confunde con las marcas del campo a este tamaño.
+
+`tracks_<video_id>_index.json` lista las partes hechas con sus indicadores y sus tiempos, para ver el avance.
+
+## `tracks_fixed_<video_id>_<inicio>_<fin>.json` (tracks corregidos, exportados desde la app)
+
+Resultado de la mesa de corrección sobre una parte (`schema_version` 2): `people` (`{id, team, player_id, tracks}`) y, por cuadro
+procesado, `positions` (`{id, x, y, source, raw?}`) en la cancha normalizada. No incluye a quien quedó fuera de la cancha ni a las
+identidades descartadas. Cada persona tiene como mucho una posición por cuadro: si el detector dio dos cajas sobre la misma jugadora
+(a menos de 2 m una de otra) y en la mesa se unificaron, queda la de más confianza y la otra no se exporta.
+
+`ball` es la lista de posiciones del balón, `{frame, x, y, source}`. **El balón no se detecta**: `source` es `manual` (clic sobre
+el video, llevado a la cancha como si el balón estuviera en el suelo), `event` (posición de un evento etiquetado en ese instante) o
+`interpolated` (recta entre dos de las anteriores separadas por 3 s o menos). Donde no hay ninguna cerca no hay balón. Los eventos
+se etiquetan con el equipo analizado atacando hacia `x = 105`; al exportar se indica hacia dónde ataca en ese video y, si es hacia
+`x = 0`, se reflejan.
+
+Si el archivo une varias partes de un video trae además `parts` (`{start_frame, end_frame, corrected, linked_to_previous}`) y cada
+persona lleva `sources` (`{part, id}`: quién era en cada parte) en lugar de `tracks`; los `id` se numeran de nuevo desde 1. Las
+personas con el mismo nombre son una sola. Las que no tienen nombre se enlazan entre dos partes seguidas solo si la que termina y la
+que empieza son la más cercana una de otra, a una distancia alcanzable (2 m más 8 m/s por el tiempo transcurrido), de equipos
+compatibles y sin otra candidata a menos de 1 m de diferencia. El suavizado se aplica después de unir.
+
+`source` dice de dónde sale cada posición, y es obligatorio leerlo antes de calcular nada:
+
+| source | qué es |
+|---|---|
+| `auto` | detección del programa (pie de la caja, pasado a la cancha con la calibración del cuadro) |
+| `manual` | pies marcados a mano donde el detector perdió a la persona |
+| `interpolated` | **no es una medición**: posición rellenada en línea recta dentro de un hueco corto |
+
+`smoothing` es `null` si se exportó tal como se midió. Si no, guarda las reglas con que se limpiaron las trayectorias
+(`web/lib/smooth.ts`) y sus totales:
+
+| campo | regla | valor recomendado |
+|---|---|---|
+| `max_speed_ms` | un punto que exigiría más velocidad que esta para llegar **y** para irse es un microsalto y se quita; tampoco se rellena un hueco que la exigiría | 9 m/s |
+| `max_fill_s` | los huecos de hasta esta duración entre dos posiciones conocidas se rellenan con una recta; los más largos se dejan vacíos | 2 s |
+| `window_s` | promedio centrado (pesos triangulares; una marca a mano pesa el triple) dentro de cada tramo sin huecos | 0.5 s |
+| `outliers`, `filled`, `openGaps` | microsaltos quitados, posiciones rellenadas y huecos dejados vacíos | |
+
+Las velocidades se juzgan en metros reales de la sede, no en unidades de la cancha normalizada. `raw` es la posición medida de un
+punto que el suavizado movió. Las marcas a mano nunca se quitan como microsalto.
+
+## Sesiones de Strava (`data/strava/`, fuera del repo)
+
+Las escribe `python -m sportsan.ingest.strava_sync sync`. Son datos personales de una atleta: no entran al repo.
+
+- `activities.json`: resumen de todas las actividades desde la fecha pedida, de cualquier deporte (`id, name, sport_type,
+  start_date, start_date_local, elapsed_time, moving_time, distance, average_heartrate, max_heartrate, average_speed, max_speed,
+  total_elevation_gain, has_heartrate`), en las unidades de Strava (segundos, metros, m/s).
+- `<id>.json`: una por actividad de los deportes elegidos (por defecto `Soccer`). `activity` (el resumen más
+  `perceived_exertion`), `laps` (vueltas marcadas en el reloj, con `start_index` y `end_index` sobre las series) y `streams`:
+  series por segundo del mismo largo (`time`, `distance`, `latlng`, `heartrate`, `velocity_smooth`, `cadence`, `altitude`,
+  `moving`). Una serie que el reloj no grabó no aparece.
+- `sessions.csv`: una fila por actividad del índice (de cualquier deporte: toda carga cuenta), en el formato que importa la app:
+  `date, session_id` (`strava_<id>`), `player_id, football` (1 si es de fútbol), `duration_min, moving_min, distance_m, hr_avg,
+  hr_max, speed_avg_ms, speed_max_ms, relative_effort, rpe`. `relative_effort` es el «esfuerzo relativo» de Strava
+  (`suffer_score`): sale del tiempo en cada zona de frecuencia cardiaca, con una fórmula que Strava no publica, y solo existe si
+  la sesión tiene pulso. `rpe` es el esfuerzo percibido anotado en Strava. Lo que falta queda vacío.
+
+## `team_metrics_<video_id>.json` (forma de los equipos, `matches/<match_id>/tracking/`)
+
+Lo escribe `python -m sportsan.metrics.report` a partir de las partes `tracking_<video>_*.parquet` (sin corregir: solo usa el
+equipo de cada persona). Por equipo (`own`, `opp`): cuadros, cuadros válidos y, por tramos de 5 y 10 minutos de **juego**
+(según `segments.csv`), la mediana de `width` (ancho), `length` (largo), `line_height` (distancia media de las 4 más
+retrasadas a su portería), `block_height` (distancia media de todas a su portería), `centroid_x`, `centroid_y`, con
+`valid_share`. Un cuadro cuenta si se ven al menos `min_visible` (7) jugadoras de campo del equipo; la portera se quita si va
+sola a más de 8 m de la siguiente. Sin `own_attacks` las alturas son `null`. Un tramo con menos de 10 cuadros válidos da
+`null`. Funciones en `src/sportsan/metrics/team_blocks.py`.

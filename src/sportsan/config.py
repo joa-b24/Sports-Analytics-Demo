@@ -71,6 +71,8 @@ def load_config(path: str | Path | None = None, match: str | None = None, video:
     cfg["video_id"] = v["video_id"]
     cfg["video_fps"] = v["fps"]
     cfg["youtube_id"] = v.get("youtube_id")
+    # Colores de uniforme: los del video (cada video puede tener los suyos) o, si no, los del partido.
+    cfg["jersey_colors"] = v.get("jersey_colors") or m.get("jersey_colors") or {}
     cfg["paths"] = {
         "match_dir": rel.as_posix(),
         "raw_video": (rel / v["file"]).as_posix(),

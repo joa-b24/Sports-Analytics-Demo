@@ -26,3 +26,14 @@ AGENTS.md
 
 # mockups
 Sports analytics dashboard mockup/
+
+# Pesos de modelos (se descargan)
+weights/
+*.pt
+
+# Strava: credenciales y sesiones descargadas (datos personales)
+config/*.local.json
+data/strava/
+
+# Plantilla (nombres de jugadoras): vive en la app de esta computadora, no en el repo
+config/roster.json

@@ -40,22 +40,23 @@ export const EVENT_LABELS: Record<EventType, string> = {
   cross: "Centro",
 };
 
-// Keyboard shortcut for each event type in the tagging tool.
+// Keyboard shortcut for each event type in the tagging tool: a letter that recalls its Spanish name.
+// "a" and "s" are taken (they choose the team). Keys are compared in lower case.
 export const EVENT_KEYS: Record<EventType, string> = {
-  shot: "1",
-  goal: "2",
-  loss: "3",
-  recovery: "4",
-  foul: "5",
-  corner: "6",
-  free_kick: "7",
-  throw_in: "8",
-  penalty: "9",
-  key_pass: "0",
-  other: "-",
-  final_third_entry: "t",
-  box_entry: "r",
-  goal_kick: "g",
+  shot: "t",
+  goal: "g",
+  loss: "x",
+  recovery: "r",
+  foul: "f",
+  corner: "e",
+  free_kick: "l",
+  throw_in: "b",
+  penalty: "p",
+  key_pass: "k",
+  other: "o",
+  final_third_entry: "u",
+  box_entry: "i",
+  goal_kick: "m",
   cross: "c",
 };
 
@@ -79,10 +80,17 @@ export const DETAIL_TITLES: Partial<Record<EventType, string>> = {
   recovery: "Primer pase",
 };
 // Keys for the options of the last tagged event, in order.
-export const OUTCOME_KEYS = ["z", "x", "v"];
-export const DETAIL_KEYS = ["b", "n", "m"];
+export const OUTCOME_KEYS = ["1", "2", "3"];
+export const DETAIL_KEYS = ["7", "8", "9"];
 
-export type MatchKind = "rival" | "own";
+// Event types with an end position, and which kind (same as END_TYPES / GOAL_TYPES in schema.py).
+export const END_TYPES: readonly EventType[] = ["cross", "corner"];
+export const GOAL_TYPES: readonly EventType[] = ["shot", "goal", "free_kick", "penalty"];
+export const GOAL = { width: 7.32, height: 2.44 };
+
+// own: a match of our team. rival: a match of a team we are going to play. reference: any other video worth studying
+// (a style the coach wants to copy, for instance); it is analysed the same way.
+export type MatchKind = "rival" | "own" | "reference";
 
 export interface Report {
   resumen: string;
@@ -107,6 +115,8 @@ export interface MatchVideo {
   video_id: string;
   youtube_id: string;
   label: string;
+  // Half of the match this video belongs to (a half can come in several videos). Absent = first video 1, others 2.
+  period?: 1 | 2;
 }
 
 export interface Match {
@@ -121,6 +131,10 @@ export interface Match {
   youtube_id: string;
   // Absent in matches saved before a match could have several videos: then there is one, "v1".
   videos?: MatchVideo[];
+  // Name of its folder in matches/ (where the video, the calibration and the tracking live). Absent = none yet.
+  folder?: string;
+  // Venue of the match (lib/venue.ts), chosen in its calibration.
+  venue_id?: string;
   report: Report;
   is_demo?: boolean;
 }
@@ -141,6 +155,12 @@ export interface MatchEvent {
   // Missing in events tagged before the extended catalogue.
   detail?: string | null;
   note: string | null;
+  // Where it ended (third tagging pass). Crosses and corners: where the ball landed, on the pitch.
+  x_end?: number | null;
+  y_end?: number | null;
+  // Shots: where the ball crossed the goal line seen from the shooter, meters from the left post and height.
+  goal_y?: number | null;
+  goal_z?: number | null;
 }
 
 export interface Keyframe {
@@ -226,6 +246,33 @@ export interface VenueSpec {
   grid_color: string;
 }
 
+// The person's corrections to the automatic tracks of one processed part (lib/tracks.ts). The file with the
+// detections is never changed: these edits are applied on top of it.
+export interface TrackEdits {
+  // `${match_id}|${video_id}|${start_frame}_${end_frame}` of the tracks file.
+  key: string;
+  // "<track>" -> identity of a raw track; "i<identity>" -> identity it was merged into.
+  identity: Record<string, number>;
+  // By identity: team set by hand, name or shirt number, and whether the person is already reviewed.
+  people: Record<string, { team?: Team; player_id?: string; done?: boolean }>;
+  // Identities that are not players (a ball boy, a false detection).
+  removed: number[];
+  // From `frame` on, `track` is the new `identity`.
+  splits: { track: number; frame: number; identity: number }[];
+  // Feet position marked by hand (pixels) where the detector lost the person.
+  manual: { identity: number; frame: number; px: number; py: number }[];
+  // Single boxes left out: the second box of a player who was detected twice in that frame. Absent in older edits.
+  dropped?: { track: number; frame: number }[];
+  // Ball marked by hand on the video (pixels), one per frame. Absent in older edits.
+  ball?: { frame: number; px: number; py: number }[];
+}
+
+// A player of our squad. player_id is the name used everywhere (events, tracks, sessions); the number can change.
+export interface RosterPlayer {
+  player_id: string;
+  number: number | null;
+}
+
 export interface State {
   matches: Match[];
   events: MatchEvent[];
@@ -234,6 +281,11 @@ export interface State {
   anchors: CalibAnchor[];
   segments: SegmentMark[];
   venues: VenueSpec[];
+  trackEdits: TrackEdits[];
+  // Our squad. Absent in backups made before it existed.
+  roster: RosterPlayer[];
+  // Shirt colours by match_id of the match folder, as #rrggbb.
+  jerseys: Record<string, { own: string; opp: string; ref: string; own_gk?: string; opp_gk?: string }>;
 }
 
 export const PITCH = { length: 105, width: 68 };

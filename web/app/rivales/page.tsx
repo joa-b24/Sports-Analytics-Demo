@@ -1,5 +1,6 @@
-import { MatchList } from "@/components/MatchList";
+import { redirect } from "next/navigation";
 
+// Rivals now live with the other matches in "Análisis con video".
 export default function Page() {
-  return <MatchList kind="rival" />;
+  redirect("/partidos");
 }

@@ -35,6 +35,18 @@ EVENT_DETAILS = {
     "recovery": ("forward", "backward"),      # primer pase tras recuperar
 }
 
+# Dónde acabó la acción (2026-10-14). Columnas opcionales: si faltan o van vacías, no se anotó.
+# x_end, y_end: dónde cayó el balón de un centro o un córner, en la cancha (mismo sistema que x, y).
+# goal_y, goal_z: dónde cruzó la línea de gol un remate, visto de frente desde quien remata: goal_y en metros desde el
+# poste izquierdo (0 a 7.32 entre los postes), goal_z la altura (0 a 2.44 bajo el larguero). Un tiro fuera cae fuera de
+# esos rangos.
+END_TYPES = ("cross", "corner")
+GOAL_TYPES = ("shot", "goal", "free_kick", "penalty")
+GOAL_WIDTH_M = 7.32
+GOAL_HEIGHT_M = 2.44
+GOAL_MARGIN_M = 5.0  # hasta dónde se admite un tiro fuera alrededor de la portería
+OPTIONAL_EVENT_COLUMNS = ["x_end", "y_end", "goal_y", "goal_z"]
+
 TRACKING_COLUMNS = [
     "match_id", "segment_id", "frame", "t_local", "t_video",
     "track_id", "team", "player_id", "x", "y", "conf",
@@ -124,4 +136,24 @@ def validate_events(df: pd.DataFrame) -> pd.DataFrame:
         if bad:
             raise SchemaError(f"events: {column} inválido para su tipo: {sorted(set(bad))}; permitidos {allowed}")
     _check_in_pitch(df, "events")
+    for columns, types in ((("x_end", "y_end"), END_TYPES), (("goal_y", "goal_z"), GOAL_TYPES)):
+        present = [c for c in columns if c in df.columns]
+        if len(present) == 1:
+            raise SchemaError(f"events: {present[0]} sin su pareja ({' y '.join(columns)} van juntas)")
+        if not present:
+            continue
+        filled = df[df[columns[0]].notna() | df[columns[1]].notna()]
+        if filled[list(columns)].isna().any().any():
+            raise SchemaError(f"events: {columns[0]} y {columns[1]} van juntos (uno sin el otro)")
+        wrong = sorted(set(filled["type"]) - set(types))
+        if wrong:
+            raise SchemaError(f"events: {columns[0]}/{columns[1]} solo para {types}; aparecen en {wrong}")
+    if all(c in df.columns for c in ("x_end", "y_end")):
+        _check_in_pitch(df[["x_end", "y_end"]].rename(columns={"x_end": "x", "y_end": "y"}), "events (destino)")
+    if all(c in df.columns for c in ("goal_y", "goal_z")):
+        g = df[["goal_y", "goal_z"]].dropna()
+        out = g[(g["goal_y"] < -GOAL_MARGIN_M) | (g["goal_y"] > GOAL_WIDTH_M + GOAL_MARGIN_M)
+                | (g["goal_z"] < 0) | (g["goal_z"] > GOAL_HEIGHT_M + GOAL_MARGIN_M)]
+        if len(out):
+            raise SchemaError(f"events: {len(out)} remates fuera del marco admitido alrededor de la portería")
     return df

@@ -1,7 +1,7 @@
 // Run with: node --test "lib/*.test.mjs"   (Node 24 strips the TypeScript types on import)
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fmtHms, marksFromCsvRows, parseHms, segmentAt, segmentsCsv, segmentsFromMarks, totalSeconds } from "./segments.ts";
+import { fmtHms, marksFromCsvRows, parseHms, segmentAt, segmentsCsv, segmentsFromMarks, skipTarget, totalSeconds } from "./segments.ts";
 
 const mark = (t_video, tipo) => ({ mark_id: `m${t_video}`, match_id: "m", t_video, tipo });
 
@@ -65,4 +65,15 @@ test("one file holds every video of the match, with ids that never repeat", () =
     { video_id: "v2", t_video: 2720, tipo: "fin" },
   ]);
   assert.deepEqual(marks.filter((m) => m.video_id === "v1").map((m) => [m.t_video, m.tipo]), [[0, "pausa"], [180, "juego"], [2880, "fin"]]);
+});
+
+test("while tagging, pauses and unmarked stretches are skipped to the next play", () => {
+  const seg = (start, end, tipo) => ({ segment_id: "", start, end, tipo });
+  const segs = [seg(214, 457, "juego"), seg(457, 485, "pausa"), seg(485, 532, "no_medible"), seg(532, 560, "pausa")];
+  assert.equal(skipTarget(segs, 10), 214); // before kick-off
+  assert.equal(skipTarget(segs, 300), null); // in play
+  assert.equal(skipTarget(segs, 460), 485); // pause -> next stretch, also when it is hard to see
+  assert.equal(skipTarget(segs, 500), null);
+  assert.equal(skipTarget(segs, 540), null); // last pause: nothing playable ahead
+  assert.equal(skipTarget([], 10), null); // nothing marked: nothing is skipped
 });

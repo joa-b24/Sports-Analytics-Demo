@@ -21,10 +21,15 @@ dependencies = [
 tracking = ["ultralytics", "supervision==0.27.0", "opencv-python-headless", "scikit-learn", "umap-learn", "gdown"]
 # Propagación de la calibración entre anclas: solo OpenCV, corre en CPU en la laptop.
 calib = ["opencv-python-headless"]
+# Detección y seguimiento de jugadoras en la laptop (CPU). OpenVINO acelera el modelo.
+detect = ["ultralytics", "openvino", "opencv-python-headless"]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sportsan = ["tracking/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

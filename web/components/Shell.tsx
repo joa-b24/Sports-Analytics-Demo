@@ -5,14 +5,12 @@ import {
   CalendarDots,
   CaretDoubleLeft,
   CaretDoubleRight,
-  Crosshair,
   Database,
   DownloadSimple,
   GearSix,
   House,
   Lock,
   SoccerBall,
-  Strategy,
   UsersThree,
   VideoCamera,
   type Icon,
@@ -21,6 +19,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { revealRef } from "@/components/motion";
 import { setPref, usePref, useStore } from "@/lib/store";
+import { useRosterFromFile } from "@/components/RosterCard";
 
 type NavItem = { href: string; label: string; icon: Icon; locked?: string };
 
@@ -30,9 +29,8 @@ const NAV: { label: string; items: NavItem[] }[] = [
     label: "Análisis",
     items: [
       { href: "/", label: "Resumen", icon: House },
-      { href: "/rivales", label: "Rivales", icon: Strategy },
-      { href: "/partidos", label: "Nuestros partidos", icon: VideoCamera },
-      { href: "/jugadoras", label: "Jugadoras", icon: UsersThree, locked: "Falta de datos: no hay plantilla" },
+      { href: "/partidos", label: "Análisis con video", icon: VideoCamera },
+      { href: "/jugadoras", label: "Jugadoras", icon: UsersThree },
     ],
   },
   {
@@ -43,11 +41,8 @@ const NAV: { label: string; items: NavItem[] }[] = [
     ],
   },
   {
-    label: "Video",
-    items: [
-      { href: "/calibracion", label: "Calibración", icon: Crosshair },
-      { href: "/datos", label: "Carga de datos", icon: Database },
-    ],
+    label: "Datos",
+    items: [{ href: "/datos", label: "Carga de datos", icon: Database }],
   },
   {
     label: "Sistema",
@@ -56,6 +51,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
+  useRosterFromFile();
   const path = usePathname();
   const { matches, events, sessions } = useStore();
   // Icons only, to leave the width to the video. Applies from the desktop layout up; on a phone the menu is a strip.

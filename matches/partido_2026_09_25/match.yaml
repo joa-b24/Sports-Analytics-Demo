@@ -1,14 +1,14 @@
 match_id: partido_2026_09_25
 kind: own                       # own = partido nuestro; rival = scouting
 date: "2026-09-25"
-own_team_name: "UP"
-other_team_name: "REEMPLAZAR"
+own_team_name: "Tec CCM"
+other_team_name: "Anáhuac"   # jornada 1
 analysis_stride: 3
 
 venue:
   name: "Estadio La Cueva del León"
-  pitch_length_m: 100           # medido por la analista sobre imagen satelital
-  pitch_width_m: 65
+  pitch_length_m: 102           # medido por la analista sobre imagen satelital
+  pitch_width_m: 66
   notes: "Campo de fútbol americano con las líneas de fútbol pintadas encima."
 
 # Un partido puede venir en varios videos. t_video es el tiempo dentro de cada video.
@@ -18,6 +18,9 @@ videos:
     youtube_id: "_-utAbJNqhI"
     file: video/v1.mp4
     fps: 29.97002997        # 30000/1001 (ffprobe)
+    # Colores como los mide el programa (mediana del torso; sale más apagado que el color elegido sobre el video).
+    # Los elegidos en la app eran own "#084b9f", opp "#020202", ref "#d9f84d": el azul quedaba al límite (39 de 40).
+    jersey_colors: {own: "#5c5a72", own_gk: "#d84242", opp: "#261f18", opp_gk: "#ff9a58", ref: "#c4d581"}
   # - video_id: v2              # segundo tiempo: pendiente
   #   period: 2
   #   youtube_id: "REEMPLAZAR"

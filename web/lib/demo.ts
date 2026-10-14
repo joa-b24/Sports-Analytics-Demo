@@ -189,5 +189,6 @@ export function buildDemo(): State {
     });
   }
 
-  return { matches: [match], events, plays: [play], sessions, anchors: [], segments: marks, venues: [] };
+  return { matches: [match], events, plays: [play], sessions, anchors: [], segments: marks, venues: [], trackEdits: [],
+    roster: [], jerseys: {} };
 }

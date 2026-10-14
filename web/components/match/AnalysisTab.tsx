@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { BinChart, CompareBars, EventTimeline, PartsDuo, RateDuo, ShotMap, StatTile, ZoneMap, type PartsRow } from "@/components/charts";
 import { Locked } from "@/components/Locked";
+import { TeamShapeCard } from "@/components/match/TeamShape";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { Reveal } from "@/components/motion";
 import { Card, Section, input } from "@/components/Shell";
@@ -39,9 +40,11 @@ type Props = {
   segments: Segment[];
   // How to write the moment of an event when the axis is not the video's.
   timeLabel?: (e: MatchEvent) => string;
+  // Videos of the match, to read their team metrics from the match folder.
+  videoIds?: string[];
 };
 
-export function AnalysisTab({ match, events, segments, timeLabel }: Props) {
+export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v1"] }: Props) {
   const [zoneType, setZoneType] = useState<EventType>("recovery");
   const [zoneTeam, setZoneTeam] = useState<Side>("own");
   const [period, setPeriod] = useState<0 | 1 | 2>(0);
@@ -297,11 +300,13 @@ export function AnalysisTab({ match, events, segments, timeLabel }: Props) {
         </div>
       </Section>
 
-      <Section title="Con posiciones medidas" note="preguntas B4 y C4 · todavía no funcionan">
-        <div className="grid gap-4 lg:grid-cols-3">
+      <Section title="Con posiciones medidas" note="desde el tracking">
+        <div className="mb-4">
+          <TeamShapeCard match={match} videoIds={videoIds} />
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
           {[
             ["Jugadoras por detrás del balón al perderlo", "B4. Cuántas quedan en posición de defender en el instante de cada pérdida."],
-            ["Altura y anchura del bloque", "C4. Qué tan alto y qué tan ancho defienden cuando el rival tiene el balón, y la distancia entre líneas."],
             ["Mapa de calor y red de pases", "De la propuesta de diseño. Dónde pasa más tiempo cada equipo y quién combina con quién."],
           ].map(([title, text], n) => (
             <Locked
@@ -316,8 +321,8 @@ export function AnalysisTab({ match, events, segments, timeLabel }: Props) {
           ))}
         </div>
         <p className="mt-3 text-xs text-faint">
-          Dependen de la calibración propagada y del tracking por jugada (pasos A3 a A6 de la hoja de ruta), y solo valdrán dentro de lo que la
-          cámara ve. Ninguna muestra datos hasta entonces.
+          Estas dos necesitan algo más que el equipo de cada persona: saber dónde está el balón en cada instante (marcado a mano en la mesa de
+          corrección o sacado de los eventos), y para la red de pases, quién es cada jugadora. No muestran datos hasta entonces.
         </p>
       </Section>
     </div>

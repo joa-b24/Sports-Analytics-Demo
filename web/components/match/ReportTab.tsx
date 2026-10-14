@@ -44,7 +44,7 @@ export function ReportTab({ match, events, plays }: { match: Match; events: Matc
 
       <header className="border-b border-line pb-4">
         <div className="eyebrow">
-          {match.kind === "rival" ? "Informe de rival (análisis previo)" : "Informe post-partido"}
+          {match.kind === "rival" ? "Informe de rival (análisis previo)" : match.kind === "reference" ? "Informe de video de referencia" : "Informe post-partido"}
         </div>
         <h2 className="mt-1 text-4xl leading-tight text-ink">{match.name}</h2>
         <div className="mt-2 text-sm text-muted">

@@ -84,6 +84,16 @@ export function segmentAt(segments: Segment[], t: number): Segment | null {
   return segments.find((s) => t >= s.start && (s.end === null || t < s.end)) ?? null;
 }
 
+// While tagging, nothing happens in a pause or outside the marked stretches (before kick-off, after the end).
+// If `t` is in one of those, returns where the next stretch that is not a pause starts; null when `t` is already
+// in play, when nothing is marked, or when nothing playable is left ahead.
+export function skipTarget(segments: Segment[], t: number): number | null {
+  const here = segmentAt(segments, t);
+  if (here && here.tipo !== "pausa") return null;
+  const next = segments.filter((s) => s.tipo !== "pausa" && s.start > t).sort((a, b) => a.start - b.start)[0];
+  return next ? next.start : null;
+}
+
 export function totalSeconds(segments: Segment[], tipo: SegmentKind): number {
   return segments.reduce((acc, s) => (s.tipo === tipo && s.end !== null ? acc + (s.end - s.start) : acc), 0);
 }

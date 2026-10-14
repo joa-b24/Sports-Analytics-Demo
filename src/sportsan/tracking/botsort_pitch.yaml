@@ -1,0 +1,16 @@
+# BoT-SORT ajustado para este proyecto: cámara que panea, jugadoras de 40 a 60 px y 1 de cada 3 cuadros procesado.
+# Respecto al de fábrica: se espera más antes de dar por perdido un track (las jugadoras salen y vuelven a entrar al
+# encuadre). El umbral para abrir un track nuevo se probó en 0.45 y dejaba sin caja a jugadoras bien visibles (el
+# 5.5 % de las detecciones, medido); queda en 0.3, y lo que el seguidor no confirma se guarda como detección suelta.
+tracker_type: botsort
+track_high_thresh: 0.3
+track_low_thresh: 0.1
+new_track_thresh: 0.3
+track_buffer: 90
+match_thresh: 0.85
+fuse_score: True
+gmc_method: sparseOptFlow
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: False
+model: auto

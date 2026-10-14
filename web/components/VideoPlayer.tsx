@@ -5,6 +5,8 @@ import { fmtT } from "@/lib/format";
 
 export type PlayerHandle = {
   getTime(): number;
+  // Length of the video in seconds; 0 while it is not known.
+  getDuration(): number;
   seek(t: number, play?: boolean): void;
   play(): void;
   pause(): void;
@@ -15,6 +17,7 @@ export type PlayerHandle = {
 
 type YTPlayer = {
   getCurrentTime(): number;
+  getDuration(): number;
   seekTo(t: number, allowSeekAhead: boolean): void;
   playVideo(): void;
   pauseVideo(): void;
@@ -50,13 +53,15 @@ type Props = {
   youtubeId?: string;
   fileUrl?: string;
   onTime?: (t: number) => void;
+  // Called when playback starts or stops, whatever the backend.
+  onPlayState?: (playing: boolean) => void;
   // Length of the manual clock used when there is no video source.
   virtualMax?: number;
 };
 
 // One time source for the whole match page. Three backends, same t_video:
 // a local copy of the original video, the YouTube embed, or a manual clock.
-export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600 }: Props) {
+export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, onPlayState, virtualMax = 6600 }: Props) {
   const mode = fileUrl ? "file" : youtubeId ? "youtube" : "virtual";
   const videoRef = useRef<HTMLVideoElement>(null);
   const ytHost = useRef<HTMLDivElement>(null);
@@ -67,10 +72,15 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600
   const rate = useRef(1);
   const modeRef = useRef(mode);
   const onTimeRef = useRef(onTime);
+  const onPlayStateRef = useRef(onPlayState);
   useEffect(() => {
     modeRef.current = mode;
     onTimeRef.current = onTime;
+    onPlayStateRef.current = onPlayState;
   });
+  useEffect(() => {
+    if (mode === "virtual") onPlayStateRef.current?.(vPlaying);
+  }, [mode, vPlaying]);
 
   const getTime = () => {
     if (modeRef.current === "file") return videoRef.current?.currentTime ?? 0;
@@ -80,6 +90,12 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600
 
   useImperativeHandle(ref, () => ({
     getTime,
+    getDuration() {
+      const m = modeRef.current;
+      if (m === "file") return Number.isFinite(videoRef.current?.duration) ? (videoRef.current?.duration as number) : 0;
+      if (m === "youtube") return yt.current?.getDuration?.() ?? 0;
+      return 0;
+    },
     seek(t, play) {
       const m = modeRef.current;
       if (m === "file" && videoRef.current) {
@@ -145,6 +161,8 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600
             yt.current = player;
             if (rate.current !== 1) player?.setPlaybackRate?.(rate.current);
           },
+          // 1 = playing; anything else (paused, ended, buffering, cued) shows the play symbol.
+          onStateChange: (e: { data: number }) => onPlayStateRef.current?.(e.data === 1),
         },
       });
     });
@@ -183,6 +201,8 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, virtualMax = 6600
             onLoadedMetadata={(e) => {
               e.currentTarget.playbackRate = rate.current;
             }}
+            onPlay={() => onPlayStateRef.current?.(true)}
+            onPause={() => onPlayStateRef.current?.(false)}
           />
         )}
         {mode === "youtube" && <div ref={ytHost} className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full" />}

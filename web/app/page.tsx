@@ -33,7 +33,7 @@ export default function Home() {
   const empty = matches.length === 0 && sessions.length === 0;
 
   const kpis = [
-    { label: "Partidos de rival", value: rivals.length, href: "/rivales" },
+    { label: "Partidos de rival", value: rivals.length, href: "/partidos" },
     { label: "Partidos propios", value: own.length, href: "/partidos" },
     { label: "Eventos etiquetados", value: events.length },
     { label: "Jugadas", value: plays.length },
@@ -77,7 +77,7 @@ export default function Home() {
                 <Sparkle size={15} />
                 Cargar datos de ejemplo
               </button>
-              <Link href="/rivales" className="btn">
+              <Link href="/partidos" className="btn">
                 Crear un partido
                 <ArrowRight size={14} />
               </Link>
@@ -118,7 +118,7 @@ export default function Home() {
             <div className="flex h-full flex-col gap-5">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="eyebrow">Partido más reciente · {last.kind === "rival" ? "rival" : "propio"}</span>
+                  <span className="eyebrow">Partido más reciente · {last.kind === "rival" ? "rival" : last.kind === "reference" ? "referencia" : "propio"}</span>
                   {last.is_demo && <DemoBadge />}
                 </div>
                 <h2 className="mt-1 text-3xl leading-tight text-ink">{last.name}</h2>
@@ -153,7 +153,7 @@ export default function Home() {
             <div className="flex h-full flex-col items-start gap-3">
               <span className="eyebrow">Partido más reciente</span>
               <p className="text-sm text-muted">Todavía no hay partidos. Crea el primero para empezar a etiquetar.</p>
-              <Link href="/rivales" className={btnPrimary}>
+              <Link href="/partidos" className={btnPrimary}>
                 <VideoCamera size={15} />
                 Crear un partido
               </Link>
