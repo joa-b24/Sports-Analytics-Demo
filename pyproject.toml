@@ -18,11 +18,13 @@ dependencies = [
 
 [project.optional-dependencies]
 # Pesado: se instala en Colab/Kaggle, no hace falta en la laptop.
-tracking = ["ultralytics", "supervision==0.27.0", "opencv-python-headless", "scikit-learn", "umap-learn", "gdown"]
+tracking = ["ultralytics", "supervision==0.27.0", "opencv-python-headless", "scikit-learn", "umap-learn", "gdown", "scipy"]
 # Propagación de la calibración entre anclas: solo OpenCV, corre en CPU en la laptop.
 calib = ["opencv-python-headless"]
 # Detección y seguimiento de jugadoras en la laptop (CPU). OpenVINO acelera el modelo.
-detect = ["ultralytics", "openvino", "opencv-python-headless"]
+detect = ["ultralytics", "openvino", "opencv-python-headless", "scipy"]
+# Bajar videos de YouTube (sportsan.ingest.download_videos).
+ingest = ["yt-dlp"]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]

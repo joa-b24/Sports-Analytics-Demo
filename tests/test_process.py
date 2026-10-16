@@ -55,10 +55,10 @@ def test_teams_by_jersey_colour():
     assert classify_team(hex_to_lab("#c2185b"), refs) == "unk"   # ningún equipo viste así
     assert classify_team(hex_to_lab("#3155a8"), {}) == "unk"     # sin referencias no se decide
 
-    # Un track se decide por el color mediano de sus cajas: un cuadro mal medido no lo cambia.
+    # Un track se decide por votación de sus cajas: un cuadro mal medido no lo cambia; con pocas cajas no se decide.
     blue, dark = list(hex_to_lab("#2a4fb0")), list(hex_to_lab("#1a1a1a"))
     rows = [{"track_id": 7, "lab": blue}] * 5 + [{"track_id": 7, "lab": dark}] + [{"track_id": 9, "lab": dark}] * 3
-    assert track_teams(rows, refs) == {7: "own", 9: "opp"}
+    assert track_teams(rows, refs) == {7: "own", 9: "unk"}
 
 
 def test_dominant_colours_find_the_two_kits_and_the_referee():

@@ -1,6 +1,7 @@
 "use client";
 
-import { Funnel } from "@phosphor-icons/react";
+import { FilmSlate, Funnel, Trash } from "@phosphor-icons/react";
+import { IconButton } from "@/components/Modal";
 import { COLORS } from "@/components/Pitch";
 import { Card, input } from "@/components/Shell";
 import { fmtT } from "@/lib/format";
@@ -184,12 +185,12 @@ export function EventsTable({
                       </td>
                       <td className="py-1 pr-2 text-[11px] whitespace-nowrap text-warn">{missing.join(", ")}</td>
                       <td className="py-1 text-right text-xs whitespace-nowrap">
-                        <button type="button" className="link mr-3" onClick={() => onMakePlay(e)}>
-                          + jugada
-                        </button>
-                        <button type="button" className="text-danger underline underline-offset-2" onClick={() => remove(e.event_id)}>
-                          borrar
-                        </button>
+                        <IconButton label="Crear una jugada desde este evento" onClick={() => onMakePlay(e)}>
+                          <FilmSlate size={14} />
+                        </IconButton>
+                        <IconButton label="Borrar el evento" tone="danger" onClick={() => remove(e.event_id)}>
+                          <Trash size={14} />
+                        </IconButton>
                       </td>
                     </tr>
                   );

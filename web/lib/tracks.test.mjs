@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   applyAbsorb,
   clash,
+  colorDistance,
   dropBoxes,
   duplicatesAmong,
   editsKey,
@@ -211,12 +212,12 @@ test("there is nothing to split before her first frame or after her last", () =>
 
 test("fragments that are a second box on somebody are told apart from lone ones, and go in one step", () => {
   const f = file();
-  const at = (frame, track, x, y) => f.frames.find((fr) => fr.frame === frame).boxes.push([track, 0, 0, 10, 30, 0.9, ...BLUE, x, y, true, "unk", track]);
-  // Everybody in the fixture stands at (50, 30).
-  at(300, 71, 50.4, 30.2); // one frame, glued to the others: a duplicate
-  at(306, 72, 80, 10); // one frame, alone on the far side: not a duplicate
-  at(309, 73, 50.3, 30); // next to somebody here...
-  at(312, 73, 20, 60); // ...but alone here: not a duplicate either
+  // Boxes in the image: the fixture's people all have the box (0, 0)-(10, 30).
+  const at = (frame, track, px) => f.frames.find((fr) => fr.frame === frame).boxes.push([track, px, 0, px + 10, 30, 0.9, ...BLUE, 50, 30, true, "unk", track]);
+  at(300, 71, 1); // inside somebody's box: a duplicate
+  at(306, 72, 500); // alone elsewhere in the image: not a duplicate
+  at(309, 73, 0); // on somebody here...
+  at(312, 73, 800); // ...but alone here: not a duplicate either
   const short = new Set([71, 72, 73]);
   assert.deepEqual(duplicatesAmong(f, E(), short), [71]);
   // People who are not in the list are never returned, however close they stand to each other.
@@ -229,7 +230,8 @@ test("fragments that are a second box on somebody are told apart from lone ones,
 
 test("two people who clash only where one player was detected twice can be unified", () => {
   const f = file();
-  const put = (frame, track, x, y, conf = 0.9) => f.frames.find((fr) => fr.frame === frame).boxes.push([track, 0, 0, 10, 30, conf, ...BLUE, x, y, true, "unk", track]);
+  // The piece's boxes lie inside track 1's box in the image (a smaller box on the same player).
+  const put = (frame, track, x, y, conf = 0.9) => f.frames.find((fr) => fr.frame === frame).boxes.push([track, 1, 2, 9, 28, conf, ...BLUE, x, y, true, "unk", track]);
   // Track 1 is at (50, 30) in frames 300-309. A short piece of the same player overlaps its last two frames,
   // half a metre away (the detector gave two boxes), and goes on alone afterwards.
   put(306, 40, 50.5, 30.2, 0.5);
@@ -257,8 +259,8 @@ test("two people who clash only where one player was detected twice can be unifi
 
 test("people who are apart in the frames they share are told as two", () => {
   const f = file();
-  f.frames[0].boxes.push([60, 0, 0, 10, 30, 0.9, ...BLUE, 80, 10, true, "unk", 60]); // far side of the pitch
-  f.frames[1].boxes.push([60, 0, 0, 10, 30, 0.9, ...BLUE, 50.3, 30, true, "unk", 60]); // here, on top of track 1
+  f.frames[0].boxes.push([60, 600, 100, 610, 130, 0.9, ...BLUE, 80, 10, true, "unk", 60]); // elsewhere in the image
+  f.frames[1].boxes.push([60, 0, 0, 10, 30, 0.9, ...BLUE, 50.3, 30, true, "unk", 60]); // on top of track 1
   const c = clash(f, E(), 1, 60);
   assert.deepEqual(c.apart, [300]);
   assert.deepEqual(c.same, [303]);
@@ -274,11 +276,14 @@ test("the two boxes of one person in a frame are a clash with herself", () => {
   assert.deepEqual(byId(people(f, dropBoxes(E(), c.drop)))[1].conflicts, []);
 });
 
-test("without positions, closeness is judged in the image", () => {
-  const a = [1, 100, 200, 130, 280, 0.9, ...BLUE, null, null, false, "unk", 1];
-  const twin = [2, 104, 205, 132, 283, 0.6, ...BLUE, null, null, false, "unk", 2];
-  const other = [3, 400, 200, 430, 280, 0.9, ...BLUE, null, null, false, "unk", 3];
+test("one player detected twice is judged in the image, whatever their positions on the pitch", () => {
+  const a = [1, 100, 200, 130, 280, 0.9, ...BLUE, 50, 30, true, "unk", 1];
+  const twin = [2, 104, 205, 132, 283, 0.6, ...BLUE, 50.2, 30, true, "unk", 2];
+  // A box inside the other one, with the feet drawn somewhere else: on the pitch 6 m away, but the same person.
+  const inner = [4, 105, 200, 125, 240, 0.5, ...BLUE, 50, 24, true, "unk", 4];
+  const other = [3, 400, 200, 430, 280, 0.9, ...BLUE, 50.5, 30, true, "unk", 3];
   assert.equal(samePlayer(a, twin), true);
+  assert.equal(samePlayer(a, inner), true);
   assert.equal(samePlayer(a, other), false);
 });
 
@@ -326,9 +331,9 @@ test("a piece that fits two people equally, or is too far in time, is left alone
 });
 
 test("two pieces cannot fill the same frame of one person in different places", () => {
-  const at = (track, x, y) => [track, 0, 0, 10, 30, 0.9, ...BLUE, x, y, true, "unk", track];
+  const at = (track, x, y, px = 0) => [track, px, 0, px + 10, 30, 0.9, ...BLUE, x, y, true, "unk", track];
   const frames = [];
-  for (let i = 0; i <= 6; i++) frames.push({ frame: i * 3, H: null, boxes: i === 3 ? [at(30, 40.2, 30), at(31, 42.5, 30)] : [at(1, 40, 30)] });
+  for (let i = 0; i <= 6; i++) frames.push({ frame: i * 3, H: null, boxes: i === 3 ? [at(30, 40.2, 30), at(31, 42.5, 30, 40)] : [at(1, 40, 30)] });
   const f = { match_id: "m", video_id: "v1", fps: 30, start_frame: 0, end_frame: 21, stride: 3, image_w: 1920, image_h: 1080, frames };
   const e = emptyEdits("k");
   const got = suggestAbsorb(f, e, people(f, e), new Set([30, 31]));
@@ -346,4 +351,17 @@ test("nearest processed frame", () => {
   assert.equal(nearestFrame(f, 305), 306);
   assert.equal(nearestFrame(f, 10), 300);
   assert.equal(nearestFrame(f, 999), 327);
+});
+
+test("team by colour, with margin and full lightness (same numbers as tests/test_team.py)", () => {
+  const kits = { own: "#5c5a72", own_gk: "#d84242", opp: "#261f18", opp_gk: "#ff9a58", ref: "#c4d581" };
+  const own = hexToLab(kits.own);
+  const opp = hexToLab(kits.opp);
+  assert.ok(colorDistance(own, opp) < 40);
+  assert.ok(colorDistance(own, opp, 1) >= 60);
+  assert.equal(teamOfColor([own[0] - 20, own[1], own[2]], kits), "own");
+  assert.equal(teamOfColor(own.map((v, i) => (v + opp[i]) / 2), kits), "unk");
+  assert.equal(teamOfColor(hexToLab(kits.own_gk), kits), "own");
+  assert.equal(teamOfColor(hexToLab(kits.opp_gk), kits), "opp");
+  assert.equal(teamOfColor(own, {}), "unk");
 });

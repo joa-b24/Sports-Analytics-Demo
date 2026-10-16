@@ -19,6 +19,9 @@ export interface TracksFile {
   image_h: number;
   venue?: { length_m?: number; width_m?: number };
   frames: { frame: number; H?: number[] | null; boxes: DetBox[] }[];
+  // Written by sportsan.tracking.process; older or synthetic files may not have them.
+  schema_version?: number;
+  tracker?: string;
 }
 
 export type TeamCode = "own" | "opp" | "ref" | "unk";
@@ -80,24 +83,84 @@ export function labToHex(lab: number[]): string {
   );
 }
 
-// Beyond this distance a shirt belongs to no team. Lightness counts half: shade changes it a lot and the hue little.
-// Same rule and value as classify_team / MAX_COLOR_DISTANCE in process.py.
+// Same rule and values as sportsan/tracking/team.py: to decide a team the lightness counts in full (it is what tells
+// two dark kits apart, such as blue and black), the nearest kit must be closer than MAX_COLOR_DISTANCE, and the
+// nearest kit of another team at least TEAM_MARGIN times farther. Otherwise no team.
 export const MAX_COLOR_DISTANCE = 40;
+export const TEAM_MARGIN = 1.3;
+const TEAM_L_WEIGHT = 1;
 
-// Nearest reference kit, or null when none is close enough (or none is set).
+export const colorDistance = (a: number[], b: number[], lWeight = 0.5) => Math.hypot(lWeight * (a[0] - b[0]), a[1] - b[1], a[2] - b[2]);
+
+// Nearest reference kit, or null when none is close enough, the decision has no margin, or no kit is set.
 export function kitOfColor(lab: number[], colors: Partial<JerseyColors> | undefined): JerseyKey | null {
-  let best: JerseyKey | null = null;
-  let bestD = MAX_COLOR_DISTANCE;
+  const dist: { key: JerseyKey; d: number }[] = [];
   for (const key of JERSEY_KEYS) {
     const ref = colors?.[key] ? hexToLab(colors[key] as string) : null;
-    if (!ref) continue;
-    const d = Math.hypot(0.5 * (lab[0] - ref[0]), lab[1] - ref[1], lab[2] - ref[2]);
-    if (d <= bestD) {
-      best = key;
-      bestD = d;
-    }
+    if (ref) dist.push({ key, d: colorDistance(lab, ref, TEAM_L_WEIGHT) });
   }
-  return best;
+  dist.sort((x, y) => x.d - y.d);
+  const best = dist[0];
+  if (!best || best.d > MAX_COLOR_DISTANCE) return null;
+  const other = dist.find((x) => KEY_TEAM[x.key] !== KEY_TEAM[best.key]);
+  if (other && other.d < TEAM_MARGIN * best.d) return null;
+  return best.key;
+}
+
+// ---------------------------------------------------------------- team from the file itself
+
+// Shirt colour of each team as the program measured it: median of the boxes it gave that team (column 12). The colours
+// picked by hand on the video are brighter than what is measured on a torso, so comparing measured with measured is
+// what tells teams apart reliably.
+export type FileTeamRefs = Partial<Record<"own" | "opp" | "ref", number[]>>;
+const refsCache = new WeakMap<TracksFile, FileTeamRefs>();
+export function fileTeamRefs(file: TracksFile): FileTeamRefs {
+  const hit = refsCache.get(file);
+  if (hit) return hit;
+  const out = computeTeamRefs(file);
+  refsCache.set(file, out);
+  return out;
+}
+function computeTeamRefs(file: TracksFile): FileTeamRefs {
+  const labs: Record<string, number[][]> = { own: [], opp: [], ref: [] };
+  for (const fr of file.frames) for (const b of fr.boxes) if (b[11] && labs[b[12]]) labs[b[12]].push([b[6], b[7], b[8]]);
+  const out: FileTeamRefs = {};
+  for (const t of ["own", "opp", "ref"] as const) {
+    if (labs[t].length >= 10) out[t] = [0, 1, 2].map((i) => median(labs[t].map((l) => l[i])));
+  }
+  return out;
+}
+
+// Team of one box against those references: the nearest, with full lightness and the same margin as teamOfColor.
+export function boxTeam(lab: number[], refs: FileTeamRefs): TeamCode {
+  const dist = (Object.entries(refs) as [TeamCode, number[]][]).map(([t, r]) => ({ t, d: colorDistance(lab, r, 1) })).sort((a, b) => a.d - b.d);
+  if (!dist.length || dist[0].d > MAX_COLOR_DISTANCE) return "unk";
+  if (dist[1] && dist[1].d < TEAM_MARGIN * dist[0].d) return "unk";
+  return dist[0].t;
+}
+
+// boxTeam of a box of a file: it never changes with the edits, so it is worked out once per box.
+const boxTeamCache = new WeakMap<DetBox, TeamCode>();
+export function boxTeamOf(box: DetBox, refs: FileTeamRefs): TeamCode {
+  let t = boxTeamCache.get(box);
+  if (t === undefined) {
+    t = boxTeam([box[6], box[7], box[8]], refs);
+    boxTeamCache.set(box, t);
+  }
+  return t;
+}
+
+// A person takes the team of most of her boxes (at least TEAM_SHARE of the decided ones, and 3 of them).
+export const TEAM_SHARE = 0.6;
+function majority(votes: Map<TeamCode, number>): TeamCode | null {
+  let best: TeamCode | null = null;
+  let n = 0;
+  let total = 0;
+  for (const [t, k] of votes) {
+    total += k;
+    if (k > n) [best, n] = [t, k];
+  }
+  return best && total >= 3 && n / total >= TEAM_SHARE ? best : null;
 }
 
 export function teamOfColor(lab: number[], colors: Partial<JerseyColors> | undefined): TeamCode {
@@ -114,10 +177,30 @@ function median(values: number[]): number {
 // ---------------------------------------------------------------- identities
 
 // Identity of a detection after the edits. A split sends a track to a new identity from a frame on.
+// The splits of each track, sorted by frame, built once per list of splits (identityOf runs for every box).
+const splitIndex = new WeakMap<TrackEdits["splits"], Map<number, TrackEdits["splits"]>>();
+function splitsOf(edits: TrackEdits, track: number): TrackEdits["splits"] | undefined {
+  let index = splitIndex.get(edits.splits);
+  if (!index) {
+    index = new Map();
+    for (const s of edits.splits) {
+      const list = index.get(s.track) ?? [];
+      list.push(s);
+      index.set(s.track, list);
+    }
+    for (const list of index.values()) list.sort((a, b) => a.frame - b.frame);
+    splitIndex.set(edits.splits, index);
+  }
+  return index.get(track);
+}
+
 export function identityOf(box: DetBox, frame: number, edits: TrackEdits): number {
   const track = box[0];
   let split: TrackEdits["splits"][number] | null = null;
-  for (const s of edits.splits) if (s.track === track && s.frame <= frame && (!split || s.frame > split.frame)) split = s;
+  for (const s of splitsOf(edits, track) ?? []) {
+    if (s.frame > frame) break;
+    split = s;
+  }
   const base = split ? split.identity : (edits.identity[String(track)] ?? box[13] ?? track);
   // A merge moves the whole identity, including the pieces created by splits.
   return edits.identity[`i${base}`] ?? base;
@@ -149,12 +232,14 @@ export interface Person {
 
 // Everyone in the file after the edits, in order of appearance. Discarded identities are left out.
 export function people(file: TracksFile, edits: TrackEdits, colors?: Partial<JerseyColors>, minGapS = 0.5): Person[] {
-  const acc = new Map<number, { frames: Set<number>; tracks: Set<number>; labs: number[][]; inside: number; n: number; twice: number[] }>();
+  const acc = new Map<number, { frames: Set<number>; tracks: Set<number>; labs: number[][]; inside: number; n: number; twice: number[]; votes: Map<TeamCode, number>; fileVotes: Map<TeamCode, number> }>();
   const get = (id: number) => {
     let p = acc.get(id);
-    if (!p) acc.set(id, (p = { frames: new Set(), tracks: new Set(), labs: [], inside: 0, n: 0, twice: [] }));
+    if (!p) acc.set(id, (p = { frames: new Set(), tracks: new Set(), labs: [], inside: 0, n: 0, twice: [], votes: new Map(), fileVotes: new Map() }));
     return p;
   };
+  const refs = fileTeamRefs(file);
+  const vote = (m: Map<TeamCode, number>, t: TeamCode) => t !== "unk" && m.set(t, (m.get(t) ?? 0) + 1);
   const drop = droppedSet(edits);
   for (const fr of file.frames) {
     for (const b of fr.boxes) {
@@ -164,6 +249,8 @@ export function people(file: TracksFile, edits: TrackEdits, colors?: Partial<Jer
       p.frames.add(fr.frame);
       p.tracks.add(b[0]);
       p.labs.push([b[6], b[7], b[8]]);
+      vote(p.votes, boxTeamOf(b, refs));
+      vote(p.fileVotes, b[12] as TeamCode);
       p.n++;
       if (b[11]) p.inside++;
     }
@@ -183,7 +270,9 @@ export function people(file: TracksFile, edits: TrackEdits, colors?: Partial<Jer
     }
     out.push({
       id,
-      team: (meta.team as TeamCode | undefined) ?? teamOfColor(lab, colors),
+      // By hand; else by her boxes against the colours measured in this file; else as the program proposed; else by
+      // the colours picked on the video (older files without teams).
+      team: (meta.team as TeamCode | undefined) ?? majority(p.votes) ?? majority(p.fileVotes) ?? teamOfColor(lab, colors),
       teamByHand: meta.team !== undefined,
       keeper: (kitOfColor(lab, colors) ?? "").endsWith("_gk"),
       player_id: meta.player_id ?? "",
@@ -240,15 +329,21 @@ export function overlap(a: Person, b: Person): number[] {
   return a.frames.filter((f) => other.has(f));
 }
 
-// Two boxes closer than this (units of the pitch, about meters) in one frame are one player detected twice.
-export const SAME_PLAYER_M = 2;
+// Two boxes of one frame are one player detected twice when the smaller lies mostly inside the bigger one in the image
+// (a box within a box, or two near-identical boxes). Judged in pixels, not on the pitch: when the detector draws the
+// feet of the two boxes differently, their positions on the pitch can be metres apart although it is one person.
+export const SAME_BOX_OVERLAP = 0.6;
 
-// Are two boxes of one frame the same player seen twice? By position on the pitch when both have one; otherwise by
-// how close they are in the image, compared with their own size.
-export function samePlayer(a: DetBox, b: DetBox, radius = SAME_PLAYER_M): boolean {
-  if (a[9] !== null && a[10] !== null && b[9] !== null && b[10] !== null) return Math.hypot(a[9] - b[9], a[10] - b[10]) < radius;
-  const size = Math.max(a[4] - a[2], b[4] - b[2]);
-  return Math.hypot((a[1] + a[3]) / 2 - (b[1] + b[3]) / 2, a[4] - b[4]) < 0.6 * size;
+export function boxOverlap(a: DetBox, b: DetBox): number {
+  const w = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+  const h = Math.min(a[4], b[4]) - Math.max(a[2], b[2]);
+  if (w <= 0 || h <= 0) return 0;
+  const smaller = Math.min((a[3] - a[1]) * (a[4] - a[2]), (b[3] - b[1]) * (b[4] - b[2]));
+  return smaller > 0 ? (w * h) / smaller : 0;
+}
+
+export function samePlayer(a: DetBox, b: DetBox): boolean {
+  return boxOverlap(a, b) >= SAME_BOX_OVERLAP;
 }
 
 export interface Clash {
@@ -346,29 +441,31 @@ export function setPerson(edits: TrackEdits, id: number, patch: { team?: TeamCod
 }
 
 // Among the given people (usually the fragments of under a second), those that are a second box on somebody else:
-// in every frame where they appear, another person stands within `radius` units of the pitch. The rest were alone
-// at least once: a real detection of someone, or a false one, but not a duplicate.
-export function duplicatesAmong(file: TracksFile, edits: TrackEdits, ids: Set<number>, radius = 1.5): number[] {
+// in every frame where they appear, their box lies mostly inside another person's box in the image (samePlayer). The
+// rest were alone at least once: a real detection of someone, or a false one, but not a duplicate.
+export function duplicatesAmong(file: TracksFile, edits: TrackEdits, ids: Set<number>): number[] {
   const near = new Map<number, boolean>();
   const gone = new Set(edits.removed);
   const drop = droppedSet(edits);
   for (const fr of file.frames) {
     const here = fr.boxes
-      .filter((b) => b[9] !== null && b[10] !== null && !isDropped(drop, b, fr.frame))
-      .map((b) => ({ id: identityOf(b, fr.frame, edits), x: b[9] as number, y: b[10] as number }))
-      .filter((b) => !gone.has(b.id));
-    for (const b of here) {
-      if (!ids.has(b.id)) continue;
-      const close = here.some((o) => o.id !== b.id && Math.hypot(o.x - b.x, o.y - b.y) < radius);
-      near.set(b.id, (near.get(b.id) ?? true) && close);
+      .filter((b) => !isDropped(drop, b, fr.frame))
+      .map((b) => ({ id: identityOf(b, fr.frame, edits), b }))
+      .filter((x) => !gone.has(x.id));
+    for (const x of here) {
+      if (!ids.has(x.id)) continue;
+      const covered = here.some((o) => o.id !== x.id && samePlayer(o.b, x.b));
+      near.set(x.id, (near.get(x.id) ?? true) && covered);
     }
   }
   return [...near].filter(([, always]) => always).map(([id]) => id);
 }
 
-// A short piece fits a person when she could be there: within SAME_PLAYER_M plus what she can run in the time since
+// A short piece fits a person when she could be there: within ABSORB_SAME_M plus what she can run in the time since
 // (or until) her nearest known position, and no further in time than ABSORB_GAP_S.
 export const ABSORB_SPEED_MS = 8;
+// On top of her box (m) when both are in the same frame.
+export const ABSORB_SAME_M = 2;
 export const ABSORB_GAP_S = 2;
 
 export interface Absorb {
@@ -414,23 +511,24 @@ export function suggestAbsorb(file: TracksFile, edits: TrackEdits, ppl: Person[]
         const there = h.at.get(f);
         if (there) {
           const d = dist(xy, there);
-          if (d >= SAME_PLAYER_M) ok = false;
+          if (d >= ABSORB_SAME_M) ok = false;
           total += d;
         } else {
           // Her nearest known positions before and after this frame, when close enough in time.
-          let prev: number | null = null;
-          let next: number | null = null;
-          for (const g of h.frames) {
-            if (g < f) prev = g;
-            else {
-              next = g;
-              break;
-            }
+          // Binary search in her sorted frames.
+          let lo = 0;
+          let hi = h.frames.length;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (h.frames[mid] < f) lo = mid + 1;
+            else hi = mid;
           }
+          const prev: number | null = lo > 0 ? h.frames[lo - 1] : null;
+          const next: number | null = lo < h.frames.length ? h.frames[lo] : null;
           const near = [prev, next].filter((g): g is number => g !== null && Math.abs(g - f) / file.fps <= ABSORB_GAP_S);
           if (near.length === 0) ok = false;
           for (const g of near) {
-            if (dist(xy, h.at.get(g) as [number, number]) > SAME_PLAYER_M + (ABSORB_SPEED_MS * Math.abs(g - f)) / file.fps) ok = false;
+            if (dist(xy, h.at.get(g) as [number, number]) > ABSORB_SAME_M + (ABSORB_SPEED_MS * Math.abs(g - f)) / file.fps) ok = false;
           }
           if (!ok) break;
           let expected = h.at.get(near[0]) as [number, number];
@@ -500,4 +598,10 @@ export function nearestFrame(file: Pick<TracksFile, "start_frame" | "end_frame" 
   const k = file.start_frame + Math.round((frame - file.start_frame) / file.stride) * file.stride;
   const last = file.start_frame + Math.floor((file.end_frame - 1 - file.start_frame) / file.stride) * file.stride;
   return Math.min(last, Math.max(file.start_frame, k));
+}
+
+// The edits with the referees (by shirt, not set by hand) left out, for what is exported.
+export function withoutReferees(file: TracksFile, edits: TrackEdits, colors?: Partial<JerseyColors>): TrackEdits {
+  const refs = people(file, edits, colors).filter((p) => p.team === "ref" && !p.teamByHand).map((p) => p.id);
+  return refs.length ? setRemovedMany(edits, refs) : edits;
 }

@@ -72,7 +72,9 @@ def load_config(path: str | Path | None = None, match: str | None = None, video:
     cfg["video_fps"] = v["fps"]
     cfg["youtube_id"] = v.get("youtube_id")
     # Colores de uniforme: los del video (cada video puede tener los suyos) o, si no, los del partido.
-    cfg["jersey_colors"] = v.get("jersey_colors") or m.get("jersey_colors") or {}
+    # Si el video no trae los suyos, los del partido o, si no, los de otro video del mismo partido (mismo día, mismos
+    # uniformes).
+    cfg["jersey_colors"] = v.get("jersey_colors") or m.get("jersey_colors") or next((o["jersey_colors"] for o in videos if o.get("jersey_colors")), {})
     cfg["paths"] = {
         "match_dir": rel.as_posix(),
         "raw_video": (rel / v["file"]).as_posix(),

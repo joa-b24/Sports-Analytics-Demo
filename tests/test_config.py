@@ -54,3 +54,9 @@ def test_colores_del_video_o_del_partido(repo):
     assert config.load_config()["jersey_colors"] == {"own": "#084b9f", "opp": "#020202"}
     assert config.load_config(video="v2")["jersey_colors"] == {"own": "#111111"}
     assert config.load_config(match="m2")["jersey_colors"] == {}
+    # Sin colores en el partido, un video sin los suyos toma los de otro video del mismo partido.
+    (repo / "matches" / "m1" / "match.yaml").write_text(
+        "match_id: m1\nvideos:\n"
+        "  - {video_id: v1, file: video/v1.mp4, fps: 30, jersey_colors: {own: '#084b9f'}}\n"
+        "  - {video_id: v2, file: video/v2.mp4, fps: 30}\n", encoding="utf-8")
+    assert config.load_config(video="v2")["jersey_colors"] == {"own": "#084b9f"}

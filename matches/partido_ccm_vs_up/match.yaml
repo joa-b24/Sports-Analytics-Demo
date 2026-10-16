@@ -16,4 +16,16 @@ videos:
     youtube_id: "OIvhk-vNs5c"   # BORREGOS CCM VS UP PRIMERA PARTE 1 (18:10)
     file: video/v1.mp4
     fps: 30                     # 30/1 (ffprobe)
+  - video_id: v2
+    period: 1
+    label: "1.er tiempo (parte 2)"
+    youtube_id: "C-8Iwurx4xE"
+    file: video/v2.mp4
+    fps: 30
+  - video_id: v3
+    period: 2
+    label: "2.do tiempo"
+    youtube_id: "xPfZ4sZzJ5w"
+    file: video/v3.mp4
+    fps: 30
     # jersey_colors: elegir en la app (Corrección de tracks → Uniformes) y escribir aquí

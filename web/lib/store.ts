@@ -75,6 +75,9 @@ function loadPrefs(): Record<string, string> {
   return prefs;
 }
 
+// A preference read once (outside React rendering, or where a change need not redraw).
+export const getPref = (key: string, fallback = "") => loadPrefs()[key] ?? fallback;
+
 export function setPref(key: string, value: string) {
   prefs = { ...loadPrefs(), [key]: value };
   try {

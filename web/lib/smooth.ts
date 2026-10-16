@@ -77,8 +77,27 @@ export function dropJumps(points: TrackPoint[], o: SmoothOptions): { points: Tra
     removed += pts.length - keep.length;
     pts = keep;
   }
+  // Short excursions: a few points that jump away too fast and later jump back, while going straight from the point
+  // before to the point after is possible. Usually the feet of a box were hidden and landed metres away.
+  const maxPts = Math.max(2, Math.round((EXCURSION_MAX_S * o.fps) / o.stride));
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1];
+    if (pts[i].source === "manual" || speed(a, pts[i], o) <= o.maxSpeedMs) continue;
+    for (let k = i + 1; k < Math.min(pts.length, i + maxPts + 1); k++) {
+      const inside = pts.slice(i, k);
+      if (inside.some((q) => q.source === "manual")) break;
+      if (speed(pts[k - 1], pts[k], o) > o.maxSpeedMs && speed(a, pts[k], o) <= o.maxSpeedMs) {
+        removed += inside.length;
+        pts = [...pts.slice(0, i), ...pts.slice(k)];
+        break;
+      }
+    }
+  }
   return { points: pts, removed };
 }
+
+// Longest excursion (s) that is taken out as a wrong position (see dropJumps).
+export const EXCURSION_MAX_S = 0.5;
 
 // Step 2. Fills the holes that are short and physically possible, one position per processed frame.
 export function fillGaps(points: TrackPoint[], o: SmoothOptions): { points: TrackPoint[]; filled: number; open: number } {

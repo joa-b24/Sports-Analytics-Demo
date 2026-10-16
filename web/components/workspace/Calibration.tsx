@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, DownloadSimple, FastForward, FolderOpen, Info, Minus, Path, Pause, Play, Plus, UsersThree, Rewind, SkipBack, SkipForward } from "@phosphor-icons/react";
+import { Check, Crosshair, DownloadSimple, FastForward, FolderOpen, Info, Minus, Path, Pause, Play, Plus, Rewind, SkipBack, SkipForward, Trash, UsersThree, X } from "@phosphor-icons/react";
+import { IconButton } from "@/components/Modal";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { LocalPick } from "@/components/LocalPick";
@@ -840,16 +841,12 @@ export function Calibration({
                           <td className="tc">{fit.quality?.residuals[i].toFixed(2)}</td>
                           <td className="tc">{loo === null ? "—" : loo.toFixed(2)}</td>
                           <td className="text-right whitespace-nowrap">
-                            <button type="button" className="link mr-3" aria-pressed={p.landmark_id === sel} onClick={() => setSel(p.landmark_id)}>
-                              ajustar
-                            </button>
-                            <button
-                              type="button"
-                              className="link"
-                              onClick={() => setPoints((ps) => ps.filter((q) => q.landmark_id !== p.landmark_id))}
-                            >
-                              quitar
-                            </button>
+                            <IconButton label="Ajustar este punto" tone={p.landmark_id === sel ? "accent" : "default"} onClick={() => setSel(p.landmark_id)}>
+                              <Crosshair size={14} />
+                            </IconButton>
+                            <IconButton label="Quitar este punto" tone="danger" onClick={() => setPoints((ps) => ps.filter((q) => q.landmark_id !== p.landmark_id))}>
+                              <X size={14} />
+                            </IconButton>
                           </td>
                         </tr>
                       );
@@ -1043,17 +1040,17 @@ export function Calibration({
                     <span className="tc text-ink">
                       {fmtT(a.t_video)} · cuadro {a.frame} · {a.points.length} puntos
                     </span>
-                    <span className="flex gap-3 text-xs">
-                      <button type="button" className="link" onClick={() => loadAnchor(a)}>
-                        abrir
-                      </button>
-                      <button
-                        type="button"
-                        className="text-muted underline underline-offset-2 transition-colors hover:text-danger"
+                    <span className="flex gap-1 text-xs">
+                      <IconButton label="Abrir esta ancla" onClick={() => loadAnchor(a)}>
+                        <FolderOpen size={14} />
+                      </IconButton>
+                      <IconButton
+                        label="Borrar esta ancla"
+                        tone="danger"
                         onClick={() => mutate((s) => ({ ...s, anchors: s.anchors.filter((x) => x.anchor_id !== a.anchor_id) }))}
                       >
-                        borrar
-                      </button>
+                        <Trash size={14} />
+                      </IconButton>
                     </span>
                   </li>
                 ))}

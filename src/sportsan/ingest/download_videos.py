@@ -43,7 +43,7 @@ YTDLP_OPTS = ["--compat-options", "no-certifi", "--js-runtimes", "node", "--remo
 
 def youtube_id(url: str) -> str:
     """Id de 11 caracteres de un enlace de YouTube ("" si no lo es)."""
-    m = re.search(r"(?:v=|youtu\.be/|shorts/|embed/)([\w-]{11})", url or "")
+    m = re.search(r"(?:v=|youtu\.be/|shorts/|embed/|live/)([\w-]{11})", url or "")
     return m.group(1) if m else ""
 
 

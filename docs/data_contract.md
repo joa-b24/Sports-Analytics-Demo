@@ -283,3 +283,14 @@ retrasadas a su portería), `block_height` (distancia media de todas a su porter
 `valid_share`. Un cuadro cuenta si se ven al menos `min_visible` (7) jugadoras de campo del equipo; la portera se quita si va
 sola a más de 8 m de la siguiente. Sin `own_attacks` las alturas son `null`. Un tramo con menos de 10 cuadros válidos da
 `null`. Funciones en `src/sportsan/metrics/team_blocks.py`.
+
+## `labels_<video_id>_<inicio>_<fin>.json` (correcciones como etiquetas, exportadas desde la app)
+
+Para medir cuánto trabajo deja una forma de unir tracks (`python -m sportsan.tracking.evaluate`). Una entrada por cada caja
+del archivo de tracks, también las descartadas: `frames: [{frame, boxes: [{track, label, status}]}]`, donde `track` es la
+columna 0 original (nunca la identidad), `label` la persona tras las correcciones y `status` `player`, `dropped` (caja
+descartada una por una: duplicado; `label` null) o `removed` (la persona no es jugadora). Además `manual` (pies marcados a
+mano, con su `label`), `people` (`{label, team, reviewed, named}`: **solo las revisadas cuentan como verdad**),
+`rejected` (pares que no son la misma persona), `source` (`schema_version`, `tracker`, `assoc` del archivo de tracks) y
+`edits` (las correcciones tal cual). **Nunca lleva nombres de jugadoras**: solo `named` (true/false). La clave es la caja
+original, así que las etiquetas siguen valiendo si la parte se vuelve a unir con otro método sin volver a detectar.

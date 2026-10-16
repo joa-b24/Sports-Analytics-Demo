@@ -36,17 +36,25 @@ OFFSCREEN_GROWTH_MS = 2.5
 OFFSCREEN_MAX_M = 18.0
 # Diferencia máxima de color de camiseta. La luminosidad pesa la mitad: la sombra la cambia mucho y el tono poco.
 MAX_COLOR = 30.0
-# Reaparición inmediata: hasta este tiempo (s) y esta distancia (m) no se exige que el color coincida.
+# Reaparición inmediata: hasta este tiempo (s) y esta distancia (m) no se exige que el color coincida con MAX_COLOR...
 IMMEDIATE_S = 0.45
 IMMEDIATE_M = 1.5
+# ...pero sí que no sea de otro uniforme: con la luminosidad completa, azul y negro quedan a ~70 y las cajas de una
+# misma persona a mucho menos. Sin este veto, una jugadora que sale de cuadro y otra del otro equipo que entra justo
+# ahí se unían.
+IMMEDIATE_MAX_COLOR = 50.0
 # Ventana (s) para medir la velocidad con la que termina un fragmento.
 VELOCITY_WINDOW_S = 1.0
+# Un fragmento más corto que esto (s) no se une a nada: es demasiado poco para saber hacia dónde iba ni de qué color
+# es, y servía de pegamento entre dos personas distintas. Se queda como está (la mesa lo ofrece para descartar).
+MIN_LINK_S = 1.0
 
 
-def color_distance(a, b) -> float:
-    """Distancia entre dos camisetas en Lab, con la luminosidad a la mitad."""
+def color_distance(a, b, l_weight: float = 0.5) -> float:
+    """Distancia entre dos camisetas en Lab. La luminosidad pesa `l_weight`: la mitad para comparar cajas de una misma
+    persona (la sombra la cambia mucho); completa para decidir equipo (team.py), donde separa uniformes oscuros."""
     d = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
-    return float(np.sqrt((0.5 * d[0]) ** 2 + d[1] ** 2 + d[2] ** 2))
+    return float(np.sqrt((l_weight * d[0]) ** 2 + d[1] ** 2 + d[2] ** 2))
 
 
 @dataclass
@@ -54,7 +62,7 @@ class Fragment:
     track_id: int
     start: int                  # primer cuadro (número de cuadro del video)
     end: int                    # último cuadro
-    start_xy: np.ndarray        # posición al empezar, en la cancha normalizada
+    start_xy: np.ndarray        # posición al empezar, en metros reales de la sede
     end_xy: np.ndarray          # posición al terminar
     velocity: np.ndarray        # m/s al terminar (0 si no se puede estimar)
     lab: np.ndarray             # color mediano de la camiseta
@@ -189,7 +197,7 @@ def predicted_position(a: Fragment, dt: float) -> np.ndarray:
     return a.end_xy + a.velocity * DAMPING_S * (1 - np.exp(-dt / DAMPING_S))
 
 
-def link_cost(a: Fragment, b: Fragment, fps: float) -> float | None:
+def link_cost(a: Fragment, b: Fragment, fps: float, immediate_veto: bool = True) -> float | None:
     """Coste de decir que `b` continúa a `a`; None si no es creíble."""
     dt = (b.start - a.end) / fps
     if dt <= 0:
@@ -200,7 +208,7 @@ def link_cost(a: Fragment, b: Fragment, fps: float) -> float | None:
     reach = float(np.linalg.norm(b.start_xy - a.end_xy))
     # Continuidad inmediata: reaparece casi en el mismo sitio en menos de medio segundo. Ahí manda la posición; el
     # color de una caja pequeña y lejana es demasiado ruidoso para vetar la unión (el equipo, si se conoce, sí veta).
-    immediate = dt <= IMMEDIATE_S and reach <= IMMEDIATE_M
+    immediate = dt <= IMMEDIATE_S and reach <= IMMEDIATE_M and (not immediate_veto or color_distance(a.lab, b.lab, l_weight=1.0) <= IMMEDIATE_MAX_COLOR)
     if color > MAX_COLOR and not immediate:
         return None
     if reach > MAX_SPEED_MS * dt + SLACK_M:
@@ -221,7 +229,7 @@ def link_cost(a: Fragment, b: Fragment, fps: float) -> float | None:
     return None
 
 
-def stitch(fragments: list[Fragment], fps: float) -> dict[int, int]:
+def stitch(fragments: list[Fragment], fps: float, min_link_s: float = MIN_LINK_S, immediate_veto: bool = True) -> dict[int, int]:
     """Propone qué fragmentos son la misma persona. Devuelve track_id -> identidad (el track_id del primer fragmento).
 
     Emparejamiento voraz de menor a mayor coste: cada fragmento tiene como mucho una continuación y un antecesor.
@@ -229,11 +237,12 @@ def stitch(fragments: list[Fragment], fps: float) -> dict[int, int]:
     ninguno: es justo el caso (dos jugadoras que se cruzan) en el que una unión automática se equivoca.
     """
     candidates: list[tuple[float, int, int]] = []
+    long_enough = [(f.end - f.start) / fps >= min_link_s for f in fragments]
     for i, a in enumerate(fragments):
         for j, b in enumerate(fragments):
-            if i == j:
+            if i == j or not long_enough[i] or not long_enough[j]:
                 continue
-            c = link_cost(a, b, fps)
+            c = link_cost(a, b, fps, immediate_veto)
             if c is not None:
                 candidates.append((c, i, j))
     candidates.sort()

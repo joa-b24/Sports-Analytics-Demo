@@ -17,7 +17,7 @@ const ROOT = path.resolve(process.env.SPORTSAN_ROOT ?? path.join(process.cwd(), 
 // Only these parts of the repository are reachable.
 const READABLE = [/^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.json$/, /^data\/strava(\/.*)?$/];
 const WRITABLE = [
-  /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors)_[\w.-]+\.json$/,
+  /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors|labels)_[\w.-]+\.json$/,
   /^matches\/[\w.-]+\/(match\.yaml|segments\.csv)$/,
   /^config\/roster\.json$/,
 ];

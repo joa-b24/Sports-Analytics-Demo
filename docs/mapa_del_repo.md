@@ -134,8 +134,8 @@ Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Track
 |---|---|---|---|
 | Tramos | `SegmentsTab.tsx` | Marcas de corte → tramos de juego/pausa; exporta e importa `segments.csv` | `lib/segments.ts` |
 | Etiquetado | `TagTab.tsx` | Tres pasadas: 1 identificar (teclas, etiqueta sobre el video, aviso de duplicado, `J` = jugada), 2 revisar uno por uno (`ReviewPanel.tsx`), 3 ejecución: destino de tiros en la portería (`GoalFrame.tsx`) y de centros y córners en la cancha. Bajo el video, línea de tiempo (`VideoTimeline.tsx`) y eventos activos; abajo, la tabla con filtros (`EventsTable.tsx`) | `lib/tagging.ts`; catálogo en `lib/types.ts` |
-| Jugadas | `PlaysTab.tsx` | Jugadas dibujadas con keyframes y su animación | `lib/stats.ts` (`interpolate`) |
-| Análisis | `AnalysisTab.tsx` | Respuestas a las preguntas del cuerpo técnico | `lib/analysis.ts`, `lib/stats.ts` |
+| Jugadas | `PlaysTab.tsx` | Jugadas y su animación: posiciones medidas si la jugada cae en una parte corregida (`tracks_fixed_*`), si no keyframes a mano | `lib/positions.ts` (`positionsAt`), `lib/stats.ts` (`interpolate`) |
+| Análisis | `AnalysisTab.tsx` | Respuestas a las preguntas del cuerpo técnico; abajo, con posiciones medidas: forma del bloque (`TeamShape.tsx`) y mapa de calor, red de pases y jugadoras detrás del balón (`PositionsCards.tsx`, de las partes corregidas) | `lib/analysis.ts`, `lib/stats.ts`, `lib/positions.ts`, `lib/fixed.ts` |
 | Informe | `ReportTab.tsx` | Informe imprimible | los mismos |
 
 ### 5.3 Piezas compartidas (`web/components/`)
@@ -151,6 +151,7 @@ Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Track
 | `motion.tsx` | Aparición al hacer scroll (`Reveal`) y cifras que cuentan (`CountUp`) |
 | `VenueEditor.tsx` | Editor de sedes |
 | `MatchList.tsx` | Lista de partidos y alta de uno nuevo |
+| `Modal.tsx` | `Modal` (diálogo que se cierra con Esc o clic fuera) e `IconButton` (botón de solo icono; el texto va en el título) |
 
 ### 5.4 La mesa de corrección, por zonas
 
@@ -158,14 +159,16 @@ Todo está en `components/workspace/Correction.tsx` (pestaña Tracking del parti
 
 | Zona de la pantalla | Qué hace | Función principal |
 |---|---|---|
-| Video con cajas | Clic en una caja la selecciona; modos unir (`u`), marcar a mano (`p`), marcar balón (`b`) | `identityOf`, `setManual`, `setBall` |
-| Panel de la seleccionada | Unir, partir aquí, descartar, avisos de dos cajas, trozos cortos que encajan | `merge`, `clash`, `splitPerson`, `suggestAbsorb` |
-| Lista de personas | Nombre (= identidad), equipo, completa, filtros, limpieza de trozos cortos | `people`, `setPerson`, `duplicatesAmong`, `applyAbsorb` |
+| Encabezado | Vista Jugadoras / Balón; botones Uniformes y Exportar… (abren un diálogo) y Guardar | |
+| Guardar | Escribe `tracks_fixed_*.json` y `labels_*.json` en `matches/<id>/tracking/`; solo si no puede, los descarga | `buildLabels` |
+| Video con cajas | Clic en una caja la selecciona; modos unir (`u`), marcar a mano (`p`), marcar balón (`b`). La candidata que se está revisando sale con recuadro amarillo punteado y una barra debajo: Unir (Enter), No (X), otra vez (R), cerrar (Esc) | `identityOf`, `setManual`, `setBall` |
+| Bajo el video: la seleccionada | Su fila (nombre, equipo, completa), herramientas con atajo (`u` unir, `s` partir aquí, `p` marcar a mano, `Supr` no es jugadora, `Esc` soltar), su línea de presencia (arrastrar elige un rango para quitar, separar o partir) y avisos en fichas: candidatas (`n` ver la siguiente; ojo / ✓ / ✗), cambios de camiseta (ojo / tijera), trozos cortos suyos, dos cajas a la vez y huecos (`g` siguiente) | `personTimeline`, `dropRange`, `separateRange`, `merge`, `candidatesFor`, `applyHint`, `splitPerson`, `suggestAbsorb` |
+| Lista de personas (scroll propio) | Nombre (= identidad), equipo, completa, filtros (incluido «solo con cambio de camiseta»); dibuja 80 filas y «Mostrar más» | `people`, `setPerson` |
+| Diálogo Limpieza rápida | Trozos de menos de 1 s: añadir a su jugadora o descartar | `duplicatesAmong`, `suggestAbsorb`, `applyAbsorb` |
 | En la cancha | Posiciones del cuadro, rastro de la seleccionada, balón | `measuredPaths`, `ballPath` |
-| Uniformes | Colores por equipo y porteras; escribe en `match.yaml` | `teamOfColor`, `kitOfColor` |
-| Balón | Marcas a mano y balón desde eventos | `manualBall`, `eventBall` |
-| Exportar varias partes | Une partes del mismo video en un archivo | `joinParts` |
-| Suavizado al exportar | Reglas de limpieza de trayectorias | `smoothTrack` |
+| Diálogo Uniformes | Colores por equipo y porteras; escribe en `match.yaml` | `teamOfColor`, `kitOfColor` |
+| Vista Balón | Marcas a mano y balón desde eventos | `manualBall`, `eventBall` |
+| Diálogo Exportar | Suavizado y unir varias partes del mismo video en un archivo | `smoothTrack`, `joinParts` |
 
 El archivo `tracks_*.json` nunca se modifica. Tus correcciones se guardan aparte (en el navegador, por parte) y se aplican encima; por eso todo se puede deshacer.
 
@@ -187,8 +190,13 @@ Son funciones puras con test al lado (`<nombre>.test.mjs`). Si un número de la 
 | `homography.ts` | Homografía a partir de anclas (imagen → metros de la sede) | |
 | `venue.ts` | Modelo de cada sede: líneas y puntos de referencia | `BUILTIN_SPECS` (sedes incluidas) |
 | `tracks.ts` | Correcciones de tracks: identidad, unir, partir, descartar, duplicados, trozos cortos, colores | `SAME_PLAYER_M` (2), `ABSORB_SPEED_MS` (8), `ABSORB_GAP_S` (2), `MAX_COLOR_DISTANCE` (40) |
+| `suggestions.ts` | Con quién podría seguir o de quién podría venir una persona (candidatas en el panel de la seleccionada); quitar o separar un tramo de su línea | `MAX_GAP_S` (3), `RUN_MS` (8) |
+| `cuts.ts` | Dónde una persona de la mesa es probablemente dos: cambios de camiseta sostenidos (para cortar) y saltos imposibles de posición | `TEAM_RUN` (10), `JUMP_SPEED_MS` (9) |
+| `labels.ts` | Las correcciones de una parte como etiquetas (`labels_*.json`), sin nombres | |
 | `parts.ts` | Trayectorias medidas, balón, unión de varias partes | `BALL_FILL_S` (3), `LINK_EDGE_S` (0.5), `LINK_SLACK_M` (2), `LINK_SPEED_MS` (8) |
 | `smooth.ts` | Limpieza de trayectorias al exportar | `SMOOTH_DEFAULTS` (9 m/s, 2 s, 0.5 s) |
+| `positions.ts` | Sobre las partes corregidas: dirección de ataque deducida, mapa de calor, quién tiene el balón, pases y pérdidas leídos del balón, jugadoras detrás del balón, posiciones de un instante | `POSSESS_M` (2), `PASS_MAX_S` (5), `ATTACK_MIN_DIFF_M` (4) |
+| `fixed.ts` | Carga las `tracks_fixed_*.json` de la carpeta del partido y las orienta (la dirección dicha en la mesa o la deducida); no es pura | |
 | `format.ts` | Tiempos, CSV, descarga de archivos | |
 | `demo.ts` | Datos de ejemplo (siempre rotulados como ejemplo) | |
 
@@ -227,6 +235,10 @@ Consecuencias: otro navegador u otra computadora empiezan vacíos; borrar los da
 | `tracking/detect.py` | Detector (YOLO11n con OpenVINO) y seguidor (BoT-SORT); color de camiseta; planifica las partes | sí (solo cajas) |
 | `tracking/process.py` | **El que se usa**: detección + calibración en una pasada, posiciones, equipos, identidades, archivos de salida | sí |
 | `tracking/stitch.py` | Une fragmentos de track sobre la cancha (propuesta de identidad) | no |
+| `tracking/team.py` | Equipo por color de camiseta: luminosidad completa, decisión con margen y votación por track | no |
+| `tracking/restitch.py` | Vuelve a unir las cajas de una parte ya procesada sin detectar de nuevo (método `legacy` de la evaluación) | no |
+| `tracking/overnight.py` | Todo el tracking pendiente de una vez: propagación, biblioteca y process de cada video de `videos.csv` que tenga tramos y anclas (`--plan` para ver qué haría) | sí |
+| `tracking/evaluate.py` | Mide cuánto trabajo de corrección deja cada método de unión, contra las etiquetas exportadas de la mesa (`labels_*.json`); `remap` pasa etiquetas a otra corrida de las mismas cajas; `fixture` recorta ejemplos para tests | sí |
 | `tracking/botsort_pitch.yaml` | Parámetros del seguidor | no |
 | `tracking/geometry.py`, `models.py`, `pipeline.py`, `run_tracking.py` | Pipeline antiguo (Colab, homografía automática). No se usa | no |
 | `metrics/team_shape.py` | `team_shape`, `heatmap` sobre la tabla de tracking | no |
@@ -234,7 +246,7 @@ Consecuencias: otro navegador u otra computadora empiezan vacíos; borrar los da
 | `metrics/report.py` | Escribe `team_metrics_<video>.json` para la pestaña Análisis | sí |
 | `mock/generate.py` | Datos falsos para probar | sí |
 
-Constantes del tracking que quizá quieras ajustar: en `stitch.py`, `MAX_GAP_S` (3), `MAX_OFFSCREEN_S` (10), `MAX_SPEED_MS` (8), `DUPLICATE_M` (1.2); en `botsort_pitch.yaml`, `new_track_thresh` (0.3) y `track_buffer` (90); en `match.yaml`, `analysis_stride` (3 = 1 de cada 3 cuadros).
+Constantes del tracking que quizá quieras ajustar: en `stitch.py`, `MAX_GAP_S` (3), `MAX_OFFSCREEN_S` (10), `MAX_SPEED_MS` (8), `DUPLICATE_M` (1.2), `MIN_LINK_S` (1: un fragmento más corto no se une), `IMMEDIATE_MAX_COLOR` (50); en `team.py`, `MAX_COLOR_DISTANCE` (40), `TEAM_MARGIN` (1.3), `MIN_VOTES` (5), `MIN_SHARE` (0.7); en `botsort_pitch.yaml`, `new_track_thresh` (0.3) y `track_buffer` (90); en `match.yaml`, `analysis_stride` (3 = 1 de cada 3 cuadros).
 
 ## 7. Flujos completos, paso a paso
 
@@ -264,7 +276,7 @@ Constantes del tracking que quizá quieras ajustar: en `stitch.py`, `MAX_GAP_S` 
 2. Limpieza rápida: "Añadir los N a su jugadora", luego "Descartar los N duplicados".
 3. Nombrar a quienes importan en la jugada; unir, partir, marcar a mano donde se pierden.
 4. Balón: modo `b` y clic al salir y al llegar cada pase; o elegir el partido de la app y hacia dónde ataca el equipo para usar los eventos.
-5. "Exportar corregido" (esta parte) o "Exportar varias partes" (añadir las demás partes del tramo).
+5. "Guardar" (esta parte: `tracks_fixed_*.json` y `labels_*.json` en la carpeta del partido) o, en "Exportar…", unir las demás partes del tramo en un archivo. Marca como completas (✓) a las personas ya revisadas: solo esas cuentan al medir.
 
 ### 7.4 Sesiones de Strava
 

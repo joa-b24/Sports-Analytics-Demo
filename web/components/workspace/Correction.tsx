@@ -1,38 +1,19 @@
 "use client";
 
-import {
-  ArrowCounterClockwise,
-  ArrowsMerge,
-  ArrowsSplit,
-  CheckCircle,
-  Copy,
-  Broom,
-  MagicWand,
-  DownloadSimple,
-  Eyedropper,
-  FastForward,
-  FloppyDisk,
-  FolderOpen,
-  HandPointing,
-  Pause,
-  Play,
-  Prohibit,
-  Rewind,
-  SkipBack,
-  SkipForward,
-  SoccerBall,
-  Stack,
-  UsersThree,
-  Warning,
-} from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Palette, Pause, Play, Plus, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, UsersThree, Warning, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { COLORS, Pitch } from "@/components/Pitch";
+import { IconButton, Modal } from "@/components/Modal";
 import { Card, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
 import { LocalPick, partLabel } from "@/components/LocalPick";
+import { PersonTimeline } from "@/components/workspace/PersonTimeline";
 import { SpeedControl } from "@/components/SpeedControl";
 import { CountUp, Reveal } from "@/components/motion";
 import { downloadText, fmtT } from "@/lib/format";
 import { BALL_FILL_S, ballPath, eventBall, hasCorrections, joinParts, manualBall, measuredPaths, metersPerUnit, pixelToPitch, type Part } from "@/lib/parts";
+import { applyHint, cutHints, type CutHint } from "@/lib/cuts";
+import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
+import { buildLabels, labelsName } from "@/lib/labels";
 import { localFile, listLocal, localVideo, readLocal, writeLocal } from "@/lib/local";
 import { parseHms } from "@/lib/segments";
 import { SMOOTH_DEFAULTS, smoothTrack, type SmoothOptions, type SmoothReport, type TrackPoint } from "@/lib/smooth";
@@ -56,6 +37,7 @@ import {
   removeBall,
   removeManual,
   separateTrack,
+  withoutReferees,
   setBall,
   setManual,
   setPerson,
@@ -125,6 +107,8 @@ export function Correction({
   const [showShort, setShowShort] = useState(false);
   const [teamFilter, setTeamFilter] = useState<TeamCode | "all">("all");
   const [hideDone, setHideDone] = useState(true);
+  // Referees are not useful for the analysis: hidden (and left out of what is exported) unless asked for.
+  const [showRefs, setShowRefs] = useState(false);
   const [playing, setPlaying] = useState(false);
   // Kit whose colour is being taken from the video with a click.
   const [pickKit, setPickKit] = useState<JerseyKey | null>(null);
@@ -140,6 +124,15 @@ export function Correction({
   // Other parts of the same video, loaded only to export them together with their corrections.
   const [extra, setExtra] = useState<TracksFile[]>([]);
   const [blocked, setBlocked] = useState<{ into: number; from: number; frames: number[]; same: number } | null>(null);
+  // Players or ball: two views of the same part.
+  const [view, setView] = useState<"players" | "ball">("players");
+  // Secondary work opens in a dialog: kit colours, quick cleaning of short pieces, export.
+  const [modal, setModal] = useState<null | "kits" | "cleanup" | "export">(null);
+  // A candidate being checked on the video ("does she go on as …?").
+  const [peek, setPeek] = useState<Suggestion | null>(null);
+  // Rows of the list drawn (the list of a long part has thousands of pieces).
+  const [listLimit, setListLimit] = useState(80);
+  const [onlyShirt, setOnlyShirt] = useState(false);
 
   const fps = data?.fps ?? 29.97002997;
   const frame = Math.round(time * fps);
@@ -204,6 +197,13 @@ export function Correction({
     [fps],
   );
   const stride = data?.stride ?? 3;
+  // Play / pause. A second press while play() is still starting must not leave the video in between.
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused || v.ended) v.play().catch(() => undefined);
+    else v.pause();
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -217,10 +217,13 @@ export function Correction({
         seekFrame(Math.round(v.currentTime * fps - 0.5) + step);
       } else if (e.key === " ") {
         e.preventDefault();
-        if (v.paused) void v.play();
-        else v.pause();
+        if (e.repeat) return;
+        togglePlay();
       } else if (e.key === "Escape") {
-        setMode(null);
+        setMode((m) => {
+          if (m === null) setSel(null);
+          return null;
+        });
         setPickKit(null);
       } else if ((e.ctrlKey || e.metaKey) && e.key === "z") {
         e.preventDefault();
@@ -232,7 +235,7 @@ export function Correction({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fps, stride, seekFrame]);
+  }, [fps, stride, seekFrame, togglePlay]);
 
   // Inside a match, its video is opened from its folder without asking.
   useEffect(() => {
@@ -281,7 +284,8 @@ export function Correction({
   const inRange = data !== null && frame >= data.start_frame - stride && frame <= data.end_frame + stride;
   const pf = data && inRange ? nearestFrame(data, frame) : null;
   const row = pf !== null ? (byFrame.get(pf) ?? null) : null;
-  const removed = new Set(edits.removed);
+  const refIds = new Set(showRefs ? [] : ppl.filter((p) => p.team === "ref" && !p.teamByHand).map((p) => p.id));
+  const removed = new Set([...edits.removed, ...refIds]);
   const droppedBoxes = useMemo(() => droppedSet(edits), [edits]);
   const shown = (row?.boxes ?? [])
     .filter((b) => !isDropped(droppedBoxes, b, pf as number))
@@ -435,30 +439,166 @@ export function Correction({
   };
 
   const minFrames = Math.round(fps / stride); // one second of presence
+  const cutAll = useMemo(() => (data ? cutHints(data, edits) : []), [data, edits]);
+  const shirtHintPeople = cutAll.filter((h) => h.kind === "team").map((h) => h.person);
   // The selected person goes first, so she is easy to find after clicking her box on the video; then by time on screen.
-  const listed = [...ppl]
-    .sort((a, b) => Number(b.id === sel) - Number(a.id === sel) || b.frames.length - a.frames.length)
+  const shirtPeople = new Set(shirtHintPeople);
+  const listedAll = [...ppl]
+    .sort((a, b) => b.frames.length - a.frames.length)
     .filter(
       (p) =>
-        p.id === sel ||
-        ((showShort || p.frames.length >= minFrames) && (teamFilter === "all" || p.team === teamFilter) && !(hideDone && p.done)),
+        p.id !== sel &&
+        (!onlyShirt || shirtPeople.has(p.id)) &&
+        ((showShort || p.frames.length >= minFrames) && (teamFilter === "all" || p.team === teamFilter) && !(hideDone && p.done) && !refIds.has(p.id)),
     );
+  // For the selected person: who she could go on as, and who she could come from. Nothing is applied by itself.
+  const cand = useMemo(
+    () => (data && sel !== null ? candidatesFor(data, edits, ppl.filter((p) => !refIds.has(p.id) || p.id === sel), sel) : { next: [], prev: [] }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refIds is rebuilt on every render from ppl
+    [data, edits, ppl, sel],
+  );
+  const selLine = useMemo(() => (data && sel !== null ? personTimeline(data, edits, sel) : []), [data, edits, sel]);
+  const peekAt = (s: Suggestion) => {
+    setPeek(s);
+    seekFrame(Math.max(data?.start_frame ?? 0, s.frameFrom - Math.round(fps)));
+    videoRef.current?.play().catch(() => undefined);
+  };
+  // The other person of the candidate being checked (the selected one is the other side).
+  const peekOther = peek && sel !== null ? (peek.from === sel ? peek.to : peek.from) : null;
+  const peekNext = (after: Suggestion) => {
+    const list = [...cand.next, ...cand.prev].filter((x) => x !== after);
+    setPeek(null);
+    if (list[0]) peekAt(list[0]);
+  };
+  const joinCandidate = (s: Suggestion) => {
+    if (sel === null) return;
+    tryMerge(sel, s.from === sel ? s.to : s.from);
+    setPeek(null);
+  };
+  const rejectCandidate = (s: Suggestion) => {
+    setEdits(rejectSuggestion(edits, s));
+    setMsg("Anotado: no son la misma persona (no vuelve a proponerse y queda en las etiquetas).");
+    if (peek === s) setPeek(null);
+  };
+  const removeSelected = () => {
+    if (sel === null) return;
+    setEdits(setRemoved(edits, sel, true));
+    setSel(null);
+  };
+  // The next hole of the selected person after the current frame (from the start again after the last one).
+  const nextGap = () => {
+    const gaps = selected?.gaps ?? [];
+    if (gaps.length === 0) return;
+    const g = gaps.find(([a]) => a > frame + stride) ?? gaps[0];
+    seekFrame(g[0]);
+  };
+  // Keys for the selected person: s split here, n next candidate, g next hole, Supr not a player.
+  const selKeys = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  useEffect(() => {
+    selKeys.current = (e: KeyboardEvent) => {
+      if (!selected || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName)) return;
+      const k = e.key.toLowerCase();
+      if (k === "s" && canSplit) splitHere();
+      else if (k === "n") {
+        const list = [...cand.next, ...cand.prev];
+        if (list.length === 0) return;
+        peekAt(list[(peek ? list.indexOf(peek) + 1 : 0) % list.length]);
+      } else if (k === "g") nextGap();
+      else if (e.key === "Delete") removeSelected();
+      else return;
+      e.preventDefault();
+    };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => selKeys.current(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  // While a candidate is being checked: Enter joins, X says no, R plays it again, Esc closes.
+  const peekKeys = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  useEffect(() => {
+    peekKeys.current = (e: KeyboardEvent) => {
+      if (!peek) return;
+      const el = e.target as HTMLElement | null;
+      if (el && ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName)) return;
+      const k = e.key.toLowerCase();
+      if (k === "enter") joinCandidate(peek);
+      else if (k === "x") rejectCandidate(peek);
+      else if (k === "r") peekAt(peek);
+      else if (k === "escape") setPeek(null);
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => peekKeys.current(e);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+  const dropStretch = (from: number, to: number) => {
+    if (!data || sel === null) return;
+    setEdits(dropRange(edits, data, sel, from, to));
+    setMsg("Cajas quitadas de su línea: no cuentan ni se exportan. Ctrl + Z lo deshace.");
+  };
+  const separateStretch = (from: number, to: number) => {
+    if (!data || sel === null) return;
+    const r = separateRange(edits, data, sel, from, to);
+    if (r.identity === null) return setMsg("No hay nada que separar en ese tramo.");
+    setEdits(r.edits);
+    setMsg("El tramo es ahora otra persona; ella sigue igual antes y después. Ctrl + Z lo deshace.");
+  };
+  const splitAt = (f: number) => {
+    if (!data || sel === null) return;
+    const r = splitPerson(edits, sel, f, data);
+    if (!r) return setMsg("Para partir hace falta que tenga algo antes y después de ese punto.");
+    setEdits(r.edits);
+  };
+
+  // Places where a person is probably two: impossible jumps, short excursions to somebody else, changes of shirt.
+  // Measured on the first corrected part: the changes of shirt were real changes of person 5 times out of 6; the big
+  // jumps were nearly always the same player with a wrong position (feet hidden), which the export cleans by itself.
+  const allCutHints = cutAll.filter((h) => !refIds.has(h.person));
+  const hints = allCutHints.filter((h) => h.kind === "team");
+  const hintsByPerson = new Map<number, CutHint[]>();
+  for (const h of hints) hintsByPerson.set(h.person, [...(hintsByPerson.get(h.person) ?? []), h]);
+  const listed = listedAll.slice(0, listLimit);
+  const hintText = (h: CutHint) =>
+    h.kind === "excursion"
+      ? `se va ${h.seconds?.toFixed(1)} s a ${h.meters?.toFixed(0)} m y vuelve`
+      : h.kind === "jump"
+        ? `salta ${h.meters?.toFixed(0)} m de golpe${h.from ? ` y pasa de ${TEAM_LABELS[h.from].toLowerCase()} a ${TEAM_LABELS[h.to as TeamCode].toLowerCase()}` : ""}`
+        : `su camiseta pasa de ${TEAM_LABELS[h.from as TeamCode].toLowerCase()} a ${TEAM_LABELS[h.to as TeamCode].toLowerCase()}`;
+  const fixHint = (h: CutHint) => {
+    if (!data) return;
+    setEdits(applyHint(edits, data, h));
+    setMsg(h.kind === "excursion" ? "Trozo separado: ahora es otra persona, y ella sigue igual antes y después. Ctrl + Z lo deshace." : "Cortada en ese punto. Ctrl + Z lo deshace.");
+  };
   const doneCount = ppl.filter((p) => p.done).length;
   // Fragments of under a second that nobody has named: candidates to throw away in one go.
   const shortIds = ppl.filter((p) => p.frames.length < minFrames && !p.player_id && !p.done).map((p) => p.id);
   const shortDuplicates = useMemo(
-    () => (data ? duplicatesAmong(data, edits, new Set(shortIds)) : []),
+    () => (data && modal === "cleanup" ? duplicatesAmong(data, edits, new Set(shortIds)) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shortIds is rebuilt on every render from data and edits
-    [data, edits, colors],
+    [data, edits, colors, modal],
   );
   // Short pieces that sit where another person is, or where she would be while she is lost.
+  // Worked out only when the cleaning dialog is open (all the short pieces against everybody is slow on a long part);
+  // for the selected person, only her own.
   const absorbable = useMemo(
-    () => (data ? suggestAbsorb(data, edits, ppl, new Set(shortIds)) : []),
+    () => (data && modal === "cleanup" ? suggestAbsorb(data, edits, ppl, new Set(shortIds)) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shortIds is rebuilt on every render from ppl
-    [data, edits, ppl],
+    [data, edits, ppl, modal],
   );
   const absorbFills = absorbable.filter((a) => a.adds > 0);
-  const absorbForSel = absorbable.filter((a) => a.into === sel);
+  const absorbForSel = useMemo(() => {
+    if (!data || !selected) return [];
+    const shortPeople = ppl.filter((p) => p.frames.length < minFrames && !p.player_id && !p.done);
+    return suggestAbsorb(data, edits, [...shortPeople, selected], new Set(shortPeople.map((p) => p.id))).filter((a) => a.into === selected.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- minFrames follows data
+  }, [data, edits, ppl, selected]);
   const absorb = (list: typeof absorbable) => {
     if (!data || list.length === 0) return;
     const done = applyAbsorb(data, edits, list);
@@ -541,13 +681,23 @@ export function Correction({
         ...smoothCfg,
       }
     : null;
-  const cleaned = useMemo(() => {
+  // Cleaning every person is slow on a long part: done when the export dialog is open (for its totals) and on export.
+  const cleanAll = () => {
     const out = new Map<number, { points: TrackPoint[]; report: SmoothReport }>();
     if (!smoothOpt) return out;
     for (const [id, pts] of paths) out.set(id, smoothTrack(pts, smoothOpt));
     return out;
+  };
+  const cleaned = useMemo(
+    () => (modal === "export" ? cleanAll() : new Map<number, { points: TrackPoint[]; report: SmoothReport }>()),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- smoothOpt is rebuilt on every render from these values
-  }, [paths, data, smoothCfg]);
+    [paths, data, smoothCfg, modal],
+  );
+  const selCleaned = useMemo(
+    () => (smoothOpt && sel !== null && paths.get(sel) ? smoothTrack(paths.get(sel) as TrackPoint[], smoothOpt) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- smoothOpt is rebuilt on every render from these values
+    [paths, data, smoothCfg, sel],
+  );
   const totals = [...cleaned.values()].reduce(
     (t, c) => ({ outliers: t.outliers + c.report.outliers, filled: t.filled + c.report.filled, openGaps: t.openGaps + c.report.openGaps }),
     { outliers: 0, filled: 0, openGaps: 0 },
@@ -555,9 +705,15 @@ export function Correction({
 
   const exportFixed = () => {
     if (!data) return;
+    const cleaned = smoothOn ? cleanAll() : new Map<number, { points: TrackPoint[]; report: SmoothReport }>();
+    const totals = [...cleaned.values()].reduce(
+      (t, c) => ({ outliers: t.outliers + c.report.outliers, filled: t.filled + c.report.filled, openGaps: t.openGaps + c.report.openGaps }),
+      { outliers: 0, filled: 0, openGaps: 0 },
+    );
     const r2 = (v: number) => Math.round(v * 100) / 100;
     const byFrameOut = new Map<number, { id: number; x: number; y: number; source: string; raw?: [number, number] }[]>();
     for (const id of paths.keys()) {
+      if (refIds.has(id)) continue;
       const pts = smoothOn ? (cleaned.get(id)?.points ?? []) : [...(paths.get(id) ?? [])].sort((u, v) => u.frame - v.frame);
       for (const q of pts) {
         const row = { id, x: r2(q.x), y: r2(q.y), source: q.source, ...(q.raw ? { raw: [r2(q.raw[0]), r2(q.raw[1])] as [number, number] } : {}) };
@@ -577,7 +733,7 @@ export function Correction({
       stride: data.stride,
       // How the paths were cleaned; null when exported as measured.
       smoothing: smoothOn ? { max_speed_ms: smoothCfg.maxSpeedMs, max_fill_s: smoothCfg.maxFillS, window_s: smoothCfg.windowS, ...totals } : null,
-      people: ppl.map((q) => ({ id: q.id, team: q.team, player_id: q.player_id || null, tracks: q.tracks })),
+      people: ppl.filter((q) => !refIds.has(q.id)).map((q) => ({ id: q.id, team: q.team, player_id: q.player_id || null, tracks: q.tracks })),
       // Ball on the pitch: "manual" (clicked on the video), "event" (a tagged event) or "interpolated". Never detected.
       ball: ball.map((b) => ({ frame: b.frame, x: r2(b.x), y: r2(b.y), source: b.source })),
       // Positions in the normalised pitch. source: "auto" (detected), "manual" (feet marked by hand) or "interpolated"
@@ -587,10 +743,11 @@ export function Correction({
     void saveFixed(`tracks_fixed_${data.video_id}_${data.start_frame}_${data.end_frame}.json`, JSON.stringify(out)).then(
       (ok) => ok && setMsg((m) => `${m} Guardado también en matches/${mid}/tracking/.`),
     );
+    void saveLabels(data, edits);
     setMsg(
       smoothOn
-        ? `Exportado con suavizado: ${totals.outliers} microsalto(s) quitado(s), ${totals.filled} posición(es) rellenada(s) en huecos cortos y ${totals.openGaps} hueco(s) dejado(s) vacío(s).`
-        : "Exportado tal como se midió, sin suavizar ni rellenar.",
+        ? `Guardado con suavizado: ${totals.outliers} microsalto(s) quitado(s), ${totals.filled} posición(es) rellenada(s) en huecos cortos y ${totals.openGaps} hueco(s) dejado(s) vacío(s).`
+        : "Guardado tal como se midió, sin suavizar ni rellenar.",
     );
   };
 
@@ -627,17 +784,30 @@ export function Correction({
   };
   // Besides the download, the corrected file is written to the tracking folder of the match when it can be.
   const saveFixed = async (name: string, text: string) => {
-    downloadText(name, text, "application/json");
-    return writeLocal(`matches/${mid}/tracking/${name}`, text);
+    const ok = await writeLocal(`matches/${mid}/tracking/${name}`, text);
+    if (!ok) downloadText(name, text, "application/json");
+    return ok;
+  };
+  // The corrections as labels (labels_<video>_<start>_<end>.json), for sportsan.tracking.evaluate. Into the tracking
+  // folder when it can be written; downloaded otherwise.
+  const saveLabels = async (file: TracksFile, e: TrackEdits | undefined) => {
+    const name = labelsName(file);
+    const text = JSON.stringify(buildLabels(file, e ?? emptyEdits(editsKey(file)), colors));
+    const ok = await writeLocal(`matches/${mid}/tracking/${name}`, text);
+    if (!ok) downloadText(name, text, "application/json");
+    return ok;
   };
   const exportJoined = () => {
     if (!data || allParts.length < 2) return;
     try {
       const eventsBall = attack ? allParts.flatMap((p) => eventBall(p.file, matchEvents, attack === "right")) : [];
-      const out = joinParts(allParts, { colors, smooth: smoothOn ? smoothCfg : null, ball: eventsBall });
+      // Referees out of every part (unless shown), as in the table.
+      const parts = showRefs ? allParts : allParts.map((p) => ({ ...p, edits: withoutReferees(p.file, p.edits ?? emptyEdits(editsKey(p.file)), colors) }));
+      const out = joinParts(parts, { colors, smooth: smoothOn ? smoothCfg : null, ball: eventsBall });
       void saveFixed(`tracks_fixed_${out.video_id}_${out.start_frame}_${out.end_frame}.json`, JSON.stringify(out)).then(
         (ok) => ok && setMsg((m) => `${m} Guardado también en matches/${mid}/tracking/.`),
       );
+      for (const p of allParts) void saveLabels(p.file, p.edits);
       const linked = out.parts.reduce((n, p) => n + p.linked_to_previous, 0);
       setMsg(
         `Exportadas ${out.parts.length} partes en un archivo: ${out.people.length} personas (${out.people.filter((p) => p.player_id).length} con nombre), ${linked} enlazadas entre partes por posición y ${out.ball.length} posiciones de balón.`,
@@ -650,8 +820,8 @@ export function Correction({
   // Path of the selected person around the current frame, measured and cleaned, to see what the cleaning does.
   const trail = (pts: TrackPoint[] | undefined) => (pts ?? []).filter((q) => Math.abs(q.frame - frame) <= fps * 4);
   const selRaw = sel !== null ? trail(paths.get(sel)) : [];
-  const selClean = sel !== null && smoothOn ? trail(cleaned.get(sel)?.points) : [];
-  const selReport = sel !== null ? cleaned.get(sel)?.report : undefined;
+  const selClean = sel !== null && smoothOn ? trail(selCleaned?.points) : [];
+  const selReport = selCleaned?.report;
   // Unbroken pieces of a path, for drawing lines that do not cross the holes left open.
   const pieces = (pts: TrackPoint[]) => {
     const out: TrackPoint[][] = [];
@@ -661,6 +831,128 @@ export function Correction({
       else out.push([q]);
     }
     return out.filter((piece) => piece.length > 1);
+  };
+
+  // One person of the list (also the selected one, in her own panel above the list).
+  const renderRow = (p: Person) => {
+    const isSel = p.id === sel;
+    return (
+      <li
+        key={p.id}
+        className={`grid grid-cols-[0.9rem_5.5rem_1.15rem_minmax(4rem,1fr)_auto] items-center gap-2 rounded-xl px-2 py-1 transition-colors ${
+          isSel ? "bg-accent/15 shadow-[inset_0_0_0_1px_rgba(74,114,255,.5)]" : "hover:bg-raised/50"
+        } ${p.done && !isSel ? "opacity-55" : ""}`}
+      >
+        <button
+          type="button"
+          aria-label={`Seleccionar a ${label(p, p.id)}`}
+          className="h-3.5 w-3.5 rounded-sm shadow-[inset_0_0_0_1px_rgba(255,255,255,.25)]"
+          style={{ background: labToHex(p.lab) }}
+          title={`Color medido de su camiseta · tracks ${p.tracks.slice(0, 8).join(", ")}${p.tracks.length > 8 ? "…" : ""} · clic para seleccionar`}
+          onClick={() => pickBox(p.id)}
+        />
+        {/* The name is typed here and is the person's id from then on. Enter or leaving the field saves it. */}
+        <input
+          key={`${p.id}:${p.player_id}`}
+          className="tc w-full min-w-0 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs text-ink placeholder:text-faint hover:border-line focus:border-accent focus:bg-bg focus:outline-none"
+          aria-label="Nombre o número de esta persona"
+          title="Escribe su número o nombre. Si ya lo tiene otra persona, se unen."
+          defaultValue={p.player_id}
+          placeholder={`${defaultLabel(p.id)}${p.keeper ? " P" : ""}`}
+          onFocus={() => setSel(p.id)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            else if (e.key === "Escape") {
+              e.currentTarget.value = p.player_id;
+              e.currentTarget.blur();
+            }
+          }}
+          onBlur={(e) => {
+            const v = e.currentTarget.value.trim();
+            if (v !== p.player_id) rename(p, v);
+          }}
+        />
+        <select
+          className="dot-select"
+          aria-label={`Equipo: ${TEAM_LABELS[p.team]}${p.teamByHand ? " (puesto a mano)" : " (por el color de la camiseta)"}`}
+          title={`${TEAM_LABELS[p.team]}${p.teamByHand ? " · puesto a mano" : " · por el color de la camiseta"}`}
+          data-hand={p.teamByHand ? "" : undefined}
+          value={p.teamByHand ? p.team : ""}
+          onChange={(e) => setEdits(setPerson(edits, p.id, { team: e.target.value === "" ? null : (e.target.value as TeamCode) }))}
+          style={{ backgroundColor: TEAM_COLORS[p.team] }}
+        >
+          <option value="">Por el color de la camiseta</option>
+          {(["own", "opp", "ref", "unk"] as const).map((t) => (
+            <option key={t} value={t}>
+              {TEAM_LABELS[t]}
+            </option>
+          ))}
+        </select>
+        <span
+          className="relative h-3 cursor-pointer rounded-full bg-bg/70"
+          role="presentation"
+          title={p.gaps.length ? `${p.gaps.length} hueco(s): clic para ir` : "Sin huecos"}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setSel(p.id);
+            seekFrame(Math.round((data?.start_frame ?? 0) + ((e.clientX - r.left) / r.width) * span));
+          }}
+        >
+          {runs(p).map(([a, b]) => (
+            <span key={a} className="absolute inset-y-0 rounded-full" style={{ left: `${pos(a)}%`, width: `${Math.max(0.6, pos(b) - pos(a))}%`, background: TEAM_COLORS[p.team] }} />
+          ))}
+        </span>
+        <span className="flex items-center gap-2 text-[11px] whitespace-nowrap text-faint">
+          <span className="tc">{((p.frames.length * stride) / fps).toFixed(1)} s</span>
+          {p.conflicts.length > 0 && (
+            <button
+              type="button"
+              className="text-warn"
+              aria-label={`Dos cajas a la vez en ${p.conflicts.length} cuadro(s): ir al primero`}
+              title={`Tiene dos cajas a la vez en ${p.conflicts.length} cuadro(s): clic para ir al primero y elegir la buena`}
+              onClick={() => {
+                setSel(p.id);
+                setMode(null);
+                seekFrame(p.conflicts[0]);
+              }}
+            >
+              <Warning size={14} weight="fill" />
+            </button>
+          )}
+          <button
+            type="button"
+            aria-pressed={p.done}
+            aria-label={p.done ? "Completa: clic para volver a revisarla" : "Marcar como completa"}
+            title={p.done ? "Completa: clic para volver a revisarla" : "Marcar como completa: ya no hay nada que corregirle"}
+            className={`transition-colors ${p.done ? "text-ok" : "text-faint hover:text-ink"}`}
+            onClick={() => {
+              setEdits(setPerson(edits, p.id, { done: !p.done }));
+              if (!p.done && hideDone && p.id === sel) setSel(null);
+            }}
+          >
+            <CheckCircle size={15} weight={p.done ? "fill" : "regular"} />
+          </button>
+          {hintsByPerson.has(p.id) && (
+            <IconButton
+              label={`Su camiseta cambia de equipo (${hintsByPerson.get(p.id)?.length}): ver dónde`}
+              tone="accent"
+              onClick={() => {
+                setSel(p.id);
+                setMode(null);
+                seekFrame(Math.max(data?.start_frame ?? 0, (hintsByPerson.get(p.id)?.[0].frame ?? p.first) - Math.round(fps)));
+              }}
+            >
+              <TShirt size={14} weight="fill" className="text-warn" />
+            </IconButton>
+          )}
+          {sel !== null && !isSel && (
+            <IconButton label={`Es la misma que ${label(selected ?? undefined, sel)}: unir`} onClick={() => tryMerge(sel, p.id)}>
+              <ArrowsMerge size={14} />
+            </IconButton>
+          )}
+        </span>
+      </li>
+    );
   };
 
   if (!hydrated) return null;
@@ -722,6 +1014,192 @@ export function Correction({
     </Card>
   );
 
+  // The ball has its own view (it is marked on the same video).
+  const ballPanel = (
+    <Card title="Balón" note="no se detecta: se marca">
+              <p className="text-xs text-pretty text-muted">
+                El programa no sigue el balón. Su posición sale de dos fuentes, y entre dos posiciones a menos de {BALL_FILL_S} s se traza una
+                recta (marcada como rellenada). Donde no hay ninguna cerca, no hay balón.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button type="button" className={mode === "ball" ? btnPrimary : btn} aria-pressed={mode === "ball"} onClick={() => setMode(mode === "ball" ? null : "ball")}>
+                  <SoccerBall size={15} />
+                  Marcar el balón <kbd className="kbd ml-1">b</kbd>
+                </button>
+                {ballMarkHere && pf !== null && (
+                  <button type="button" className="link text-xs" onClick={() => setEdits(removeBall(edits, pf))}>
+                    Quitar la marca de este cuadro
+                  </button>
+                )}
+                <span className="tc ml-auto text-xs text-muted">{(edits.ball ?? []).length} marca(s) a mano</span>
+              </div>
+              <p className="mt-2 text-[11px] text-pretty text-faint">
+                Con el modo activo, cada clic sobre el video marca el balón en ese cuadro: basta al salir y al llegar cada pase. La posición
+                se calcula como si el balón estuviera en el suelo, así que un balón por alto queda mal ubicado: márcalo donde bota.
+              </p>
+              <div className="mt-4 border-t border-line-soft pt-4">
+                <div className="text-xs text-ink-2">Desde los eventos etiquetados</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <label className="text-[11px] text-muted">
+                    Partido de la app
+                    <select className={`${input} mt-1 w-full`} value={eventsMatchId} onChange={(e) => setPref(`ballMatch:${mid}`, e.target.value)}>
+                      <option value="">(ninguno)</option>
+                      {state.matches.map((m) => (
+                        <option key={m.match_id} value={m.match_id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-muted">
+                    En este video, el equipo analizado ataca hacia
+                    <select className={`${input} mt-1 w-full`} value={attack} onChange={(e) => setPref(`attack:${mid}:${data?.video_id}`, e.target.value)}>
+                      <option value="">(sin indicar: no se usan)</option>
+                      <option value="right">la derecha del dibujo (x = 105)</option>
+                      <option value="left">la izquierda del dibujo (x = 0)</option>
+                    </select>
+                  </label>
+                </div>
+                <p className="mt-2 text-[11px] text-pretty text-faint">
+                  Los eventos se etiquetan con el equipo analizado atacando siempre hacia la derecha; aquí la cancha es la del video, así que
+                  hay que decir hacia dónde ataca de verdad. En esta parte: {ballKnown.filter((b) => b.source === "event").length} evento(s) con
+                  posición, {ball.filter((b) => b.source === "interpolated").length} posiciones rellenadas.
+                </p>
+              </div>
+    </Card>
+  );
+  // Short pieces, all at once.
+  const cleanupPanel = (
+                  <div className="text-xs text-muted">
+                    <div className="flex items-center gap-1.5 text-ink-2">
+                      <Broom size={14} />
+                      {shortIds.length} trozos de menos de un segundo, sin nombre
+                    </div>
+                    <p className="mt-1 text-[11px] text-pretty text-faint">
+                      {shortDuplicates.length} son una segunda caja sobre alguien que ya tiene la suya (siempre a menos de 1.5 m de otra
+                      persona). Los otros {shortIds.length - shortDuplicates.length} aparecieron solos: una jugadora vista un instante, o una
+                      detección falsa.
+                    </p>
+                    {absorbable.length > 0 && (
+                      <div className="mt-2 rounded-xl bg-accent-900/40 px-3 py-2">
+                        <p className="text-[11px] text-pretty text-ink-2">
+                          {absorbable.length} encajan con una sola persona: {absorbFills.length} caen donde ella se pierde (le completan{" "}
+                          {absorbFills.reduce((n, a) => n + a.adds, 0)} cuadros) y {absorbable.length - absorbFills.length} repiten una caja que
+                          ya tiene.
+                        </p>
+                        <button type="button" className={`${btn} mt-2`} onClick={() => absorb(absorbable)}>
+                          <MagicWand size={14} />
+                          Añadir los {absorbable.length} a su jugadora
+                        </button>
+                      </div>
+                    )}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button type="button" className={btn} disabled={shortDuplicates.length === 0} onClick={() => discard(shortDuplicates, "duplicados")}>
+                        Descartar los {shortDuplicates.length} duplicados
+                      </button>
+                      <button type="button" className="btn btn-ghost" onClick={() => discard(shortIds, "trozos cortos")}>
+                        Descartar los {shortIds.length}
+                      </button>
+                    </div>
+                  </div>
+  );
+  const exportPanel = (
+    <div className="space-y-6">
+      <section>
+        <h3 className="mb-2 text-sm text-ink">Suavizado</h3>
+              <label className="flex items-center gap-2 text-sm text-ink-2">
+                <input type="checkbox" className="accent-accent" checked={smoothOn} onChange={(e) => setSmoothOn(e.target.checked)} />
+                Limpiar las trayectorias antes de exportar
+              </label>
+              <div className={`mt-4 space-y-4 ${smoothOn ? "" : "pointer-events-none opacity-40"}`}>
+                {(
+                  [
+                    ["maxSpeedMs", "Velocidad máxima creíble", "m/s", 6, 12, 0.5, "Un punto que exigiría más que esto para llegar y para irse es un microsalto y se quita. Tampoco se rellena un hueco que exigiría más."],
+                    ["maxFillS", "Hueco más largo que se rellena", "s", 0, 5, 0.25, "Entre dos posiciones conocidas se traza una recta, marcada como rellenada. Los huecos más largos se dejan vacíos: no se la vio."],
+                    ["windowS", "Ventana de suavizado", "s", 0, 1.5, 0.1, "Promedio centrado para quitar el temblor de la detección. 0 = sin suavizar."],
+                  ] as const
+                ).map(([k, name, unit, min, max, step, help]) => (
+                  <label key={k} className="block text-xs text-muted">
+                    <span className="flex items-baseline justify-between">
+                      {name}
+                      <span className="tc text-ink-2">
+                        {smoothCfg[k]} {unit}
+                      </span>
+                    </span>
+                    <input type="range" className="mt-1 w-full" min={min} max={max} step={step} value={smoothCfg[k]} onChange={(e) => setSmoothCfg({ ...smoothCfg, [k]: Number(e.target.value) })} />
+                    <span className="mt-0.5 block text-[11px] text-pretty text-faint">{help}</span>
+                  </label>
+                ))}
+                <button type="button" className="link text-xs" onClick={() => setSmoothCfg(SMOOTH_DEFAULTS)}>
+                  Volver a los valores recomendados
+                </button>
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-3 border-t border-line-soft pt-4">
+                {(
+                  [
+                    ["microsaltos quitados", totals.outliers, selReport?.outliers],
+                    ["posiciones rellenadas", totals.filled, selReport?.filled],
+                    ["huecos sin rellenar", totals.openGaps, selReport?.openGaps],
+                  ] as const
+                ).map(([name, all, one]) => (
+                  <div key={name}>
+                    <div className="num text-3xl text-ink-2">{smoothOn ? all : "–"}</div>
+                    <div className="mt-1 text-[11px] text-muted">{name}</div>
+                    {smoothOn && one !== undefined && <div className="tc mt-0.5 text-[11px] text-faint">{one} en la seleccionada</div>}
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-[11px] text-pretty text-faint">
+                En el archivo exportado cada posición dice de dónde sale: detectada, marcada a mano o rellenada. Una posición rellenada es
+                una suposición razonable, no una medición. Las correcciones y el archivo de tracks no cambian: solo cambia lo que se
+                exporta.
+              </p>
+      </section>
+      <section className="border-t border-line-soft pt-5">
+        <h3 className="mb-2 text-sm text-ink">Varias partes en un archivo</h3>
+              <p className="text-xs text-pretty text-muted">
+                Para una jugada o un tramo que cruza varias partes. Cada parte lleva las correcciones que ya le hiciste; las que no has
+                tocado entran con sus identidades automáticas. Las personas con el mismo nombre son una sola en todo el archivo; las sin
+                nombre se enlazan entre partes seguidas cuando está claro quién es quién. El suavizado se aplica después de unir.
+              </p>
+              <ul className="mt-3 space-y-1 text-xs">
+                {allParts.map((p) => (
+                  <li key={editsKey(p.file)} className="flex items-center gap-2">
+                    <span className="tc text-ink-2">
+                      {fmtT(p.file.start_frame / p.file.fps)} – {fmtT(p.file.end_frame / p.file.fps)}
+                    </span>
+                    <span className={hasCorrections(p.edits) ? "text-ok" : "text-faint"}>{hasCorrections(p.edits) ? "corregida" : "sin corregir"}</span>
+                    {p.file === data ? (
+                      <span className="ml-auto text-faint">la que está abierta</span>
+                    ) : (
+                      <span className="ml-auto">
+                        <IconButton label="Quitar de la lista" onClick={() => setExtra(extra.filter((f) => f !== p.file))}>
+                          <X size={14} />
+                        </IconButton>
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <label className={`${btn} cursor-pointer`}>
+                  <FolderOpen size={15} />
+                  Añadir partes
+                  <input type="file" accept=".json" multiple className="sr-only" onChange={onExtra} />
+                </label>
+                <button type="button" className={btn} onClick={() => void addFolderParts()} title="Añade todas las partes de este video que hay en la carpeta del partido">
+                  <Stack size={15} />
+                  Todas las de la carpeta
+                </button>
+                <button type="button" className={btnPrimary} disabled={allParts.length < 2} onClick={exportJoined}>
+                  <Stack size={15} />
+                  Exportar {allParts.length} partes unidas
+                </button>
+              </div>
+      </section>
+    </div>
+  );
+
   const fileLabel = `${btn} relative cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`;
 
   return (
@@ -745,7 +1223,67 @@ export function Correction({
           describe={(n) => partLabel(n, data?.fps ?? 29.97)}
           onFile={(f) => void onTracks(asEvent([f]))}
         />
+        {data && (
+          <>
+            <div className="seg" role="group" aria-label="Qué se corrige">
+              {(
+                [
+                  ["players", "Jugadoras", UsersThree],
+                  ["ball", "Balón", SoccerBall],
+                ] as const
+              ).map(([v, name, Icon]) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={view === v}
+                  className="seg-opt inline-flex items-center gap-1.5"
+                  onClick={() => {
+                    setView(v);
+                    setMode(v === "ball" ? "ball" : null);
+                  }}
+                >
+                  <Icon size={14} />
+                  {name}
+                </button>
+              ))}
+            </div>
+            <span className="ml-auto flex flex-wrap items-center gap-2">
+              <button type="button" className={btn} onClick={() => setModal("kits")}>
+                <Palette size={15} />
+                Uniformes
+              </button>
+              <button type="button" className={btn} onClick={() => setModal("export")}>
+                <Stack size={15} />
+                Exportar…
+              </button>
+              <button
+                type="button"
+                className={btnPrimary}
+                title="Guarda lo corregido (tracks_fixed) y las etiquetas en la carpeta del partido; si no se puede, se descargan"
+                onClick={exportFixed}
+              >
+                <FloppyDisk size={15} />
+                Guardar
+              </button>
+            </span>
+          </>
+        )}
       </Head>
+      {modal === "kits" && (
+        <Modal title="Uniformes" onClose={() => setModal(null)} wide>
+          {kitsCard}
+        </Modal>
+      )}
+      {modal === "cleanup" && data && (
+        <Modal title="Limpieza rápida" onClose={() => setModal(null)}>
+          {cleanupPanel}
+        </Modal>
+      )}
+      {modal === "export" && data && (
+        <Modal title="Exportar" onClose={() => setModal(null)} wide>
+          {exportPanel}
+        </Modal>
+      )}
 
       {msg && (
         <div role="status" className="enter mb-5 rounded-2xl bg-accent-900/60 px-4 py-3 text-sm text-accent-100 shadow-[inset_0_0_0_1px_rgba(74,114,255,.45)]">
@@ -843,16 +1381,12 @@ export function Correction({
                 <div className="mt-1.5 text-xs text-muted">con dos cajas a la vez</div>
               </div>
             )}
-            <button type="button" className={`${btnPrimary} ml-auto`} onClick={exportFixed}>
-              <DownloadSimple size={15} />
-              Exportar corregido
-            </button>
           </Reveal>
 
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_31rem]">
             <div className="min-w-0">
               <div className="space-y-3 xl:sticky xl:top-4">
-                <div className="relative mx-auto w-full overflow-hidden rounded-2xl bg-black xl:max-w-[calc((100vh-11rem)*16/9)]">
+                <div className={`relative mx-auto w-full overflow-hidden rounded-2xl bg-black ${selected ? "xl:max-w-[calc((100vh-19rem)*16/9)]" : "xl:max-w-[calc((100vh-11rem)*16/9)]"}`}>
                   <video
                     ref={videoRef}
                     src={fileUrl}
@@ -897,6 +1431,13 @@ export function Correction({
                           </g>
                         );
                       })}
+                      {peekOther !== null &&
+                        shown
+                          .filter((x) => x.id === peekOther)
+                          .map(({ b }) => (
+                            <rect key={`peek${b[0]}`} pointerEvents="none" x={b[1] - dotR} y={b[2] - dotR} width={b[3] - b[1] + 2 * dotR} height={b[4] - b[2] + 2 * dotR}
+                              fill="none" stroke="#fde047" strokeWidth={dotR / 2} strokeDasharray={`${dotR * 1.5} ${dotR}`} />
+                          ))}
                       {ballMarkHere && (
                         <g pointerEvents="none">
                           <circle cx={ballMarkHere.px} cy={ballMarkHere.py} r={dotR * 0.9} fill="none" stroke="#ffffff" strokeWidth={dotR / 3} />
@@ -927,11 +1468,9 @@ export function Correction({
                     className={`${btnPrimary} h-10 w-10 !p-0`}
                     title={playing ? "Pausar" : "Reproducir"}
                     aria-label={playing ? "Pausar" : "Reproducir"}
-                    onClick={() => {
-                      const v = videoRef.current;
-                      if (!v) return;
-                      if (v.paused) void v.play();
-                      else v.pause();
+                    onClick={(e) => {
+                      e.currentTarget.blur(); // si no, la barra espaciadora lo pulsaría otra vez
+                      togglePlay();
                     }}
                   >
                     {playing ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
@@ -971,6 +1510,156 @@ export function Correction({
                 >
                   <span className="absolute inset-y-0 left-0 rounded-full bg-accent/60" style={{ width: `${Math.min(100, Math.max(0, pos(frame)))}%` }} />
                 </div>
+                {!selected && view === "players" && (
+                  <p className="rounded-2xl bg-surface/60 px-4 py-3 text-sm text-muted">
+                    Haz clic en una caja del video o en una fila de la lista para corregirla. Atajos: <kbd className="kbd">u</kbd> unir,{" "}
+                    <kbd className="kbd">s</kbd> partir aquí, <kbd className="kbd">p</kbd> marcar a mano, <kbd className="kbd">n</kbd> ver la
+                    siguiente candidata, <kbd className="kbd">g</kbd> ir al siguiente hueco, <kbd className="kbd">Supr</kbd> no es jugadora.
+                  </p>
+                )}
+                {selected && (
+                  <div className="space-y-2 rounded-2xl bg-surface/60 p-3">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                      <ul className="min-w-0 flex-1 basis-72">{renderRow(selected)}</ul>
+                      <span className="flex items-center gap-1">
+                        <IconButton label="Unir con… (u): clic en la caja o fila de la misma jugadora" tone={mode === "merge" ? "accent" : "default"} onClick={() => setMode(mode === "merge" ? null : "merge")}>
+                          <ArrowsMerge size={16} />
+                        </IconButton>
+                        <IconButton
+                          label={canSplit ? "Partir aquí (s): desde este cuadro es otra persona" : "Partir aquí (s): colócate entre su primera y su última aparición"}
+                          disabled={!canSplit}
+                          onClick={splitHere}
+                        >
+                          <ArrowsSplit size={16} />
+                        </IconButton>
+                        <IconButton label="Marcar a mano (p): clic en sus pies" tone={mode === "manual" ? "accent" : "default"} onClick={() => setMode(mode === "manual" ? null : "manual")}>
+                          <HandPointing size={16} />
+                        </IconButton>
+                        {manualHere.some((m) => m.identity === selected.id) && pf !== null && (
+                          <IconButton label="Quitar la marca a mano de este cuadro" onClick={() => setEdits(removeManual(edits, selected.id, pf))}>
+                            <Eraser size={16} />
+                          </IconButton>
+                        )}
+                        <IconButton label="No es jugadora (Supr)" tone="danger" onClick={removeSelected}>
+                          <Prohibit size={16} />
+                        </IconButton>
+                        <IconButton label="Soltar la selección (Esc)" onClick={() => setSel(null)}>
+                          <X size={16} />
+                        </IconButton>
+                      </span>
+                    </div>
+                  <PersonTimeline
+                    key={selected.id}
+                    points={selLine}
+                    conflicts={selected.conflicts}
+                    hints={hints.filter((h) => h.person === selected.id).map((h) => h.frame)}
+                    start={data.start_frame}
+                    end={data.end_frame}
+                    frame={frame}
+                    fps={fps}
+                    stride={stride}
+                    teamColors={TEAM_COLORS}
+                    onSeek={seekFrame}
+                    onDrop={dropStretch}
+                    onSeparate={separateStretch}
+                    onSplit={splitAt}
+                  />
+                    {/* Notices about her, in one row of chips. */}
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      {[...cand.next.map((x) => ["sigue como", x, x.to] as const), ...cand.prev.map((x) => ["viene de", x, x.from] as const)].map(([verb, x, other]) => (
+                        <span
+                          key={`${x.from}-${x.to}`}
+                          className={`inline-flex items-center gap-1 rounded-xl py-0.5 pr-0.5 pl-2 ${peek === x ? "bg-warn-900/70 text-warn" : "bg-bg/60 text-ink-2"}`}
+                          title={`¿${verb} ${label(personById.get(other), other)}? Ordenadas por dónde debería estar según cómo se movía; la primera acierta un tercio de las veces.`}
+                        >
+                          <span className="text-faint">{verb}</span>
+                          <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLORS[personById.get(other)?.team ?? "unk"] }} />
+                          <span className="tc">{label(personById.get(other), other)}</span>
+                          <span className="tc text-faint">
+                            {x.gapS.toFixed(1)} s · {x.distM.toFixed(0)} m
+                          </span>
+                          <IconButton label="Ver en el video (n)" tone={peek === x ? "accent" : "default"} onClick={() => peekAt(x)}>
+                            <Eye size={13} />
+                          </IconButton>
+                          <IconButton label="Es ella: unir" onClick={() => joinCandidate(x)}>
+                            <Check size={13} />
+                          </IconButton>
+                          <IconButton label="No es ella (no se vuelve a proponer)" tone="danger" onClick={() => rejectCandidate(x)}>
+                            <X size={13} />
+                          </IconButton>
+                        </span>
+                      ))}
+                      {(hintsByPerson.get(selected.id) ?? []).map((h) => (
+                        <span key={`h${h.frame}`} className="inline-flex items-center gap-1 rounded-xl bg-warn-900/50 py-0.5 pr-0.5 pl-2 text-warn" title={hintText(h)}>
+                          <TShirt size={13} weight="fill" />
+                          <span className="tc">{fmtT(h.frame / fps)}</span>
+                          <IconButton label="Ver en el video" onClick={() => seekFrame(Math.max(data.start_frame, h.frame - Math.round(fps)))}>
+                            <Eye size={13} />
+                          </IconButton>
+                          <IconButton label="Cortar aquí: de este punto en adelante es otra persona" tone="accent" onClick={() => fixHint(h)}>
+                            <Scissors size={13} />
+                          </IconButton>
+                        </span>
+                      ))}
+                      {absorbForSel.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-xl bg-accent-900/40 py-0.5 pr-0.5 pl-2 text-ink-2">
+                          <MagicWand size={13} />
+                          {absorbForSel.length} trozo(s) corto(s) suyos
+                          {absorbForSel.some((a) => a.adds > 0) && ` (+${absorbForSel.reduce((n, a) => n + a.adds, 0)} cuadros)`}
+                          <IconButton label="Añadírselos" tone="accent" onClick={() => absorb(absorbForSel)}>
+                            <Plus size={13} />
+                          </IconButton>
+                        </span>
+                      )}
+                      {selected.conflicts.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-xl bg-warn-900/60 py-0.5 pr-0.5 pl-2 text-warn" title="Haz clic en la caja que sí es ella en esos cuadros, o deja una donde están en el mismo sitio">
+                          <Warning size={13} />
+                          dos cajas en {selected.conflicts.length} cuadro(s)
+                          <IconButton label="Ir al primero" onClick={() => seekFrame(selected.conflicts[0])}>
+                            <Eye size={13} />
+                          </IconButton>
+                          <IconButton label="Dejar una donde están en el mismo sitio" tone="accent" onClick={unifySelf}>
+                            <MagicWand size={13} />
+                          </IconButton>
+                        </span>
+                      )}
+                      {selected.gaps.length > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-xl bg-bg/60 py-0.5 pr-0.5 pl-2 text-muted"
+                          title="Si en el hueco hay otra caja que es ella, únela; si el detector no la vio, márcala a mano cada pocos cuadros"
+                        >
+                          se pierde {selected.gaps.length} vez/veces
+                          <IconButton label="Ir al siguiente hueco (g)" onClick={nextGap}>
+                            <SkipForward size={13} />
+                          </IconButton>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {peek && selected && peekOther !== null && (
+                  <div className="enter flex flex-wrap items-center gap-2 rounded-2xl bg-warn-900/70 px-4 py-2.5 text-sm text-warn shadow-[inset_0_0_0_1px_rgba(224,164,88,.45)]">
+                    <span className="min-w-0 flex-1">
+                      ¿<strong>{label(selected, selected.id)}</strong> {peek.from === selected.id ? "sigue como" : "viene de"}{" "}
+                      <strong>{label(personById.get(peekOther), peekOther)}</strong> (recuadro amarillo)? {peek.gapS.toFixed(1)} s, {peek.distM.toFixed(1)} m
+                    </span>
+                    <button type="button" className={btnPrimary} onClick={() => joinCandidate(peek)}>
+                      <Check size={14} /> Unir <kbd className="kbd">Enter</kbd>
+                    </button>
+                    <button type="button" className={btn} onClick={() => rejectCandidate(peek)}>
+                      <X size={14} /> No <kbd className="kbd">X</kbd>
+                    </button>
+                    <button type="button" className={btn} onClick={() => peekAt(peek)}>
+                      <ArrowClockwise size={14} /> <kbd className="kbd">R</kbd>
+                    </button>
+                    <button type="button" className={btn} title="Siguiente candidata" onClick={() => peekNext(peek)}>
+                      Siguiente
+                    </button>
+                    <IconButton label="Cerrar (Esc)" onClick={() => setPeek(null)}>
+                      <X size={14} />
+                    </IconButton>
+                  </div>
+                )}
                 {selTwiceHere && selected && !mode && !pickKit && (
                   <div className="enter flex items-start gap-2.5 rounded-2xl bg-warn-900/80 px-4 py-2.5 text-sm text-warn shadow-[inset_0_0_0_1px_rgba(224,164,88,.45)]">
                     <Warning size={17} className="mt-0.5 shrink-0" />
@@ -996,100 +1685,13 @@ export function Correction({
 
             </div>
 
-            <div className="space-y-5">
-              <Card title={selected ? `Seleccionada · ${label(selected, selected.id)}` : "Selecciona una caja"} note={selected ? `${selected.tracks.length} trozo(s) de track` : undefined}>
-                {!selected ? (
-                  <p className="text-sm text-muted">Haz clic en una caja del video o en una fila de la lista para corregirla.</p>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
-                      <button type="button" className={`${mode === "merge" ? btnPrimary : btn} !justify-start`} aria-pressed={mode === "merge"} onClick={() => setMode(mode === "merge" ? null : "merge")}>
-                        <ArrowsMerge size={15} />
-                        Unir con… <kbd className="kbd ml-auto">u</kbd>
-                      </button>
-                      <button type="button" className={`${btn} !justify-start`} disabled={!canSplit}
-                        title={
-                          canSplit
-                            ? "Lo que tenga desde este cuadro en adelante pasa a ser otra persona (también si justo aquí no tiene caja)"
-                            : "Colócate en un cuadro entre su primera y su última aparición"
-                        }
-                        onClick={splitHere}
-                      >
-                        <ArrowsSplit size={15} />
-                        Partir aquí
-                      </button>
-                      <button type="button" className={`${mode === "manual" ? btnPrimary : btn} !justify-start`} aria-pressed={mode === "manual"} onClick={() => setMode(mode === "manual" ? null : "manual")}>
-                        <HandPointing size={15} />
-                        Marcar a mano <kbd className="kbd ml-auto">p</kbd>
-                      </button>
-                      <button
-                        type="button"
-                        className={`${btn} !justify-start`}
-                        onClick={() => {
-                          setEdits(setRemoved(edits, selected.id, true));
-                          setSel(null);
-                        }}
-                      >
-                        <Prohibit size={15} />
-                        No es jugadora
-                      </button>
-                    </div>
-                    {manualHere.some((m) => m.identity === selected.id) && pf !== null && (
-                      <button type="button" className="link text-xs" onClick={() => setEdits(removeManual(edits, selected.id, pf))}>
-                        Quitar la marca a mano de este cuadro
-                      </button>
-                    )}
-                    {absorbForSel.length > 0 && (
-                      <div className="flex items-start gap-2 rounded-xl bg-accent-900/40 px-3 py-2 text-xs text-ink-2">
-                        <MagicWand size={14} className="mt-0.5 shrink-0" />
-                        <span>
-                          {absorbForSel.length} trozo(s) corto(s) están donde ella estaba o se pierde
-                          {absorbForSel.some((a) => a.adds > 0) && ` (le completan ${absorbForSel.reduce((n, a) => n + a.adds, 0)} cuadros)`}.{" "}
-                          <button type="button" className="link" onClick={() => absorb(absorbForSel)}>
-                            Añadírselos
-                          </button>
-                        </span>
-                      </div>
-                    )}
-                    {selected.conflicts.length > 0 && (
-                      <div className="flex items-start gap-2 rounded-xl bg-warn-900/60 px-3 py-2 text-xs text-warn">
-                        <Warning size={14} className="mt-0.5 shrink-0" />
-                        <span>
-                          Tiene dos cajas a la vez en {selected.conflicts.length} cuadro(s).{" "}
-                          <button type="button" className="link" onClick={unifySelf}>
-                            Dejar una donde están en el mismo sitio
-                          </button>
-                          , o{" "}
-                          <button type="button" className="link" onClick={() => seekFrame(selected.conflicts[0])}>
-                            ir al primero
-                          </button>{" "}
-                          y hacer clic en la caja que sí es ella.
-                        </span>
-                      </div>
-                    )}
-                    <div className="text-xs text-muted">
-                      {selected.gaps.length === 0 ? (
-                        "Sin huecos: se la sigue de principio a fin de su aparición."
-                      ) : (
-                        <>
-                          Se pierde {selected.gaps.length} vez/veces:{" "}
-                          {selected.gaps.map(([a, b]) => (
-                            <button key={a} type="button" className="tc link mr-2" title="Ir al último cuadro antes de perderla" onClick={() => seekFrame(a)}>
-                              {fmtT(a / fps)} ({((b - a) / fps).toFixed(1)} s)
-                            </button>
-                          ))}
-                        </>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-pretty text-faint">
-                      Si en el hueco hay otra caja que es ella, selecciona esta y pulsa «unir» sobre la otra. Si no hay ninguna caja (el detector
-                      no la vio), usa «Marcar a mano» y haz clic en sus pies cada pocos cuadros.
-                    </p>
-                  </div>
-                )}
-              </Card>
+            {view === "ball" ? (
+              <div className="space-y-5">{ballPanel}</div>
+            ) : (
+            <div className="flex flex-col xl:sticky xl:top-4 xl:h-[calc(100vh-2rem)]">
 
-              <Card title="Personas" note="de más a menos tiempo · la barra muestra cuándo está cada una" delay={60}>
+
+              <Card title="Personas" note={`${listedAll.length} · de más a menos tiempo`} delay={60} className="flex min-h-[22rem] flex-1 flex-col">
                 {blocked && (
                   <div role="alert" className="enter mb-3 rounded-2xl bg-warn-900/70 px-3 py-2.5 text-xs text-warn">
                     <div className="flex items-start gap-2">
@@ -1155,6 +1757,14 @@ export function Correction({
                     <input type="checkbox" className="accent-accent" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} />
                     Ocultar las {doneCount} completas
                   </label>
+                  <label className="flex items-center gap-1.5" title="Líneas cuya camiseta pasa de un equipo al otro: casi siempre son dos personas">
+                    <input type="checkbox" className="accent-accent" checked={onlyShirt} onChange={(e) => setOnlyShirt(e.target.checked)} />
+                    <TShirt size={12} className="text-warn" /> Solo con cambio de camiseta ({new Set(hints.map((h) => h.person)).size})
+                  </label>
+                  <label className="flex items-center gap-1.5" title="Las árbitras no se usan en el análisis: ocultas, fuera de la lista y de lo que se exporta">
+                    <input type="checkbox" className="accent-accent" checked={showRefs} onChange={(e) => setShowRefs(e.target.checked)} />
+                    Mostrar árbitras ({ppl.filter((p) => p.team === "ref" && !p.teamByHand).length})
+                  </label>
                   <span className="ml-auto flex items-center gap-3">
                     <button type="button" className="link inline-flex items-center gap-1 disabled:opacity-40" disabled={history.length === 0} onClick={undo} title="Ctrl + Z">
                       <ArrowCounterClockwise size={12} />
@@ -1174,156 +1784,29 @@ export function Correction({
                     </button>
                   </span>
                 </div>
-                <ul className="space-y-1">
-                  {listed.map((p) => {
-                    const isSel = p.id === sel;
-                    return (
-                      <li
-                        key={p.id}
-                        className={`grid grid-cols-[0.9rem_5.5rem_1.15rem_minmax(4rem,1fr)_auto] items-center gap-2 rounded-xl px-2 py-1 transition-colors ${
-                          isSel ? "bg-accent/15 shadow-[inset_0_0_0_1px_rgba(74,114,255,.5)]" : "hover:bg-raised/50"
-                        } ${p.done && !isSel ? "opacity-55" : ""}`}
-                      >
-                        <button
-                          type="button"
-                          aria-label={`Seleccionar a ${label(p, p.id)}`}
-                          className="h-3.5 w-3.5 rounded-sm shadow-[inset_0_0_0_1px_rgba(255,255,255,.25)]"
-                          style={{ background: labToHex(p.lab) }}
-                          title={`Color medido de su camiseta · tracks ${p.tracks.slice(0, 8).join(", ")}${p.tracks.length > 8 ? "…" : ""} · clic para seleccionar`}
-                          onClick={() => pickBox(p.id)}
-                        />
-                        {/* The name is typed here and is the person's id from then on. Enter or leaving the field saves it. */}
-                        <input
-                          key={`${p.id}:${p.player_id}`}
-                          className="tc w-full min-w-0 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs text-ink placeholder:text-faint hover:border-line focus:border-accent focus:bg-bg focus:outline-none"
-                          aria-label="Nombre o número de esta persona"
-                          title="Escribe su número o nombre. Si ya lo tiene otra persona, se unen."
-                          defaultValue={p.player_id}
-                          placeholder={`${defaultLabel(p.id)}${p.keeper ? " P" : ""}`}
-                          onFocus={() => setSel(p.id)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") e.currentTarget.blur();
-                            else if (e.key === "Escape") {
-                              e.currentTarget.value = p.player_id;
-                              e.currentTarget.blur();
-                            }
-                          }}
-                          onBlur={(e) => {
-                            const v = e.currentTarget.value.trim();
-                            if (v !== p.player_id) rename(p, v);
-                          }}
-                        />
-                        <select
-                          className="dot-select"
-                          aria-label={`Equipo: ${TEAM_LABELS[p.team]}${p.teamByHand ? " (puesto a mano)" : " (por el color de la camiseta)"}`}
-                          title={`${TEAM_LABELS[p.team]}${p.teamByHand ? " · puesto a mano" : " · por el color de la camiseta"}`}
-                          data-hand={p.teamByHand ? "" : undefined}
-                          value={p.teamByHand ? p.team : ""}
-                          onChange={(e) => setEdits(setPerson(edits, p.id, { team: e.target.value === "" ? null : (e.target.value as TeamCode) }))}
-                          style={{ backgroundColor: TEAM_COLORS[p.team] }}
-                        >
-                          <option value="">Por el color de la camiseta</option>
-                          {(["own", "opp", "ref", "unk"] as const).map((t) => (
-                            <option key={t} value={t}>
-                              {TEAM_LABELS[t]}
-                            </option>
-                          ))}
-                        </select>
-                        <span
-                          className="relative h-3 cursor-pointer rounded-full bg-bg/70"
-                          role="presentation"
-                          title={p.gaps.length ? `${p.gaps.length} hueco(s): clic para ir` : "Sin huecos"}
-                          onClick={(e) => {
-                            const r = e.currentTarget.getBoundingClientRect();
-                            setSel(p.id);
-                            seekFrame(Math.round(data.start_frame + ((e.clientX - r.left) / r.width) * span));
-                          }}
-                        >
-                          {runs(p).map(([a, b]) => (
-                            <span key={a} className="absolute inset-y-0 rounded-full" style={{ left: `${pos(a)}%`, width: `${Math.max(0.6, pos(b) - pos(a))}%`, background: TEAM_COLORS[p.team] }} />
-                          ))}
-                          <span className="absolute -inset-y-0.5 w-px bg-ink" style={{ left: `${Math.min(100, Math.max(0, pos(frame)))}%` }} />
-                        </span>
-                        <span className="flex items-center gap-2 text-[11px] whitespace-nowrap text-faint">
-                          <span className="tc">{((p.frames.length * stride) / fps).toFixed(1)} s</span>
-                          {p.conflicts.length > 0 && (
-                            <button
-                              type="button"
-                              className="text-warn"
-                              aria-label={`Dos cajas a la vez en ${p.conflicts.length} cuadro(s): ir al primero`}
-                              title={`Tiene dos cajas a la vez en ${p.conflicts.length} cuadro(s): clic para ir al primero y elegir la buena`}
-                              onClick={() => {
-                                setSel(p.id);
-                                setMode(null);
-                                seekFrame(p.conflicts[0]);
-                              }}
-                            >
-                              <Warning size={14} weight="fill" />
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            aria-pressed={p.done}
-                            aria-label={p.done ? "Completa: clic para volver a revisarla" : "Marcar como completa"}
-                            title={p.done ? "Completa: clic para volver a revisarla" : "Marcar como completa: ya no hay nada que corregirle"}
-                            className={`transition-colors ${p.done ? "text-ok" : "text-faint hover:text-ink"}`}
-                            onClick={() => {
-                              setEdits(setPerson(edits, p.id, { done: !p.done }));
-                              if (!p.done && hideDone && p.id === sel) setSel(null);
-                            }}
-                          >
-                            <CheckCircle size={15} weight={p.done ? "fill" : "regular"} />
-                          </button>
-                          {sel !== null && !isSel && (
-                            <button type="button" className="link" title={`Es la misma que ${label(selected ?? undefined, sel)}`} onClick={() => tryMerge(sel, p.id)}>
-                              unir
-                            </button>
-                          )}
-                        </span>
-                      </li>
-                    );
-                  })}
+                <ul className="-mr-2 min-h-0 flex-1 space-y-1 overflow-y-auto pr-2">
+                  {listed.map((p) => renderRow(p))}
+                  {listedAll.length > listed.length && (
+                    <li className="py-2 text-center">
+                      <button type="button" className={btn} onClick={() => setListLimit(listLimit + 100)}>
+                        Mostrar {Math.min(100, listedAll.length - listed.length)} más ({listedAll.length - listed.length} sin mostrar)
+                      </button>
+                    </li>
+                  )}
                 </ul>
                 {shortIds.length > 0 && (
-                  <div className="mt-4 rounded-2xl bg-bg/50 p-3 text-xs text-muted">
-                    <div className="flex items-center gap-1.5 text-ink-2">
-                      <Broom size={14} />
-                      {shortIds.length} trozos de menos de un segundo, sin nombre
-                    </div>
-                    <p className="mt-1 text-[11px] text-pretty text-faint">
-                      {shortDuplicates.length} son una segunda caja sobre alguien que ya tiene la suya (siempre a menos de 1.5 m de otra
-                      persona). Los otros {shortIds.length - shortDuplicates.length} aparecieron solos: una jugadora vista un instante, o una
-                      detección falsa.
-                    </p>
-                    {absorbable.length > 0 && (
-                      <div className="mt-2 rounded-xl bg-accent-900/40 px-3 py-2">
-                        <p className="text-[11px] text-pretty text-ink-2">
-                          {absorbable.length} encajan con una sola persona: {absorbFills.length} caen donde ella se pierde (le completan{" "}
-                          {absorbFills.reduce((n, a) => n + a.adds, 0)} cuadros) y {absorbable.length - absorbFills.length} repiten una caja que
-                          ya tiene.
-                        </p>
-                        <button type="button" className={`${btn} mt-2`} onClick={() => absorb(absorbable)}>
-                          <MagicWand size={14} />
-                          Añadir los {absorbable.length} a su jugadora
-                        </button>
-                      </div>
-                    )}
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button type="button" className={btn} disabled={shortDuplicates.length === 0} onClick={() => discard(shortDuplicates, "duplicados")}>
-                        Descartar los {shortDuplicates.length} duplicados
-                      </button>
-                      <button type="button" className="btn btn-ghost" onClick={() => discard(shortIds, "trozos cortos")}>
-                        Descartar los {shortIds.length}
-                      </button>
-                    </div>
-                  </div>
+                  <button type="button" className={`${btn} mt-3 w-full !justify-start`} onClick={() => setModal("cleanup")}>
+                    <BroomIcon size={15} />
+                    Limpieza rápida · {shortIds.length} trozos de menos de 1 s
+                  </button>
                 )}
                 {edits.removed.length > 0 && (
                   <p className="mt-3 text-xs text-faint">
                     {edits.removed.length} descartadas.{" "}
                     {edits.removed.length <= 12 ? (
                       edits.removed.map((id) => (
-                        <button key={id} type="button" className="tc link mr-2" title="Recuperar" onClick={() => setEdits(setRemoved(edits, id, false))}>
+                        <button key={id} type="button" className="tc mr-1 inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 hover:bg-raised hover:text-ink" title="Recuperar" onClick={() => setEdits(setRemoved(edits, id, false))}>
+                          <ArrowCounterClockwise size={11} />
                           {defaultLabel(id)}
                         </button>
                       ))
@@ -1336,10 +1819,11 @@ export function Correction({
                 )}
               </Card>
             </div>
+            )}
           </div>
 
           {/* Under both columns, so the video never covers them. */}
-          <div className="mt-6 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+          <div className="mt-6 grid gap-5 lg:grid-cols-2">
             <Card title="En la cancha" note="este cuadro" delay={60}>
               <Pitch showDirection={false}>
                 {pieces([...selRaw].sort((u, v) => u.frame - v.frame)).map((piece) => (
@@ -1377,147 +1861,6 @@ export function Correction({
               <p className="mt-1 text-[11px] text-faint">
                 {row?.H ? "Posiciones por la calibración de este cuadro." : "Este cuadro no tiene calibración: no hay posiciones."} Anillo amarillo: marcada a mano. Punto con borde naranja: balón (hueco si es una posición rellenada).
                 {sel !== null && " De la seleccionada, 4 s antes y después: línea gris, lo medido; línea blanca, lo que se exportará; puntos amarillos pequeños, posiciones rellenadas."}
-              </p>
-            </Card>
-
-            {kitsCard}
-            <Card title="Balón" note="no se detecta: se marca" delay={150}>
-              <p className="text-xs text-pretty text-muted">
-                El programa no sigue el balón. Su posición sale de dos fuentes, y entre dos posiciones a menos de {BALL_FILL_S} s se traza una
-                recta (marcada como rellenada). Donde no hay ninguna cerca, no hay balón.
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button type="button" className={mode === "ball" ? btnPrimary : btn} aria-pressed={mode === "ball"} onClick={() => setMode(mode === "ball" ? null : "ball")}>
-                  <SoccerBall size={15} />
-                  Marcar el balón <kbd className="kbd ml-1">b</kbd>
-                </button>
-                {ballMarkHere && pf !== null && (
-                  <button type="button" className="link text-xs" onClick={() => setEdits(removeBall(edits, pf))}>
-                    Quitar la marca de este cuadro
-                  </button>
-                )}
-                <span className="tc ml-auto text-xs text-muted">{(edits.ball ?? []).length} marca(s) a mano</span>
-              </div>
-              <p className="mt-2 text-[11px] text-pretty text-faint">
-                Con el modo activo, cada clic sobre el video marca el balón en ese cuadro: basta al salir y al llegar cada pase. La posición
-                se calcula como si el balón estuviera en el suelo, así que un balón por alto queda mal ubicado: márcalo donde bota.
-              </p>
-              <div className="mt-4 border-t border-line-soft pt-4">
-                <div className="text-xs text-ink-2">Desde los eventos etiquetados</div>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  <label className="text-[11px] text-muted">
-                    Partido de la app
-                    <select className={`${input} mt-1 w-full`} value={eventsMatchId} onChange={(e) => setPref(`ballMatch:${mid}`, e.target.value)}>
-                      <option value="">(ninguno)</option>
-                      {state.matches.map((m) => (
-                        <option key={m.match_id} value={m.match_id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-[11px] text-muted">
-                    En este video, el equipo analizado ataca hacia
-                    <select className={`${input} mt-1 w-full`} value={attack} onChange={(e) => setPref(`attack:${mid}:${data.video_id}`, e.target.value)}>
-                      <option value="">(sin indicar: no se usan)</option>
-                      <option value="right">la derecha del dibujo (x = 105)</option>
-                      <option value="left">la izquierda del dibujo (x = 0)</option>
-                    </select>
-                  </label>
-                </div>
-                <p className="mt-2 text-[11px] text-pretty text-faint">
-                  Los eventos se etiquetan con el equipo analizado atacando siempre hacia la derecha; aquí la cancha es la del video, así que
-                  hay que decir hacia dónde ataca de verdad. En esta parte: {ballKnown.filter((b) => b.source === "event").length} evento(s) con
-                  posición, {ball.filter((b) => b.source === "interpolated").length} posiciones rellenadas.
-                </p>
-              </div>
-            </Card>
-            <Card title="Exportar varias partes" note="un solo archivo" delay={165}>
-              <p className="text-xs text-pretty text-muted">
-                Para una jugada o un tramo que cruza varias partes. Cada parte lleva las correcciones que ya le hiciste; las que no has
-                tocado entran con sus identidades automáticas. Las personas con el mismo nombre son una sola en todo el archivo; las sin
-                nombre se enlazan entre partes seguidas cuando está claro quién es quién. El suavizado se aplica después de unir.
-              </p>
-              <ul className="mt-3 space-y-1 text-xs">
-                {allParts.map((p) => (
-                  <li key={editsKey(p.file)} className="flex items-center gap-2">
-                    <span className="tc text-ink-2">
-                      {fmtT(p.file.start_frame / p.file.fps)} – {fmtT(p.file.end_frame / p.file.fps)}
-                    </span>
-                    <span className={hasCorrections(p.edits) ? "text-ok" : "text-faint"}>{hasCorrections(p.edits) ? "corregida" : "sin corregir"}</span>
-                    {p.file === data ? (
-                      <span className="ml-auto text-faint">la que está abierta</span>
-                    ) : (
-                      <button type="button" className="link ml-auto" onClick={() => setExtra(extra.filter((f) => f !== p.file))}>
-                        quitar
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <label className={`${btn} cursor-pointer`}>
-                  <FolderOpen size={15} />
-                  Añadir partes
-                  <input type="file" accept=".json" multiple className="sr-only" onChange={onExtra} />
-                </label>
-                <button type="button" className={btn} onClick={() => void addFolderParts()} title="Añade todas las partes de este video que hay en la carpeta del partido">
-                  <Stack size={15} />
-                  Todas las de la carpeta
-                </button>
-                <button type="button" className={btnPrimary} disabled={allParts.length < 2} onClick={exportJoined}>
-                  <Stack size={15} />
-                  Exportar {allParts.length} partes unidas
-                </button>
-              </div>
-            </Card>
-            <Card title="Suavizado al exportar" note="se aplica a cada persona" delay={180}>
-              <label className="flex items-center gap-2 text-sm text-ink-2">
-                <input type="checkbox" className="accent-accent" checked={smoothOn} onChange={(e) => setSmoothOn(e.target.checked)} />
-                Limpiar las trayectorias antes de exportar
-              </label>
-              <div className={`mt-4 space-y-4 ${smoothOn ? "" : "pointer-events-none opacity-40"}`}>
-                {(
-                  [
-                    ["maxSpeedMs", "Velocidad máxima creíble", "m/s", 6, 12, 0.5, "Un punto que exigiría más que esto para llegar y para irse es un microsalto y se quita. Tampoco se rellena un hueco que exigiría más."],
-                    ["maxFillS", "Hueco más largo que se rellena", "s", 0, 5, 0.25, "Entre dos posiciones conocidas se traza una recta, marcada como rellenada. Los huecos más largos se dejan vacíos: no se la vio."],
-                    ["windowS", "Ventana de suavizado", "s", 0, 1.5, 0.1, "Promedio centrado para quitar el temblor de la detección. 0 = sin suavizar."],
-                  ] as const
-                ).map(([k, name, unit, min, max, step, help]) => (
-                  <label key={k} className="block text-xs text-muted">
-                    <span className="flex items-baseline justify-between">
-                      {name}
-                      <span className="tc text-ink-2">
-                        {smoothCfg[k]} {unit}
-                      </span>
-                    </span>
-                    <input type="range" className="mt-1 w-full" min={min} max={max} step={step} value={smoothCfg[k]} onChange={(e) => setSmoothCfg({ ...smoothCfg, [k]: Number(e.target.value) })} />
-                    <span className="mt-0.5 block text-[11px] text-pretty text-faint">{help}</span>
-                  </label>
-                ))}
-                <button type="button" className="link text-xs" onClick={() => setSmoothCfg(SMOOTH_DEFAULTS)}>
-                  Volver a los valores recomendados
-                </button>
-              </div>
-              <div className="mt-4 grid grid-cols-3 gap-3 border-t border-line-soft pt-4">
-                {(
-                  [
-                    ["microsaltos quitados", totals.outliers, selReport?.outliers],
-                    ["posiciones rellenadas", totals.filled, selReport?.filled],
-                    ["huecos sin rellenar", totals.openGaps, selReport?.openGaps],
-                  ] as const
-                ).map(([name, all, one]) => (
-                  <div key={name}>
-                    <div className="num text-3xl text-ink-2">{smoothOn ? all : "–"}</div>
-                    <div className="mt-1 text-[11px] text-muted">{name}</div>
-                    {smoothOn && one !== undefined && <div className="tc mt-0.5 text-[11px] text-faint">{one} en la seleccionada</div>}
-                  </div>
-                ))}
-              </div>
-              <p className="mt-3 text-[11px] text-pretty text-faint">
-                En el archivo exportado cada posición dice de dónde sale: detectada, marcada a mano o rellenada. Una posición rellenada es
-                una suposición razonable, no una medición. Las correcciones y el archivo de tracks no cambian: solo cambia lo que se
-                exporta.
               </p>
             </Card>
           </div>

@@ -369,3 +369,102 @@ a mano ahorra frente a la unión actual.
 - **Métricas de equipo sin corregir identidades**: ancho, largo, altura de línea y de bloque por tramos de 5 y 10 min de juego
   (`metrics/team_blocks.py`, `metrics/report.py`). Probadas con datos sintéticos; con datos reales, tras volver a procesar.
 - **Strava**: carga por esfuerzo relativo (`suffer_score`) cuando no hay RPE; las 113 actividades desde agosto lo traen.
+
+## Primera medición contra correcciones reales (2026-10-15, plan de seguimiento en metros)
+
+Verdad: `tracks_v1_14541_15944` (8:05 a 8:52 del primer tiempo, 0.8 min), corregida en la mesa: 19 personas revisadas
+(10 nuestras, 9 rivales; faltó una). `python -m sportsan.tracking.evaluate`:
+
+| método | ops | uniones | cortes | precisión | recall | identidades por persona |
+|---|---|---|---|---|---|---|
+| `file` (lo que escribió process) | 130 | 101 | 29 | 0.996 | 0.973 | 5.2 |
+| `legacy` (la misma unión, recalculada en metros) | 131 | 101 | 30 | 0.996 | 0.973 | 5.1 |
+| `stitch2` (fase 1 completa) | 527 | 497 | 30 | 0.995 | 0.921 | 25.9 |
+| fase 1 con las sueltas dentro de la unión | 160 | 121 | 39 | 0.994 | 0.970 | |
+
+- La fase 1 **no mejora** en este tramo. Dejar las sueltas fuera multiplica las uniones (436 de las 497 son trozos de menos
+  de 1 s), y sin eso los cortes suben de 29 a 39 (la votación con 5 votos mínimos deja sin equipo a los fragmentos cortos y se
+  pierde el veto). `process` sigue usando la unión anterior (`--link legacy`); `stitch2` queda como método a medir.
+- **17 de los 29 cortes están dentro de un mismo track del seguidor** (BoT-SORT cambia de persona sin cortar el track);
+  los otros 12, en uniones. Ninguna regla de unión arregla los primeros: es el argumento de la fase 2 (asociar en metros y
+  cortar ante un cruce dudoso).
+- Muestra chica (48 s, una parte): hace falta al menos otra parte con paneo o cruces antes de cambiar nada por defecto.
+
+## Asociación en la cancha con Mahalanobis (2026-10-15, misma parte de 48 s)
+
+Diagnóstico (`sportsan.tracking.diagnose`): el ruido entre cuadros va casi todo a lo ancho (y) y crece lejos de la cámara
+(p99 de |dy| en 0.1 s: 3.3 m en y < 22, 1.0 m en y > 44; en x, 1 m o menos). Saltos comunes de calibración: 3 cuadros de 467,
+apenas sobre 0.5 m, sin relación con relocalizaciones ni paneos.
+
+| método | ops | uniones | cortes | precisión | recall |
+|---|---|---|---|---|---|
+| `file` | 130 | 101 | 29 | 0.996 | 0.973 |
+| `stitch2` | 527 | 497 | 30 | 0.995 | 0.921 |
+| `pitch` (valores pedidos) | 282 | 212 | 70 | 0.989 | 0.930 |
+
+- El modelo de ruido pedido (σx 2 px, σy 6 % del alto, σ_cal 0.2 m) sobreestima el error entre cuadros seguidos: d² real p50
+  0.2 y p90 1.4, frente a 1.39 y 4.61 de chi²(2). Bajarlo no mejora (64 a 83 cortes en las variantes probadas).
+- 67 de los 70 cortes salen de la asociación cuadro a cuadro: al recuperar a alguien tras 0.8-1 s sin verla (la puerta crece y
+  toma a otra a 2-5 m) y cuando una jugadora tapa a otra en el mismo punto (la caja siguiente es de la de atrás, a 0.1 m).
+- Experimentos, no adoptados (una sola parte): cerrar tras 0.3 s sin verla en vez de 1 s, 51 cortes; además respetar la
+  continuidad del seguidor de la imagen (`TRACKER_BONUS` 6), 42 cortes y 243 operaciones. Siguen peor que `file`.
+
+## Segunda parte corregida y cola de uniones (2026-10-15)
+
+Verdad nueva: `tracks_v1_23140_26173` (12:52 a 14:33, 101 s), 22 personas revisadas. `file` 282 operaciones (230 uniones,
+52 cortes); `pitch` 576; `stitch2` 1059; `legacy_split` 670. Con las dos partes: `file` 412, `pitch` 858. «Añadir a su
+jugadora» (trozos cortos) baja `file` a 100 y 210 (resuelve un tercio de las uniones a cambio de 2 cortes).
+
+Cola de uniones por reglas (simulada contra las etiquetas): entre personas de al menos 1 s, la primera candidata es la
+correcta en 5 de 8 y 9 de 26 casos con continuación real en menos de 3 s; cuando no es la primera, tampoco está entre las 3
+primeras. Una cola global que se acepte con una tecla metería muchas uniones equivocadas, así que las candidatas se muestran
+para la persona seleccionada y se eligen a mano. Mejorar el orden es el trabajo del modelo aprendido (entrenar con una parte,
+validar con otra, medir en una tercera).
+
+## Lo que se ve al corregir (2026-10-15, misma parte)
+
+- **Los cambios reales de identidad son intercambios entre jugadoras juntas**: de 24 cambios reales, la mediana del salto es
+  0.8 m y solo 2 pasan de 3 m. **Los saltos grandes (hasta 11.8 m) son de la misma jugadora** con una posición mala (pies
+  tapados): no son errores de identidad. El suavizado al exportar ahora quita también las excursiones cortas (hasta 0.5 s).
+- Un cambio de camiseta sostenido (1 s de cada equipo) sí indica dos personas: 5 de 6 en las etiquetas. La mesa los lista
+  con «cortar».
+- Partir los tracks del seguidor en esos cambios antes de unir (`legacy_split`) empeora: 166 operaciones, 63 cortes.
+- La mesa decidía el equipo con los colores del cuentagotas, que no se parecen a los medidos en el torso; con la regla de la
+  fase 1 (luminosidad completa) las porteras y muchas otras quedaban sin equipo. Ahora decide con los colores medidos en el
+  propio archivo.
+- Las árbitras se ocultan en la mesa y no se exportan.
+
+## Aprender de las correcciones y re-identificación (2026-10-15)
+
+Sin una tercera parte corregida: validación cruzada en tres bloques (8:05-8:52 y la segunda parte partida por la mitad),
+entrenando con dos y midiendo en el tercero (`sportsan.tracking.learn evaluate --split-second`).
+
+- **Modelo de uniones aprendido** (regresión logística, 20 datos por par): 406 -> 389 operaciones con p >= 0.5, pero los
+  cortes suben de 81 a 103; con p >= 0.9, 399. No vale la pena.
+- **Techo de cualquier modelo de uniones**: aceptando todas las uniones correctas entre las candidatas, 130 -> 91 y
+  282 -> 186 (unos 30-35 % menos), incluso con huecos de 30 s. El resto son cortes dentro de un track del seguidor
+  (intercambios en los cruces), que además dejan líneas mezcladas que no se pueden unir.
+- **Re-identificación por apariencia en BoT-SORT** (`yolo26n-reid.onnx`, +0.22 s por cuadro): en 12:52-14:33, 424
+  operaciones y 136 cortes, frente a 285 y 54 de la misma corrida sin apariencia. Con uniformes iguales, un modelo genérico
+  confunde más. Descartada.
+- Para medir otra corrida del mismo tramo sin volver a corregir: `evaluate remap` pasa las etiquetas por solapamiento de
+  cajas (99 % de las cajas), y `process --out-dir` escribe la prueba aparte.
+
+## Análisis con posiciones corregidas (2026-10-15)
+
+Con las dos partes corregidas guardadas (`tracks_fixed_v1_14541_15944`, `tracks_fixed_v1_23140_26173`, unos 2.5 min) se habilitan en la app, solo sobre partes corregidas:
+
+- **Animación de jugadas** con posiciones medidas, cuando la jugada cae en una parte corregida (si no, keyframes a mano como antes).
+- **Mapa de calor** por equipo o por jugadora con nombre. En las dos partes: unos 19 min-jugadora de cada equipo.
+- **Red de pases**: un pase se lee del balón (la más cercana a menos de 2 m lo tiene; si el siguiente es del mismo equipo, es pase). Hoy el balón está seguido solo 5 s, así que no hay pases todavía: hace falta marcar el balón en la vista Balón de la mesa.
+- **Jugadoras detrás del balón al perderlo** (B4): en las pérdidas etiquetadas y en los cambios de equipo leídos del balón. Con los datos de hoy: dos pérdidas leídas del balón (3 de 5 y 4 de 8).
+
+La dirección de ataque es la que se indica en la mesa; si no se indicó, se deduce de dónde pasa el tiempo cada equipo (en las dos partes, Tec CCM ataca hacia la derecha). Nada de esto se ha probado haciendo clic en el navegador.
+
+
+## Limpieza (2026-10-15)
+
+Se quitó el código de los experimentos que no mejoraron (las mediciones de arriba se conservan): `tracking/associate.py`
+(método `pitch`), `tracking/learn.py`, `tracking/diagnose.py`, los métodos `stitch2` y `legacy_split` y la opción
+`--link` de `process`, y la sección del formato de tracks v4 del contrato. `evaluate` mide `file` y `legacy`; cualquier
+cambio futuro a la unión se registra ahí y se mide contra las dos partes corregidas.

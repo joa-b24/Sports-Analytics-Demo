@@ -501,6 +501,7 @@ function MatchPage() {
               events={timeline.events}
               segments={timeline.segments}
               videoIds={videos.map((v) => v.video_id)}
+              videoEvents={allEvents}
               // On the joined axis the times are no longer video times: tooltips show the original ones.
               timeLabel={
                 videos.length > 1

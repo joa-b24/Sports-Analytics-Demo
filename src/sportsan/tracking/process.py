@@ -32,19 +32,24 @@ import numpy as np
 from ..schema import MARGIN_M, PITCH_LENGTH_M, PITCH_WIDTH_M
 from .detect import DEFAULT_TRACKER, LOOSE_ID, Chunk, FrameTracker, chunk_quality, default_model, estimate_seconds, fmt_duration, jersey_color, load_model, plan_chunks
 from .propagate import apply_h, estimate_motion, propagate, venue_grid
-from .stitch import absorb_loose, color_distance, duplicate_loose, fragments_from_boxes, stitch
+from .stitch import absorb_loose, duplicate_loose, fragments_from_boxes, stitch
+from .team import JERSEY_KEYS, MAX_COLOR_DISTANCE, classify_team, hex_to_lab, lab_to_hex, team_changes, track_teams, track_teams_legacy, vote_teams  # noqa: F401  (se usan desde aquí)
 
 TRACKS_SCHEMA_VERSION = 3
 TEAM_CODES = ("unk", "own", "opp", "ref")
-# Claves de `jersey_colors` en match.yaml y el equipo al que pertenece cada una (las porteras visten distinto).
-JERSEY_KEYS = {"own": "own", "opp": "opp", "ref": "ref", "own_gk": "own", "opp_gk": "opp"}
-# Distancia de color (Lab con la luminosidad a la mitad) a partir de la cual una camiseta no se asigna a ningún equipo.
-MAX_COLOR_DISTANCE = 40.0
 # Una caja a menos de estos píxeles del borde de la imagen está saliendo o entrando del encuadre.
 EDGE_PX = 10
 
 
 # ---------------------------------------------------------------- geometría y color (numpy puro)
+
+def to_meters(H: np.ndarray | None, feet_px: np.ndarray) -> np.ndarray:
+    """Pie de cada caja (px) -> metros reales de la sede. NaN si el cuadro no tiene calibración."""
+    feet_px = np.asarray(feet_px, dtype=float).reshape(-1, 2)
+    if H is None:
+        return np.full((len(feet_px), 2), np.nan)
+    return apply_h(H, feet_px)
+
 
 def to_normalized(H: np.ndarray | None, feet_px: np.ndarray, length_m: float, width_m: float) -> np.ndarray:
     """Pie de cada caja (px) -> cancha normalizada 105 x 68. NaN si el cuadro no tiene calibración."""
@@ -60,49 +65,6 @@ def on_pitch(xy: np.ndarray, margin: float = MARGIN_M) -> np.ndarray:
     xy = np.asarray(xy, dtype=float).reshape(-1, 2)
     with np.errstate(invalid="ignore"):
         return (xy[:, 0] >= -margin) & (xy[:, 0] <= PITCH_LENGTH_M + margin) & (xy[:, 1] >= -margin) & (xy[:, 1] <= PITCH_WIDTH_M + margin)
-
-
-def hex_to_lab(color: str) -> np.ndarray:
-    """'#rrggbb' -> Lab en la escala de 8 bits de OpenCV (L 0-255, a y b centrados en 128)."""
-    c = color.strip().lstrip("#")
-    if len(c) != 6:
-        raise ValueError(f"Color inválido: {color!r} (se espera #rrggbb)")
-    rgb = np.array([int(c[i:i + 2], 16) for i in (0, 2, 4)], dtype=float) / 255
-    lin = np.where(rgb > 0.04045, ((rgb + 0.055) / 1.055) ** 2.4, rgb / 12.92)
-    xyz = np.array([[0.4124564, 0.3575761, 0.1804375], [0.2126729, 0.7151522, 0.0721750], [0.0193339, 0.1191920, 0.9503041]]) @ lin
-    f = xyz / np.array([0.95047, 1.0, 1.08883])
-    f = np.where(f > 0.008856, np.cbrt(f), 7.787 * f + 16 / 116)
-    return np.array([(116 * f[1] - 16) * 255 / 100, 500 * (f[0] - f[1]) + 128, 200 * (f[1] - f[2]) + 128])
-
-
-def lab_to_hex(lab: np.ndarray) -> str:
-    L, a, b = lab[0] * 100 / 255, lab[1] - 128, lab[2] - 128
-    fy = (L + 16) / 116
-    f = np.array([fy + a / 500, fy, fy - b / 200])
-    xyz = np.where(f ** 3 > 0.008856, f ** 3, (f - 16 / 116) / 7.787) * np.array([0.95047, 1.0, 1.08883])
-    lin = np.array([[3.2404542, -1.5371385, -0.4985314], [-0.9692660, 1.8760108, 0.0415560], [0.0556434, -0.2040259, 1.0572252]]) @ xyz
-    lin = np.clip(lin, 0, 1)
-    rgb = np.where(lin > 0.0031308, 1.055 * lin ** (1 / 2.4) - 0.055, 12.92 * lin)
-    return "#" + "".join(f"{int(round(v * 255)):02x}" for v in np.clip(rgb, 0, 1))
-
-
-def classify_team(lab: np.ndarray, refs: dict[str, np.ndarray], max_distance: float = MAX_COLOR_DISTANCE) -> str:
-    """Equipo cuya camiseta de referencia está más cerca en color; 'unk' si ninguna está cerca o no hay referencias.
-
-    `refs` usa las claves de `jersey_colors` (own, opp, ref, own_gk, opp_gk): la portera cuenta para su equipo.
-    """
-    if not refs:
-        return "unk"
-    name, d = min(((k, color_distance(lab, v)) for k, v in refs.items()), key=lambda kv: kv[1])
-    return JERSEY_KEYS.get(name, "unk") if d <= max_distance else "unk"
-
-
-def track_teams(rows: list[dict], refs: dict[str, np.ndarray]) -> dict[int, str]:
-    """Un equipo por track: el del color mediano de sus cajas (más estable que decidir caja a caja)."""
-    by_track: dict[int, list[list[float]]] = {}
-    for r in rows:
-        by_track.setdefault(r["track_id"], []).append(r["lab"])
-    return {t: classify_team(np.median(np.array(v), axis=0), refs) for t, v in by_track.items()}
 
 
 def dominant_colors(labs: np.ndarray, k: int = 3, rounds: int = 12) -> list[tuple[str, int]]:
@@ -240,6 +202,66 @@ def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: floa
     return frames, rows, motions, anchors
 
 
+def propose_identities(frames: list[int], rows: list[list[dict]], meters: list[np.ndarray], insides: list[np.ndarray],
+                       refs: dict[str, np.ndarray], fps: float) -> dict:
+    """Identidad propuesta para cada track de una parte. Función pura.
+
+    Medido el 2026-10-15 contra dos partes corregidas a mano: otras formas de unir (cambios de la fase 1, partir por
+    cambio de camiseta, asociación en la cancha con Mahalanobis, un modelo aprendido, re-identificación) dejaron igual
+    o más trabajo que esta (docs/roadmap.md) y se quitaron.
+
+    rows[i]: cajas del cuadro frames[i] ({"track_id", "lab", "edge"?}); meters[i]: su posición en metros reales de la
+    sede (NaN sin calibración); insides[i]: si está en la cancha. Pasos:
+    1. una detección suelta encima de un track del seguidor es la misma persona vista dos veces: fuera;
+    2. equipo de cada track por sus cajas (team.track_teams_legacy);
+    3. las sueltas que caen en el hueco de un track pasan a ser de ese track;
+    4. se unen los fragmentos (stitch), en metros.
+
+    Devuelve rows y kept (índices conservados por cuadro, tras quitar duplicados), ident(track) -> identidad,
+    ident_box(cuadro, track), teams (identidad -> equipo), team_conf (track -> fracción de votos), absorbed y el
+    número de duplicados.
+    """
+    is_loose = lambda t: t >= LOOSE_ID  # noqa: E731
+    kept_rows: list[list[dict]] = []
+    kept_idx: list[list[int]] = []
+    kept_m: list[np.ndarray] = []
+    kept_in: list[np.ndarray] = []
+    duplicates = 0
+    for row, m, inside in zip(rows, meters, insides):
+        dup = duplicate_loose([{"track_id": r["track_id"], "xy": (p.tolist() if ins else None)} for r, p, ins in zip(row, m, inside)], is_loose)
+        keep = [k for k, r in enumerate(row) if r["track_id"] not in dup]
+        duplicates += len(row) - len(keep)
+        kept_idx.append(keep)
+        kept_rows.append([row[k] for k in keep])
+        kept_m.append(m[keep] if len(m) else m)
+        kept_in.append(inside[keep] if len(inside) else inside)
+    votes = {t: (team, 1.0) for t, team in track_teams_legacy([r for row in kept_rows for r in row], refs).items()}
+    for_stitch = [
+        [
+            {"track_id": r["track_id"], "xy": (p.tolist() if ins and np.isfinite(p).all() else None), "lab": r["lab"],
+             "team": votes[r["track_id"]][0], "edge": r.get("edge", False)}
+            for r, p, ins in zip(row, m, inside)
+        ]
+        for row, m, inside in zip(kept_rows, kept_m, kept_in)
+    ]
+    absorbed = absorb_loose(frames, for_stitch, is_loose, fps)
+    linkable = [[{**b, "track_id": absorbed.get(b["track_id"], b["track_id"])} for b in row] for row in for_stitch]
+    identity = stitch(fragments_from_boxes(frames, linkable, fps), fps, min_link_s=0.0, immediate_veto=False)
+
+    def ident(tid: int) -> int:
+        t = absorbed.get(tid, tid)
+        return identity.get(t, t)
+
+    def ident_box(frame: int, tid: int) -> int:
+        """Identidad de una caja por su track original."""
+        return ident(tid)
+
+    by_ident = [{"track_id": ident(r["track_id"]), "lab": r["lab"]} for row in kept_rows for r in row]
+    teams = track_teams_legacy(by_ident, refs)
+    return {"rows": kept_rows, "kept": kept_idx, "ident": ident, "ident_box": ident_box, "teams": teams,
+            "team_conf": {t: c for t, (_, c) in votes.items()}, "absorbed": absorbed, "duplicates": duplicates}
+
+
 def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray], fps: float, max_error_m: float) -> dict:
     """Calibra la parte, pasa las cajas a la cancha, une fragmentos, asigna equipos y resume la calidad."""
     stride_s = (frames[1] - frames[0]) / fps if len(frames) > 1 else 1 / fps
@@ -248,56 +270,35 @@ def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray
     length, width = float(venue.get("length_m", PITCH_LENGTH_M)), float(venue.get("width_m", PITCH_WIDTH_M))
     Hs, dropped, _ = calibrate_processed(anchors, motions, len(frames), venue_grid(length, width), w, h, max_error_m)
 
-    # Posición de cada caja en la cancha.
+    # Posición de cada caja: en metros reales para la física (unir, velocidades) y normalizada para escribir.
+    meters: list[np.ndarray] = []
     positions: list[np.ndarray] = []
     insides: list[np.ndarray] = []
     for H, row in zip(Hs, rows):
         feet = np.array([[(r["box"][0] + r["box"][2]) / 2, r["box"][3]] for r in row], dtype=float).reshape(-1, 2)
-        xy = to_normalized(H, feet, length, width)
+        m = to_meters(H, feet)
+        xy = m * np.array([PITCH_LENGTH_M / length, PITCH_WIDTH_M / width])
+        meters.append(m)
         positions.append(xy)
         insides.append(on_pitch(xy))
 
-    # Una detección suelta encima de alguien que el seguidor ya lleva es la misma persona vista dos veces: fuera.
-    duplicates = 0
-    for i, (row, xy, inside) in enumerate(zip(rows, positions, insides)):
-        dup = duplicate_loose([{"track_id": r["track_id"], "xy": (p.tolist() if ins else None)} for r, p, ins in zip(row, xy, inside)], lambda t: t >= LOOSE_ID)
-        if dup:
-            keep = [k for k, r in enumerate(row) if r["track_id"] not in dup]
-            rows[i], positions[i], insides[i] = [row[k] for k in keep], xy[keep], inside[keep]
-            duplicates += len(dup)
-
-    # Equipo de cada track por su color, antes de unir: dos equipos distintos nunca son la misma persona.
-    raw_teams = track_teams([r for row in rows for r in row], refs)
-    # Fragmentos del mismo color y equipo que se continúan en la cancha: una identidad propuesta por persona.
-    for_stitch = [
-        [
-            {"track_id": r["track_id"], "xy": (p.tolist() if ins else None), "lab": r["lab"], "team": raw_teams[r["track_id"]], "edge": r.get("edge", False)}
-            for r, p, ins in zip(row, xy, inside)
-        ]
-        for row, xy, inside in zip(rows, positions, insides)
-    ]
-    # Primero, las detecciones sueltas que caen en el hueco de un track pasan a ser de ese track.
-    absorbed = absorb_loose(frames, for_stitch, lambda t: t >= LOOSE_ID, fps)
-    for row in for_stitch:
-        for b in row:
-            b["track_id"] = absorbed.get(b["track_id"], b["track_id"])
-    identity = stitch(fragments_from_boxes(frames, for_stitch, fps), fps)
-    ident = lambda tid: identity.get(absorbed.get(tid, tid), absorbed.get(tid, tid))
-    # El equipo se decide por identidad: más cajas, color más estable.
-    teams = track_teams([{"track_id": ident(r["track_id"]), "lab": r["lab"]} for row in rows for r in row], refs)
+    prop = propose_identities(frames, rows, meters, insides, refs, fps)
+    rows, positions, insides = prop["rows"], [positions[i][k] for i, k in enumerate(prop["kept"])], [insides[i][k] for i, k in enumerate(prop["kept"])]
+    ident_box, teams, absorbed, duplicates = prop["ident_box"], prop["teams"], prop["absorbed"], prop["duplicates"]
 
     out_rows: list[list[list]] = []
     inside_counts: list[int] = []
     inside_tracks: dict[int, int] = {}
     seen: dict[int, int] = {}
-    for row, xy, inside in zip(rows, positions, insides):
+    for f, row, xy, inside in zip(frames, rows, positions, insides):
         line = []
         for r, p, ins in zip(row, xy, inside):
             known = bool(np.isfinite(p).all())
+            who = ident_box(f, r["track_id"])
             line.append([
                 r["track_id"], *r["box"], r["conf"], *r["lab"],
                 round(float(p[0]), 2) if known else None, round(float(p[1]), 2) if known else None,
-                bool(ins), teams[ident(r["track_id"])], ident(r["track_id"]),
+                bool(ins), teams.get(who, "unk"), who,
             ])
             seen[r["track_id"]] = seen.get(r["track_id"], 0) + 1
             if ins:
@@ -310,7 +311,7 @@ def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray
     quality = chunk_quality(frames, [[[b[0]] for b in line] for line in out_rows], fps)
     calibrated = sum(1 for H in Hs if H is not None)
     people = max(1.0, float(np.median(inside_counts)) if inside_counts else 1.0)
-    identities = {ident(t) for t in inside_tracks}
+    identities = {b[13] for line in out_rows for b in line if b[0] in inside_tracks}
     quality.update({
         "calibrated_share": round(calibrated / n, 3),
         "library_anchors": len(anchors) - len(dropped),
@@ -409,6 +410,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--max-error", type=float, default=MAX_CONSISTENCY_M)
     ap.add_argument("--benchmark", action="store_true", help="solo mide la velocidad y estima el tiempo total")
     ap.add_argument("--force", action="store_true", help="vuelve a procesar las partes ya hechas")
+    ap.add_argument("--out-dir", help="carpeta de salida (por defecto, tracking/ del partido); para pruebas que no toquen lo hecho")
     args = ap.parse_args(argv)
 
     cfg = load_config(match=args.match, video=args.video)
@@ -416,10 +418,10 @@ def main(argv: list[str] | None = None) -> None:
     fps = float(cfg["video_fps"])
     stride = args.stride or int(cfg.get("analysis_stride") or 3)
     every = max(1, round(args.every * fps / stride))
-    out_dir = root / cfg["paths"]["tracking_dir"]
+    out_dir = Path(args.out_dir) if args.out_dir else root / cfg["paths"]["tracking_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    lib_path = Path(args.library) if args.library else out_dir / f"library_{cfg['video_id']}.npz"
+    lib_path = Path(args.library) if args.library else root / cfg["paths"]["tracking_dir"] / f"library_{cfg['video_id']}.npz"
     if not lib_path.exists():
         raise SystemExit(f"No existe la biblioteca {lib_path}. Constrúyela primero: python -m sportsan.tracking.library build --track <calib del barrido>.json")
     lib = Library.load(lib_path)

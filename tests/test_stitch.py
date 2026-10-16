@@ -132,13 +132,34 @@ def test_long_gaps_are_only_bridged_when_she_really_left_the_shot():
     assert ids(tagged(still, exits=True), far) == {1: 1, 3: 3}
 
 
-def test_single_frame_detections_attach_to_the_track_they_continue():
-    # El seguidor pierde a una jugadora parada; el detector la sigue viendo cuadro a cuadro (detecciones sueltas).
+def test_single_frame_detections_do_not_glue_tracks():
+    # El seguidor pierde a una jugadora parada; el detector la ve en cuadros sueltos. Los dos tracks largos se unen
+    # entre sí; las detecciones de un cuadro no se unen a nada (son demasiado cortas para saber de quién son).
     first = walk(1, 0, 60, (30, 30), (0, 0), BLUE)
     loose = [walk(100 + k, 63 + 3 * k, 63 + 3 * k, (30, 30), (0, 0), BLUE) for k in range(4)]
     again = walk(2, 75, 150, (30.3, 30), (0, 0), BLUE)
     out = ids(first, *loose, again)
-    assert set(out.values()) == {1}
+    assert out[1] == out[2] == 1
+    assert all(out[100 + k] == 100 + k for k in range(4))
+
+
+def test_a_chain_through_a_loose_detection_does_not_join_two_people():
+    # A (azul) termina, una detección de un cuadro aparece entre medio, y B (negro, otra persona) empieza al lado.
+    # Sin equipo decidido, antes A -> suelta -> B se encadenaba por la regla de reaparición inmediata.
+    a = walk(1, 0, 60, (30, 30), (0, 0), BLUE)
+    glue = walk(1_000_005, 63, 63, (30.4, 30), (0, 0), BLUE)
+    b = walk(2, 66, 150, (30.8, 30), (0, 0), BLACK)
+    out = ids(a, glue, b)
+    assert len(set(out.values())) == 3
+
+
+def test_a_short_fragment_between_two_long_ones_is_left_alone():
+    a = walk(1, 0, 90, (20, 30), (2, 0), BLUE)
+    short = walk(2, 96, 111, (26.4, 30), (2, 0), BLUE)  # 0.5 s
+    c = walk(3, 117, 210, (27.8, 30), (2, 0), BLUE)
+    out = ids(a, short, c)
+    assert out[2] == 2
+    assert out[3] == 1  # los dos largos sí se unen entre ellos
 
 
 def test_loose_detections_fill_the_holes_of_a_track():
@@ -179,3 +200,36 @@ def test_a_loose_detection_on_top_of_a_tracked_person_is_a_duplicate():
     ]
     assert duplicate_loose(row, loose) == {1001}
     assert duplicate_loose([r for r in row if r["track_id"] != 1], loose) == set()
+
+
+def test_physics_in_real_meters_of_the_venue():
+    # Sede de 102 x 66: una jugadora a 7.8 m/s reales. En metros su velocidad se conserva; en la cancha normalizada
+    # (105 x 68) parecería ir a 8.03 m/s y se recortaría al límite de 8.
+    from sportsan.tracking.stitch import MAX_SPEED_MS
+
+    run = walk(1, 0, 60, (20, 30), (7.8, 0), BLUE)
+    frames, boxes = scene(run)
+    v = fragments_from_boxes(frames, boxes, FPS)[0].velocity
+    assert abs(v[0] - 7.8) < 1e-6
+
+    scaled = {f: {**b, "xy": [b["xy"][0] * 105 / 102, b["xy"][1]]} for f, b in run.items()}
+    frames, boxes = scene(scaled)
+    assert fragments_from_boxes(frames, boxes, FPS)[0].velocity[0] == MAX_SPEED_MS
+
+
+def test_restitch_rebuilds_meters_from_the_calibration():
+    from sportsan.tracking.restitch import legacy_identities, rebuild
+
+    # Calibración trivial: 10 px = 1 m, sede de 102 x 66. Una persona camina; el seguidor la parte en dos tracks.
+    H = [0.1, 0, 0, 0, 0.1, 0, 0, 0, 1]
+    frames = []
+    for i in range(40):
+        x_px = 200 + i * 3 * 10 / FPS * 2 * 10 / 10  # 2 m/s
+        tid = 1 if i < 20 else 2
+        frames.append({"frame": i * 3, "H": H, "boxes": [[tid, x_px - 5, 290, x_px + 5, 300, 0.9, *BLUE, None, None, True, "unk", tid]]})
+    tracks = {"match_id": "x", "video_id": "v1", "fps": FPS, "stride": 3, "image_w": 1920, "image_h": 1080,
+              "venue": {"length_m": 102, "width_m": 66}, "frames": frames}
+    _, _, meters, insides = rebuild(tracks)
+    assert meters[0][0].tolist() == [20.0, 30.0] and insides[0][0]
+    ids = legacy_identities(tracks, refs={})
+    assert ids[(0, 1)] == ids[(117, 2)] == 1

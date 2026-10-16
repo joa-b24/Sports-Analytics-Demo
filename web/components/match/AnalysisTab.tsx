@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { BinChart, CompareBars, EventTimeline, PartsDuo, RateDuo, ShotMap, StatTile, ZoneMap, type PartsRow } from "@/components/charts";
-import { Locked } from "@/components/Locked";
+import { PositionsCards } from "@/components/match/PositionsCards";
 import { TeamShapeCard } from "@/components/match/TeamShape";
-import { COLORS, Pitch } from "@/components/Pitch";
+import { COLORS } from "@/components/Pitch";
 import { Reveal } from "@/components/motion";
 import { Card, Section, input } from "@/components/Shell";
 import {
@@ -42,9 +42,11 @@ type Props = {
   timeLabel?: (e: MatchEvent) => string;
   // Videos of the match, to read their team metrics from the match folder.
   videoIds?: string[];
+  // The same events with their own video times, to place them in the measured positions.
+  videoEvents?: MatchEvent[];
 };
 
-export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v1"] }: Props) {
+export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v1"], videoEvents }: Props) {
   const [zoneType, setZoneType] = useState<EventType>("recovery");
   const [zoneTeam, setZoneTeam] = useState<Side>("own");
   const [period, setPeriod] = useState<0 | 1 | 2>(0);
@@ -64,12 +66,17 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
 
   if (events.length === 0) {
     return (
-      <Card>
-        <p className="text-sm text-muted">
-          Aún no hay eventos etiquetados en este partido. Los gráficos de esta pestaña se calculan solo con lo que etiquetes en
-          «Video y etiquetado».
-        </p>
-      </Card>
+      <div className="space-y-8">
+        <Card>
+          <p className="text-sm text-muted">
+            Aún no hay eventos etiquetados en este partido. Los gráficos de eventos se calculan solo con lo que etiquetes en «Video y
+            etiquetado»; los de posiciones, abajo, salen de las partes corregidas.
+          </p>
+        </Card>
+        <Section title="Con posiciones medidas" note="desde el tracking corregido">
+          <PositionsCards match={match} videoIds={videoIds} events={[]} />
+        </Section>
+      </div>
     );
   }
 
@@ -304,26 +311,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         <div className="mb-4">
           <TeamShapeCard match={match} videoIds={videoIds} />
         </div>
-        <div className="grid gap-4 lg:grid-cols-2">
-          {[
-            ["Jugadoras por detrás del balón al perderlo", "B4. Cuántas quedan en posición de defender en el instante de cada pérdida."],
-            ["Mapa de calor y red de pases", "De la propuesta de diseño. Dónde pasa más tiempo cada equipo y quién combina con quién."],
-          ].map(([title, text], n) => (
-            <Locked
-              key={title}
-              reason="tracking"
-              delay={n * 80}
-              title={title}
-              why={`${text} Necesita posiciones medidas de las jugadoras; con eventos etiquetados a mano no se puede calcular.`}
-            >
-              <Pitch showDirection={false} />
-            </Locked>
-          ))}
-        </div>
-        <p className="mt-3 text-xs text-faint">
-          Estas dos necesitan algo más que el equipo de cada persona: saber dónde está el balón en cada instante (marcado a mano en la mesa de
-          corrección o sacado de los eventos), y para la red de pases, quién es cada jugadora. No muestran datos hasta entonces.
-        </p>
+        <PositionsCards match={match} videoIds={videoIds} events={videoEvents ?? events} />
       </Section>
     </div>
   );

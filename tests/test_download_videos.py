@@ -7,6 +7,7 @@ ROW = {"match_id": "2026_10_11_ccm_vs_up", "kind": "own", "date": "", "own_team"
 def test_id_de_youtube():
     assert youtube_id("https://www.youtube.com/watch?v=_-utAbJNqhI&t=10") == "_-utAbJNqhI"
     assert youtube_id(ROW["url"]) == "OIvhk-vNs5c"
+    assert youtube_id("https://www.youtube.com/live/kjPIltXBMPs") == "kjPIltXBMPs"
     assert youtube_id("") == ""
 
 

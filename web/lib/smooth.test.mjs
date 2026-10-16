@@ -83,3 +83,15 @@ test("a hand mark pulls the path more than a detection, and wins when both exist
   assert.equal(mid.source, "manual");
   assert.ok(mid.y > 31.5); // stays close to where the person put it
 });
+
+test("a short excursion of a few points is taken out; a real change of place is not", () => {
+  const pts = run(0, 15, 20, 2);
+  for (const k of [6, 7, 8]) pts[k] = pt(k * 3, 35, 45); // 0.3 s far away, then back on her way
+  const { points, removed } = dropJumps(pts, O);
+  assert.equal(removed, 3);
+  assert.ok(points.every((p) => p.x < 30));
+  // Running away and staying there is not an excursion.
+  const away = [...run(0, 6, 20, 2), ...run(18, 8, 35, 2).map((p) => ({ ...p, y: 45 }))];
+  assert.equal(dropJumps(away, O).removed, 0);
+});
+

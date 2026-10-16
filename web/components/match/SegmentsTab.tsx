@@ -1,6 +1,7 @@
 "use client";
 
-import { DownloadSimple, FlagCheckered, Pause, Play as PlayIcon, UploadSimple, Warning } from "@phosphor-icons/react";
+import { ClockClockwise, DownloadSimple, FlagCheckered, Pause, Play as PlayIcon, Trash, UploadSimple, Warning } from "@phosphor-icons/react";
+import { IconButton } from "@/components/Modal";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Card, btn } from "@/components/Shell";
 import type { PlayerHandle } from "@/components/VideoPlayer";
@@ -205,12 +206,12 @@ export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, 
                         </select>
                       </td>
                       <td className="py-1 text-right text-xs whitespace-nowrap">
-                        <button type="button" className="link mr-3" title="Mueve esta marca al momento actual del video" onClick={() => patch(m.mark_id, { t_video: now() })}>
-                          = ahora
-                        </button>
-                        <button type="button" className="text-danger underline underline-offset-2" onClick={() => remove(m.mark_id)}>
-                          borrar
-                        </button>
+                        <IconButton label="Mover esta marca al momento actual del video" onClick={() => patch(m.mark_id, { t_video: now() })}>
+                          <ClockClockwise size={14} />
+                        </IconButton>
+                        <IconButton label="Borrar la marca" tone="danger" onClick={() => remove(m.mark_id)}>
+                          <Trash size={14} />
+                        </IconButton>
                       </td>
                     </tr>
                   );

@@ -265,6 +265,8 @@ export interface TrackEdits {
   dropped?: { track: number; frame: number }[];
   // Ball marked by hand on the video (pixels), one per frame. Absent in older edits.
   ball?: { frame: number; px: number; py: number }[];
+  // Pairs of identities rejected as "the same person" (suggestions declined in the table). Absent in older edits.
+  rejected?: [number, number][];
 }
 
 // A player of our squad. player_id is the name used everywhere (events, tracks, sessions); the number can change.
