@@ -190,5 +190,5 @@ export function buildDemo(): State {
   }
 
   return { matches: [match], events, plays: [play], sessions, anchors: [], segments: marks, venues: [], trackEdits: [],
-    roster: [], passes: [], boards: [], jerseys: {} };
+    roster: [], passes: [], boards: [], edits: [], jerseys: {} };
 }

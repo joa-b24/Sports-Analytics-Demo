@@ -2,6 +2,7 @@
 // pitch meters or tied to a player, never in pixels, so the same drawing serves both views (over the video it is
 // projected with the homography of each frame). Only text may sit in screen coordinates. Pure functions, no storage,
 // no React.
+import { invert, type Homography } from "./homography.ts";
 import { interpolate } from "./stats.ts";
 import type { Keyframe } from "./types.ts";
 
@@ -55,6 +56,24 @@ export interface Freeze {
   reveal: string[];
 }
 
+export type LabelMode = "name" | "number" | "none";
+
+// What a clip needs from the tracking of its part, copied when the edit is saved so that the render (Python) draws
+// exactly what the app shows: the calibration of each processed frame and the positions of the people seen in the clip.
+export interface ClipSnapshot {
+  fps: number;
+  stride: number;
+  image_w: number;
+  image_h: number;
+  // Real size of the venue (m): H goes to real meters, the drawings are in the normalised 105 x 68 pitch.
+  venue: { length_m: number; width_m: number };
+  // [frame, H]: H image px -> real venue meters (row-major), null where the frame has no calibration.
+  homographies: [number, number[] | null][];
+  people: { id: number; team: string; player_id: string | null; number: number | null }[];
+  // By identity: [frame, x, y, source] in the normalised pitch as tracks_fixed has it (not mirrored).
+  tracks: Record<string, [number, number, number, string][]>;
+}
+
 export interface ClipEdit {
   edit_id: string;
   match_id: string;
@@ -65,7 +84,12 @@ export interface ClipEdit {
   freezes: Freeze[];
   annotations: Annotation[];
   // How players are labelled.
-  label_mode: "name" | "number" | "none";
+  label_mode: LabelMode;
+  // The play it was made from, if any.
+  play_id?: string;
+  // tracks_fixed (or tracks, if the part was not corrected) file whose identities the `player` anchors use.
+  fixed_file?: string | null;
+  snapshot?: ClipSnapshot | null;
 }
 
 // [min, max] number of anchors of each kind.
@@ -217,4 +241,207 @@ export function labelPoint(r: Pick<Resolved, "kind" | "points">): Pt {
     return ps.length % 2 === 1 && ps.length > 2 ? ps[i] : [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   }
   return ps[0];
+}
+
+// Points along the same curve as curvePath, `perStretch` points per stretch between two given points. Straight with two.
+export function sampleCurve(points: Pt[], perStretch = 12): Pt[] {
+  if (points.length <= 2) return points.map((p) => [p[0], p[1]]);
+  const out: Pt[] = [[points[0][0], points[0][1]]];
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+    const c1: Pt = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+    const c2: Pt = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    for (let k = 1; k <= perStretch; k++) {
+      const u = k / perStretch;
+      const a = (1 - u) ** 3;
+      const b = 3 * (1 - u) ** 2 * u;
+      const c = 3 * (1 - u) * u ** 2;
+      const d = u ** 3;
+      out.push([a * p1[0] + b * c1[0] + c * c2[0] + d * p2[0], a * p1[1] + b * c1[1] + c * c2[1] + d * p2[1]]);
+    }
+  }
+  return out;
+}
+
+// ------------------------------------------------------------------------------------------- clip with freezes
+
+// The output clip, in order: stretches of video and stops. Stops do not count as video time.
+export interface TimelineSpan {
+  kind: "video" | "freeze";
+  // Seconds of the output clip.
+  out0: number;
+  out1: number;
+  // Seconds of the video (the same at both ends of a stop).
+  v0: number;
+  v1: number;
+  freeze: Freeze | null;
+}
+export interface ClipTimeline {
+  spans: TimelineSpan[];
+  duration: number;
+}
+
+// Stops that fall inside the clip, in order (one per instant: a second one at the same time is left out).
+export function clipFreezes(edit: Pick<ClipEdit, "t_start" | "t_end" | "freezes">): Freeze[] {
+  const out: Freeze[] = [];
+  for (const f of [...edit.freezes].sort((a, b) => a.t - b.t))
+    if (f.t >= edit.t_start && f.t <= edit.t_end && f.duration_s > 0 && !out.some((g) => Math.abs(g.t - f.t) < 1e-6)) out.push(f);
+  return out;
+}
+
+export function timeline(edit: Pick<ClipEdit, "t_start" | "t_end" | "freezes">): ClipTimeline {
+  const spans: TimelineSpan[] = [];
+  let v = edit.t_start;
+  let out = 0;
+  const video = (to: number) => {
+    if (to > v + 1e-9) {
+      spans.push({ kind: "video", out0: out, out1: out + (to - v), v0: v, v1: to, freeze: null });
+      out += to - v;
+      v = to;
+    }
+  };
+  for (const f of clipFreezes(edit)) {
+    video(f.t);
+    spans.push({ kind: "freeze", out0: out, out1: out + f.duration_s, v0: f.t, v1: f.t, freeze: f });
+    out += f.duration_s;
+  }
+  video(edit.t_end);
+  return { spans, duration: out };
+}
+
+// Where the output clip is at output time `t`: the video time, and the stop it is in (with the seconds into it).
+export function atOutput(tl: ClipTimeline, t: number): { t_video: number; freeze: Freeze | null; elapsed: number } {
+  const span = tl.spans.find((s) => t >= s.out0 && t < s.out1) ?? tl.spans[tl.spans.length - 1];
+  if (!span) return { t_video: 0, freeze: null, elapsed: 0 };
+  if (span.kind === "freeze") return { t_video: span.v0, freeze: span.freeze, elapsed: Math.min(t, span.out1) - span.out0 };
+  return { t_video: Math.min(span.v1, span.v0 + Math.max(0, t - span.out0)), freeze: null, elapsed: 0 };
+}
+
+// Output time at which the video reaches `t_video` (before the stop there, if any).
+export function outputOf(tl: ClipTimeline, t_video: number): number {
+  for (const s of tl.spans) if (s.kind === "video" && t_video >= s.v0 && t_video <= s.v1) return s.out0 + (t_video - s.v0);
+  return t_video <= (tl.spans[0]?.v0 ?? 0) ? 0 : tl.duration;
+}
+
+// How many drawings of a stop's `reveal` are shown `elapsed` seconds into it: one by one, evenly, the first after a
+// moment of the bare frame and the last with time left to see them all.
+export function revealCount(f: Freeze, elapsed: number): number {
+  const n = f.reveal.length;
+  if (n === 0) return 0;
+  return Math.max(0, Math.min(n, Math.floor(elapsed / (f.duration_s / (n + 1)))));
+}
+
+// Drawings at a moment of the clip: those visible then, minus the ones of the current stop not revealed yet.
+export function clipDrawingsAt(
+  edit: Pick<ClipEdit, "annotations">,
+  t_video: number,
+  ctx: ResolveContext,
+  stop: { freeze: Freeze; shown: number } | null,
+): Resolved[] {
+  const hidden = new Set(stop ? stop.freeze.reveal.slice(stop.shown) : []);
+  return resolveAll(
+    edit.annotations.filter((a) => !hidden.has(a.id)),
+    t_video,
+    ctx,
+  );
+}
+
+// ------------------------------------------------------------------------------------------------ projection
+
+// Sizes of what is drawn over the video, for a frame 1080 px high (scaled with its height). The render uses the same.
+export const DRAW_PX = { stroke: 5, text: 40, label: 30, outline: 6 };
+// Sizes on the grass (normalised meters): the ring at the feet and the arrow head.
+export const DRAW_M = { ring: 1.2, head: 2 };
+
+export interface Venue {
+  length_m: number;
+  width_m: number;
+}
+export type ToImage = (p: Pt) => Pt | null;
+
+// Normalised pitch (105 x 68) -> pixels of the frame, through H (pixels -> real venue meters). The sign of the inverse
+// is chosen so that the centre of the pitch is in front of the camera; a point behind it gives null. Null without H.
+export function pitchToImage(H: Homography | null | undefined, venue: Venue): ToImage | null {
+  if (!H) return null;
+  const inv = invert(H);
+  if (!inv) return null;
+  const sx = venue.length_m / 105;
+  const sy = venue.width_m / 68;
+  const s = inv[6] * (venue.length_m / 2) + inv[7] * (venue.width_m / 2) + inv[8] < 0 ? -1 : 1;
+  const m = inv.map((v) => v * s);
+  return ([x, y]) => {
+    const X = x * sx;
+    const Y = y * sy;
+    const w = m[6] * X + m[7] * Y + m[8];
+    if (!(w > 1e-9)) return null;
+    return [(m[0] * X + m[1] * Y + m[2]) / w, (m[3] * X + m[4] * Y + m[5]) / w];
+  };
+}
+
+export interface Projected {
+  id: string;
+  kind: AnnotationKind;
+  style: AnnotationStyle;
+  // Polylines in pixels; `closed` ones are polygons (the ring at the feet, a zone).
+  paths: Pt[][];
+  closed: boolean;
+  head: Pt[] | null;
+  // A text drawing, or the label of another drawing: where its baseline goes (centred) and what it says.
+  text: { at: Pt; value: string } | null;
+}
+
+// A drawing over the video frame. Drawings on the grass follow the perspective point by point (a ring at the feet is an
+// ellipse, an arrow bends with the pitch). Hidden (null) when any point cannot be placed, or without calibration; a
+// text in screen coordinates stays. `labelOf` gives the label of a player (by the clip's label mode) or null.
+export function project(
+  r: Resolved,
+  toImage: ToImage | null,
+  image: { w: number; h: number },
+  labelOf?: (id: number | string) => string | null,
+): Projected | null {
+  const k = image.h / 1080;
+  const base: Projected = { id: r.id, kind: r.kind, style: r.style, paths: [], closed: false, head: null, text: null };
+  if (r.space === "screen") return { ...base, text: { at: [r.points[0][0] * image.w, r.points[0][1] * image.h], value: r.style.label || "Texto" } };
+  if (!toImage) return null;
+  const proj = (ps: Pt[]): Pt[] | null => {
+    const out: Pt[] = [];
+    for (const p of ps) {
+      const q = toImage(p);
+      if (!q) return null;
+      out.push(q);
+    }
+    return out;
+  };
+  const labelAt = (p: Pt | null, who: string | null) => {
+    const value = [who, r.style.label].filter(Boolean).join(" · ");
+    return value && p ? { at: p, value } : null;
+  };
+  const above = (p: Pt | null): Pt | null => (p ? [p[0], p[1] - 12 * k] : null);
+  if (r.kind === "text") {
+    const at = toImage(r.points[0]);
+    return at ? { ...base, text: { at, value: r.style.label || "Texto" } } : null;
+  }
+  if (r.kind === "highlight") {
+    const [cx, cy] = r.points[0];
+    const ring = proj(Array.from({ length: 32 }, (_, i): Pt => [cx + DRAW_M.ring * Math.cos((i / 32) * 2 * Math.PI), cy + DRAW_M.ring * Math.sin((i / 32) * 2 * Math.PI)]));
+    if (!ring) return null;
+    const top = ring.reduce((a, p) => (p[1] < a[1] ? p : a), ring[0]);
+    const who = r.players[0] !== null && labelOf ? labelOf(r.players[0]) : null;
+    return { ...base, paths: [ring], closed: true, text: labelAt(above(top), who) };
+  }
+  if (r.kind === "arrow") {
+    const curve = sampleCurve(r.points);
+    const head = arrowHead(curve, DRAW_M.head);
+    if (!head) return null;
+    const body: Pt[] = [...curve.slice(0, -1), [(head[1][0] + head[2][0]) / 2, (head[1][1] + head[2][1]) / 2]];
+    const pb = proj(body);
+    const ph = proj(head);
+    return pb && ph ? { ...base, paths: [pb], head: ph, text: labelAt(above(toImage(labelPoint(r))), null) } : null;
+  }
+  const pts = proj(r.points);
+  if (!pts) return null;
+  return { ...base, paths: [pts], closed: r.kind === "zone", text: labelAt(above(toImage(labelPoint(r))), null) };
 }

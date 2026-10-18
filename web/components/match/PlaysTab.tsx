@@ -2,6 +2,7 @@
 
 import {
   BracketsSquare,
+  PencilSimpleLine,
   Play as PlayIcon,
   Plus,
   Strategy,
@@ -11,10 +12,12 @@ import { useRouter } from "next/navigation";
 import { IconButton } from "@/components/Modal";
 import { useRef, useState, type RefObject } from "react";
 import { BallStrip } from "@/components/BallStrip";
+import { ClipEditor } from "@/components/clip/ClipEditor";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
 import { Card, btn, btnPrimary, input } from "@/components/Shell";
 import type { PlayerHandle } from "@/components/VideoPlayer";
 import { boardFromPlay, type MeasuredAt } from "@/lib/boards";
+import { newEdit } from "@/lib/clips";
 import { useFixedParts } from "@/lib/fixed";
 import { fmtT } from "@/lib/format";
 import { partFor, positionsAt } from "@/lib/positions";
@@ -60,8 +63,26 @@ export function PlaysTab({
   const measured = measuredOn && part ? positionsAt(part, time) : null;
   // What the measured animation shows: everybody, only players with a name, or only the ball.
   const show = usePref("plays:show", "all") as "all" | "named" | "ball";
-  const { roster } = useStore();
+  const { roster, edits } = useStore();
   const router = useRouter();
+  const [clipOpen, setClipOpen] = useState<string | null>(null);
+  const editOf = (p: Play) => (edits ?? []).find((e) => e.play_id === p.play_id) ?? null;
+  const openEditor = () => {
+    if (!play) return;
+    playerRef.current?.pause();
+    const found = editOf(play);
+    if (found) {
+      // The clip follows the play: its start and end are the play's.
+      if (found.t_start !== play.t_start || found.t_end !== play.t_end)
+        mutate((s) => ({ ...s, edits: (s.edits ?? []).map((e) => (e.edit_id === found.edit_id ? { ...e, t_start: play.t_start, t_end: play.t_end } : e)) }));
+      setClipOpen(found.edit_id);
+      return;
+    }
+    const e = newEdit(uid("c"), play);
+    mutate((s) => ({ ...s, edits: [...(s.edits ?? []), e] }));
+    setClipOpen(e.edit_id);
+  };
+  const editingEdit = clipOpen ? ((edits ?? []).find((e) => e.edit_id === clipOpen) ?? null) : null;
 
   // Copies the play onto the board: the measured positions when they are the ones shown, otherwise the keyframes.
   // Tokens show the shirt number from the squad, never a name.
@@ -156,6 +177,7 @@ export function PlaysTab({
 
   return (
     <div className="space-y-5">
+      {editingEdit && <ClipEditor match={match} edit={editingEdit} onClose={() => setClipOpen(null)} />}
       <Card title="Jugadas">
         <div className="flex flex-wrap gap-2">
           {plays.map((p) => (
@@ -208,6 +230,15 @@ export function PlaysTab({
             >
               <PlayIcon size={14} weight="fill" />
               Reproducir clip
+            </button>
+            <button
+              type="button"
+              className={btn}
+              onClick={openEditor}
+              title="Dibujos sobre el video del tramo (resaltar, flechas, líneas, zonas, texto) con pausas, y modo presentación para la charla"
+            >
+              <PencilSimpleLine size={14} />
+              {editOf(play) ? "Editar clip" : "Dibujar sobre el clip"}
             </button>
             <button
               type="button"

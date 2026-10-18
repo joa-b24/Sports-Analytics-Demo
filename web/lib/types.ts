@@ -1,5 +1,5 @@
 // Mirror of docs/data_contract.md (events) plus the web-only tables (matches, plays, sessions, boards).
-import type { Annotation } from "./annotations.ts";
+import type { Annotation, ClipEdit } from "./annotations.ts";
 
 export type Team = "own" | "opp" | "ref" | "unk";
 
@@ -391,6 +391,8 @@ export interface State {
   passes: PassRow[];
   // Board plays. Absent in backups made before the board existed.
   boards: Board[];
+  // Drawings over the video of a play (lib/clips.ts). Absent in backups made before they existed.
+  edits: ClipEdit[];
   // Shirt colours by match_id of the match folder, as #rrggbb.
   jerseys: Record<string, { own: string; opp: string; ref: string; own_gk?: string; opp_gk?: string }>;
 }

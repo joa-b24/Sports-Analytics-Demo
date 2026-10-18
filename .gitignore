@@ -41,3 +41,10 @@ config/roster.json
 passes_*.csv
 # Datos del informe exportados desde la app (llevan nombres de jugadoras)
 matches/*/report_*.json
+
+# Ediciones de clips y lista de clips del informe: llevan nombres de jugadoras
+matches/*/edits/*
+matches/*/clips/*
+matches/*/clips_*.json
+# Jugadas del pizarrón exportadas para el render
+data/boards/

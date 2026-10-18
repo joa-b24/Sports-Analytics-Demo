@@ -15,12 +15,17 @@ export const dynamic = "force-dynamic";
 
 const ROOT = path.resolve(process.env.SPORTSAN_ROOT ?? path.join(process.cwd(), ".."));
 // Only these parts of the repository are reachable.
-const READABLE = [/^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.json$/, /^data\/strava(\/.*)?$/];
+const READABLE = [/^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.json$/, /^data\/strava(\/.*)?$/, /^data\/boards(\/.*)?$/];
 const WRITABLE = [
   /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors|labels)_[\w.-]+\.json$/,
   /^matches\/[\w.-]+\/(match\.yaml|segments\.csv)$/,
   // Data of the report (lib/report.ts), kept next to the match; out of git (it carries player names).
   /^matches\/[\w.-]+\/report_[\w.-]+\.json$/,
+  // Drawings over the video of a play (lib/clips.ts) and the list of clips of the report; out of git (names).
+  /^matches\/[\w.-]+\/edits\/edit_[\w.-]+\.json$/,
+  /^matches\/[\w.-]+\/clips_[\w.-]+\.json$/,
+  // A board play exported for the render (sportsan.clips.render --board).
+  /^data\/boards\/board_[\w.-]+\.json$/,
   /^config\/roster\.json$/,
 ];
 const TYPES: Record<string, string> = {
