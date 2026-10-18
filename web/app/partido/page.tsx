@@ -32,7 +32,7 @@ import { Calibration } from "@/components/workspace/Calibration";
 import { Correction } from "@/components/workspace/Correction";
 import { SpeedControl } from "@/components/SpeedControl";
 import { VideoPlayer, type PlayerHandle } from "@/components/VideoPlayer";
-import { fmtT, parseYouTubeId } from "@/lib/format";
+import { fmtT, isTyping, parseYouTubeId } from "@/lib/format";
 import { FOLDER_RULE, isFolderName, listLocal, localVideo } from "@/lib/local";
 import { matchSteps, type FolderFiles, type StepState } from "@/lib/steps";
 import { segmentsFromMarks, skipTarget, type Segment } from "@/lib/segments";
@@ -119,6 +119,32 @@ function MatchPage() {
       live = false;
     };
   }, [folder, id, videoNow]);
+  // Video keys in the tabs with the video: Space plays or pauses, ← → jump 5 s, with Shift 1 s (as the buttons).
+  // Not while writing, nor over a drop-down or a slider (their arrows are theirs). Over the YouTube frame the keys go
+  // to YouTube, which does the same.
+  const videoTab = tab === "tag" || tab === "plays" || tab === "segments";
+  useEffect(() => {
+    if (!videoTab) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (isTyping(el) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (el?.tagName === "SELECT" || (el?.tagName === "INPUT" && (el as HTMLInputElement).type === "range")) return;
+      const p = playerRef.current;
+      if (!p) return;
+      if (e.key === " ") {
+        // Also stops a focused button from being pressed by the same Space.
+        e.preventDefault();
+        p.toggle();
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const step = (e.shiftKey ? 1 : 5) * (e.key === "ArrowLeft" ? -1 : 1);
+        p.seek(Math.max(0, p.getTime() + step));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [videoTab]);
+
   if (!hydrated) return null;
   if (!match) {
     return (
@@ -376,25 +402,25 @@ function MatchPage() {
             <VideoPlayer key={video.video_id} ref={playerRef} youtubeId={video.youtube_id || undefined} fileUrl={fileUrls.get(fileKey)} onTime={onTime} onPlayState={setPlaying} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className={`${btn} h-9 w-9 !p-0`} title="−5 s" aria-label="Retroceder 5 segundos" onClick={() => jump(-5)}>
+            <button type="button" className={`${btn} h-9 w-9 !p-0`} title="−5 s (←)" aria-label="Retroceder 5 segundos" onClick={() => jump(-5)}>
               <Rewind size={16} />
             </button>
-            <button type="button" className={`${btn} h-9 w-9 !p-0`} title="−1 s" aria-label="Retroceder 1 segundo" onClick={() => jump(-1)}>
+            <button type="button" className={`${btn} h-9 w-9 !p-0`} title="−1 s (Mayús + ←)" aria-label="Retroceder 1 segundo" onClick={() => jump(-1)}>
               <SkipBack size={16} />
             </button>
             <button
               type="button"
               className={`${btnPrimary} h-10 w-10 !p-0`}
-              title={playing ? "Pausar" : "Reproducir"}
+              title={playing ? "Pausar (espacio)" : "Reproducir (espacio)"}
               aria-label={playing ? "Pausar" : "Reproducir"}
               onClick={() => playerRef.current?.toggle()}
             >
               {playing ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
             </button>
-            <button type="button" className={`${btn} h-9 w-9 !p-0`} title="+1 s" aria-label="Avanzar 1 segundo" onClick={() => jump(1)}>
+            <button type="button" className={`${btn} h-9 w-9 !p-0`} title="+1 s (Mayús + →)" aria-label="Avanzar 1 segundo" onClick={() => jump(1)}>
               <SkipForward size={16} />
             </button>
-            <button type="button" className={`${btn} h-9 w-9 !p-0`} title="+5 s" aria-label="Avanzar 5 segundos" onClick={() => jump(5)}>
+            <button type="button" className={`${btn} h-9 w-9 !p-0`} title="+5 s (→)" aria-label="Avanzar 5 segundos" onClick={() => jump(5)}>
               <FastForward size={16} />
             </button>
             <span className="tag tc ml-1">{fmtT(time)}</span>

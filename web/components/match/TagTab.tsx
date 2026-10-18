@@ -306,6 +306,8 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
       </div>
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-muted">
         {[
+          ["Espacio", "reproducir / pausar"],
+          ["← →", "5 s atrás / adelante (con Mayús, 1 s)"],
           ["A / S", "equipo analizado / contrario"],
           ["1 2 3", "resultado del último evento"],
           ["7 8 9", "detalle del último evento"],
