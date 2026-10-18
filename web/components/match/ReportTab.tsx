@@ -5,6 +5,7 @@ import Link from "next/link";
 import { DownloadSimple, Printer, Plus, Trash } from "@phosphor-icons/react";
 import { BinChart, CompareBars, Legend, ZoneMap } from "@/components/charts";
 import { GoalFrame } from "@/components/match/GoalFrame";
+import { BallBlock, LeftoversList, NetworkBlock, TouchesBlock, coverageText } from "@/components/match/ReportBall";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { btn, btnPrimary, input } from "@/components/Shell";
 import { BIN_MEASURES, type BinMeasure, type Rate, type Tally } from "@/lib/analysis";
@@ -110,6 +111,16 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       <Block title="Jugadoras clave">
         <TextField value={report.jugadoras_clave} hint="Número, posición y qué hacen." onChange={(v) => setReport({ jugadoras_clave: v })} />
         <GateLine gate={data.key_players.touches} />
+        {data.key_players.touches.ok && data.summary.ball && (
+          <TouchesBlock
+            rows={data.key_players.rows}
+            team={A}
+            other={data.cover.other_team}
+            coverage={coverageText(data.summary.ball)}
+            print={data.key_players.print}
+            onPrint={(v) => setReport({ print_touches: v })}
+          />
+        )}
       </Block>
 
       <Block title="Fortalezas, debilidades y plan" pageBreak>
@@ -148,6 +159,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
             <li key={l}>{l}</li>
           ))}
         </ul>
+        {data.summary.ball && <LeftoversList b={data.summary.ball} team={A} other={data.cover.other_team} />}
       </footer>
     </div>
   );
@@ -375,6 +387,8 @@ function Summary({ data }: { data: ReportData }) {
           </div>
         </div>
       )}
+      <BallBlock data={data} />
+      {data.summary.network ? <NetworkBlock net={data.summary.network} team={A} /> : data.summary.ball && <GateLine gate={data.summary.network_gate} />}
     </div>
   );
 }

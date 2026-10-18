@@ -73,8 +73,35 @@ test("cada sección pide su fuente: con balón, la posesión ya no dice «requie
   const parts = [{ ownRight: true, file: { kind: "tracks_fixed", match_id: "m1", video_id: "v1", fps: 10, start_frame: 0, end_frame: 300, stride: 10, people: [], frames: [], ball } }];
   const r = buildReport(input({ events: sample(), parts }));
   assert.equal(r.cover.level.sources.ball, true);
-  assert.doesNotMatch(r.summary.possession.need, /^Requiere/);
+  assert.equal(r.summary.possession.ok, true);
+  assert.ok(r.summary.ball);
+  // No players in the part: no network and no touches by player.
+  assert.equal(r.summary.network, null);
+  assert.equal(r.key_players.touches.ok, false);
   assert.match(r.key_players.touches.need, /^Requiere nombres/);
+});
+
+test("con balón y nombres: posesión que suma la cobertura, red de pases y toques por jugadora (anonimizables)", () => {
+  // 10 s of play; Ana passes to Bea every second, Bea to Ana; 30 fps, stride 3.
+  const people = [{ id: 1, team: "own", player_id: "Ana Uno", tracks: [1] }, { id: 2, team: "own", player_id: "Bea Dos", tracks: [2] }];
+  const frames = Array.from({ length: 100 }, (_, i) => ({ frame: i * 3, positions: [{ id: 1, x: 40, y: 20, source: "auto" }, { id: 2, x: 60, y: 40, source: "auto" }] }));
+  const ball = Array.from({ length: 100 }, (_, i) => (Math.floor(i / 10) % 2 === 0 ? { frame: i * 3, x: 40.3, y: 20, source: "manual" } : { frame: i * 3, x: 60.3, y: 40, source: "manual" }));
+  const parts = [{ ownRight: true, file: { kind: "tracks_fixed", match_id: "m1", video_id: "v1", fps: 30, start_frame: 0, end_frame: 300, stride: 3, people, frames, ball } }];
+  const seg = { v1: [{ segment_id: "s01", start: 0, end: 10, tipo: "juego" }] };
+  const r = buildReport(input({ events: sample(), parts, segmentsByVideo: seg }));
+  const b = r.summary.ball;
+  assert.equal(b.followed_s, 10);
+  assert.equal(b.share, 1);
+  assert.equal(b.possession.own + b.possession.opp + b.possession.unassigned, b.followed_s);
+  assert.equal(b.passes.own.completed, 9);
+  assert.equal(r.cover.level.level, 4);
+  assert.equal(r.summary.network.passes, 9);
+  assert.deepEqual(r.summary.network.edges, [{ a: "Ana Uno", b: "Bea Dos", count: 9 }]);
+  assert.deepEqual(r.key_players.rows.map((x) => [x.player, x.touches]), [["Ana Uno", 50], ["Bea Dos", 50]]);
+  assert.equal(r.key_players.rows[0].per10, 3000); // 50 touches in 10 s of ball followed
+  assert.equal(r.key_players.print, false);
+  const anon = JSON.stringify(buildReport(input({ events: sample(), parts, segmentsByVideo: seg, anonymize: true })));
+  assert.ok(!anon.includes("Ana Uno") && !anon.includes("Bea Dos"));
 });
 
 test("partido de rival: lados y textos con focus_team y other_team, nunca «nosotras»", () => {

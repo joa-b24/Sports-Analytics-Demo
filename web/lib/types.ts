@@ -124,6 +124,8 @@ export interface Report {
   jornada?: string;
   // Results of the analysed team in matches that are not in the app.
   results_manual?: ManualResult[];
+  // The table of touches by player goes into the printout only when the analyst says so.
+  print_touches?: boolean;
 }
 
 export const EMPTY_REPORT: Report = {
@@ -136,6 +138,7 @@ export const EMPTY_REPORT: Report = {
   conclusiones: "",
   jornada: "",
   results_manual: [],
+  print_touches: false,
 };
 
 // One video of a match. Times in events, plays and segment marks are times inside their own video.

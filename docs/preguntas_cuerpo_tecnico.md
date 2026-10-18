@@ -138,9 +138,9 @@ El informe (`web/components/match/ReportTab.tsx`, cálculo en `web/lib/report.ts
 | 4. Mapas: duelos (solo si se etiquetaron) | — (opcional) | N1 |
 | 5. Transiciones | B2, B3, D1, D2 | N1 |
 | 6. Balón parado | A4, E1, E2; E3 y E4 en el texto de la analista | N1 |
-| 3. Posesión y pases | — (pendiente, fase 2) | N2 |
+| 3. Posesión, pases por tercio y carril, cambios confirmados o inferidos | A2 y A4 con el balón (por dónde y desde dónde juegan), B1 con el balón (dónde les cortan) | N2 |
 | 7. Patrones | A2 por 5 carriles, A4, B2, A5 por banda, B4 (pendiente, fase 3) | N1–N3 |
-| 8. Toques por jugadora | — (pendiente, fase 2) | N4 |
+| 3. Red de pases y 8. toques por jugadora | E3 a lo largo del juego (quién la toca y con quién se asocia) | N4 |
 
 ## 3. Cuestionarios del auxiliar (bienestar y carga)
 

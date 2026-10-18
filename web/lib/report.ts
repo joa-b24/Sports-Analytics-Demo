@@ -30,8 +30,7 @@ import {
   type TransitionMoment,
 } from "./analysis.ts";
 import { fmtT, youtubeLink } from "./format.ts";
-import { BALL_FILL_S } from "./parts.ts";
-import type { Oriented } from "./positions.ts";
+import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, possessionCells, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
 import type { Segment } from "./segments.ts";
 import { LANES_5, THIRDS_3, countByType, laneThirdOf, zoneGrid5x3 } from "./stats.ts";
 import { EMPTY_REPORT, type ManualResult, type Match, type MatchEvent, type Play, type Report, type RosterPlayer } from "./types.ts";
@@ -58,6 +57,7 @@ export function normalizeReport(r: Partial<Report> | null | undefined): Report {
     plan: text("plan"),
     conclusiones: text("conclusiones"),
     jornada: text("jornada"),
+    print_touches: src.print_touches === true,
     results_manual: results.filter((x): x is ManualResult => !!x && typeof x === "object").map((x) => ({
       date: typeof x.date === "string" ? x.date : "",
       opponent: typeof x.opponent === "string" ? x.opponent : "",
@@ -118,9 +118,9 @@ function playInside(segments: Segment[], t0: number, t1: number): number {
   }
   return s;
 }
-// Coverage is counted on a grid of COVER_STEP_S per video, so a stretch covered by two files (a joined export and its
-// parts, say) counts once. Only inside closed play stretches when there are any: an open last stretch has no length.
-export const COVER_STEP_S = 0.5;
+// Coverage is counted on cells of COVER_STEP_S per video (lib/positions.ts), so a stretch covered by two files (a
+// joined export and its parts) counts once. Only inside closed play stretches when there are any: an open last stretch
+// has no length. The ball uses the same cells as the possession, so both always add up to the same time.
 function addSpan(cells: Set<string>, video: string, t0: number, t1: number, play: Segment[] | null) {
   for (let k = Math.floor(t0 / COVER_STEP_S); k * COVER_STEP_S < t1; k++) {
     const mid = (k + 0.5) * COVER_STEP_S;
@@ -129,41 +129,19 @@ function addSpan(cells: Set<string>, video: string, t0: number, t1: number, play
   }
 }
 
-// Where the ball is followed in a part: each processed frame holding a hand mark, or a position joined to a hand mark
-// less than BALL_FILL_S away, covers the time until the next processed frame. Ball positions taken only from tagged
-// events do not count: every part has those.
-function addBallFollowed(cells: Set<string>, o: Oriented, play: Segment[] | null) {
-  const f = o.file;
-  const manual = f.ball.filter((b) => b.source === "manual").map((b) => b.frame).sort((a, b) => a - b);
-  if (manual.length === 0) return;
-  const near = (frame: number) => {
-    let lo = 0;
-    let hi = manual.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (manual[mid] < frame) lo = mid + 1;
-      else hi = mid;
-    }
-    const d = Math.min(Math.abs(manual[lo] - frame), lo > 0 ? Math.abs(manual[lo - 1] - frame) : Infinity);
-    return d / f.fps <= BALL_FILL_S;
-  };
-  const step = Math.max(1, f.stride) / f.fps;
-  for (const b of f.ball) if (b.source === "manual" || near(b.frame)) addSpan(cells, f.video_id, b.frame / f.fps, b.frame / f.fps + step, play);
-}
-
 export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, Segment[]>, parts: Oriented[]): LevelInfo {
   const closed = (v: string) => (segmentsByVideo[v] ?? []).filter((g) => g.tipo === "juego" && g.end !== null);
   const hasPlay = Object.keys(segmentsByVideo).some((v) => closed(v).length > 0);
   const play_s = hasPlay ? Object.keys(segmentsByVideo).reduce((s, v) => s + playInside(closed(v), 0, Infinity), 0) : null;
   const share = (seconds: number) => (play_s ? Math.min(1, seconds / play_s) : null);
 
-  const ballCells = new Set<string>();
+  const ballCells = new Map<string, PossessionState>();
   const trackCells = new Set<string>();
   let ownSeen = 0;
   let ownNamed = 0;
   for (const o of parts) {
     const play = hasPlay ? closed(o.file.video_id) : null;
-    addBallFollowed(ballCells, o, play);
+    possessionCells(o, play, ballCells);
     // Reviewed: exported from the correction table (not built from an uncorrected part) and with players of a team in
     // it. A file exported only for its ball has no reviewed positions.
     const reviewed = !o.file.auto && o.file.frames.length > 0 && o.file.people.some((p) => p.team === "own" || p.team === "opp");
@@ -382,6 +360,35 @@ export interface PlayRow {
   end_label: string;
 }
 
+// What the followed ball gives (N2). Seconds of play; every count says on how much of the play it was read.
+export interface BallSummary {
+  followed_s: number;
+  // Of the play time; null without play stretches.
+  share: number | null;
+  possession: Record<PossessionState, number>;
+  passes: Record<Side, TeamPasses>;
+  // Changes of team read from the ball: confirmed by a tagged loss within 2 s, or only inferred; and tagged losses where
+  // the ball was followed that no change matches.
+  changes: { confirmed: number; inferred: number; tagged_unmatched: number };
+  // Pieces without a name of a named team (to fix in the correction table). They never take the ball.
+  leftovers: { team: Side; moment: Moment; seconds: number }[];
+}
+export interface NetworkData {
+  nodes: { player: string; x: number; y: number; touches: number }[];
+  edges: { a: string; b: string; count: number }[];
+  passes: number;
+  // Passes with a player without a name (a team named only in part of the match).
+  unnamed: number;
+}
+export interface TouchRow {
+  player: string;
+  team: Side;
+  touches: number;
+  // Touches per 10 minutes of ball followed.
+  per10: number | null;
+  points: [number, number][];
+}
+
 export interface ReportData {
   version: number;
   generated: string;
@@ -406,6 +413,11 @@ export interface ReportData {
     // Final-third entries without a lane: not used here.
     bins: Record<"5" | "10", TimeBins>;
     possession: Gate;
+    // Null without the ball followed.
+    ball: BallSummary | null;
+    // Pass network of the analysed team: needs names. Null without them.
+    network: NetworkData | null;
+    network_gate: Gate;
   };
   maps: {
     shots: ShotPoint[];
@@ -422,7 +434,7 @@ export interface ReportData {
   transitions: Record<Side, TeamTransitions>;
   set_pieces: { own: SetPieceSide; opp: SetPieceSide; plays: PlayRow[] };
   patterns: Gate;
-  key_players: { touches: Gate };
+  key_players: { touches: Gate; rows: TouchRow[]; print: boolean };
   plays: PlayRow[];
   texts: {
     resumen: string;
@@ -493,6 +505,36 @@ export function buildReport(input: ReportInput): ReportData {
   const side = (e: MatchEvent) => e.team as Side;
 
   const level = dataLevel(raw, segmentsByVideo, parts);
+  const br = level.sources.ball ? ballReport(parts, segmentsByVideo, raw) : null;
+  const ballSummary: BallSummary | null = br && {
+    followed_s: br.followed_s,
+    share: level.play_s ? Math.min(1, br.followed_s / level.play_s) : null,
+    possession: br.possession,
+    passes: br.passes,
+    changes: {
+      confirmed: br.changes.filter((c) => c.confirmed).length,
+      inferred: br.changes.filter((c) => !c.confirmed).length,
+      tagged_unmatched: br.tagged_unmatched,
+    },
+    leftovers: br.leftovers.map((l) => ({ team: l.team, moment: momentAt(l.video_id, l.t0), seconds: Math.round((l.t1 - l.t0) * 10) / 10 })),
+  };
+  const net = level.sources.names && level.sources.ball ? passNetwork(parts, "own", segmentsByVideo) : null;
+  const network: NetworkData | null =
+    net && net.passes > 0
+      ? {
+          nodes: net.nodes.map((n) => ({ player: n.label, x: n.x, y: n.y, touches: n.touches })),
+          edges: net.edges,
+          passes: net.passes,
+          unnamed: net.unnamed,
+        }
+      : null;
+  const touchRows: TouchRow[] = (br?.players ?? []).map((p) => ({
+    player: p.player,
+    team: p.team,
+    touches: p.touches,
+    per10: br && br.followed_s > 0 ? Math.round((p.touches / (br.followed_s / 600)) * 10) / 10 : null,
+    points: p.points.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10] as [number, number]),
+  }));
   const src = level.sources;
 
   // Summary.
@@ -623,7 +665,10 @@ export function buildReport(input: ReportInput): ReportData {
     summary: {
       rows: summaryRows,
       bins: { "5": timeBins(events, timeline.segments, 5), "10": timeBins(events, timeline.segments, 10) },
-      possession: gate(src.ball, "ball", "Posesión y pases: en desarrollo (siguiente versión del reporte)."),
+      possession: gate(src.ball, "ball"),
+      ball: ballSummary,
+      network,
+      network_gate: gate(src.names && src.ball && network !== null, "names"),
     },
     maps: {
       shots,
@@ -638,7 +683,7 @@ export function buildReport(input: ReportInput): ReportData {
     transitions: { own: transOf("own"), opp: transOf("opp") },
     set_pieces: { own: setPieceOf("own"), opp: setPieceOf("opp"), plays: orderedPlays.filter((p) => p.abp).map(playRow) },
     patterns: gate(src.events, "events", "Patrones: en desarrollo (siguiente versión del reporte)."),
-    key_players: { touches: gate(src.names && src.ball, "names", "Toques por jugadora: en desarrollo (siguiente versión del reporte).") },
+    key_players: { touches: gate(src.names && src.ball && touchRows.length > 0, "names"), rows: touchRows, print: !!report.print_touches },
     plays: orderedPlays.map(playRow),
     texts: {
       resumen: report.resumen,
@@ -665,7 +710,7 @@ function methodLines(raw: MatchEvent[], events: MatchEvent[], nVideos: number, l
       ? "Tramos de juego: sin marcar. El gráfico por tramos cuenta minutos de video desde el primer evento y no se puede medir ninguna cobertura."
       : `Tramos de juego: ${Math.round(level.play_s / 60)} min marcados. Los minutos del informe son minutos de juego.`,
     level.ball.seconds > 0
-      ? `Balón: seguido a mano en ${level.ball.share !== null ? pct(level.ball.share) : "una parte"} del tiempo de juego (${Math.round(level.ball.seconds / 60)} min). Los huecos de hasta ${BALL_FILL_S} s entre marcas se unen en línea recta y no cuentan como medición para toques ni pases.`
+      ? `Balón: seguido a mano en ${level.ball.share !== null ? pct(level.ball.share) : "una parte"} del tiempo de juego (${Math.round(level.ball.seconds / 60)} min). Toque = la jugadora más cercana a menos de ${POSSESS_M} m de una marca a mano o de un evento; donde el balón va en línea recta entre dos marcas no hay toque (pasó por encima o nadie lo cortó), ni lo hay de una jugadora en posición rellenada ni de un trozo sin nombre de un equipo con nombres. Pase: dos toques seguidos del mismo equipo en menos de ${PASS_MAX_S} s; cortado: el otro equipo la tiene en ese tiempo. Posesión: del toque de un equipo al del otro, como mucho ${PASS_MAX_S} s sin toque; lo disputado o sin toque queda sin asignar.`
       : "Balón: sin seguir a mano. No hay cifras de posesión ni de pases.",
     level.tracking.seconds > 0
       ? `Tracking: revisado en ${level.tracking.share !== null ? pct(level.tracking.share) : "una parte"} del tiempo de juego${level.named_share !== null ? `; ${pct(level.named_share)} de las posiciones del equipo analizado tienen nombre` : ""}. Lo que no sale en cuadro no está ausente, solo no se ve.`

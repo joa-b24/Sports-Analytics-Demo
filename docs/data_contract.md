@@ -139,7 +139,7 @@ red de pases y de los pases por jugadora (no sale del tracking). En la app viven
 
 Viven en el navegador y se exportan como un JSON de respaldo. Los eventos usan las columnas de arriba.
 
-- **`matches`:** `match_id`, `name`, `kind` (`own`: nuestro partido, `rival`: partido de un rival, `reference`: video de referencia de otros equipos), `date`, `focus_team`, `other_team`, `youtube_id`, `report` (texto del informe por sección: `resumen`, `fortalezas`, `debilidades`, `balon_parado`, `jugadoras_clave`, `plan`; desde el 2026-10-17 también, opcionales, `conclusiones` (sustituye al plan en un partido propio), `jornada` y `results_manual`, una lista de `{date, opponent, home, goals_for, goals_against, competition}` con resultados del equipo analizado en partidos que no están en la app; un informe guardado antes los abre vacíos), `is_demo`.
+- **`matches`:** `match_id`, `name`, `kind` (`own`: nuestro partido, `rival`: partido de un rival, `reference`: video de referencia de otros equipos), `date`, `focus_team`, `other_team`, `youtube_id`, `report` (texto del informe por sección: `resumen`, `fortalezas`, `debilidades`, `balon_parado`, `jugadoras_clave`, `plan`; desde el 2026-10-17 también, opcionales, `conclusiones` (sustituye al plan en un partido propio), `jornada` y `results_manual`, una lista de `{date, opponent, home, goals_for, goals_against, competition}` con resultados del equipo analizado en partidos que no están en la app, y `print_touches` (la tabla de toques por jugadora entra en la impresión); un informe guardado antes los abre vacíos), `is_demo`.
 - **`plays`:** `play_id`, `match_id`, `title`, `t_start` y `t_end` (segundos de `t_video`), `note`, `keyframes`. Cada keyframe es `{t, pos}` con `t` en `t_video` y `pos` un mapa `token → [x, y]` en metros. Tokens: `o1..o11` (equipo analizado), `r1..r11` (contrario), `ball`. Entre keyframes la posición se interpola linealmente. Los keyframes puestos a mano son un esquema, no una medición. `abp` (opcional, 2026-10-17): la jugada es de balón parado y el informe la lista en esa sección.
 - **`sessions`** (entrenamientos, una fila por jugadora y sesión): `date` (AAAA-MM-DD), `session_id`, `player_id` y `metrics`, un mapa `nombre → número` con las columnas numéricas del CSV del sensor. Nombres sugeridos: `duration_min, total_distance_m, hsr_distance_m, sprints, max_speed_kmh, player_load, hr_avg, hr_max`. Celda vacía = valor faltante.
 
@@ -166,10 +166,11 @@ estático que abra el informe sin la app. Campos principales:
 | `cover` | tipo de informe, partido, fecha, jornada, marcador (`score`, de los goles etiquetados; nulo sin eventos), `focus_team`, `other_team`, `level` |
 | `cover.level` | `level` (0 a 4), `play_s` (segundos de juego de los tramos; nulo sin tramos), `ball` y `tracking` (`{seconds, share}` del tiempo de juego), `named_share`, `label`, `next` |
 | `results` | últimos 5 resultados del equipo analizado (`V`/`E`/`D`), de la app (`source: app`) y escritos a mano (`manual`) |
-| `summary` | filas comparativas `{key, label, own, opp}` y tramos de 5 y 10 min |
+| `summary` | filas comparativas `{key, label, own, opp}` y tramos de 5 y 10 min; `ball` (nulo sin balón seguido): `followed_s`, `share`, `possession` (`own`, `opp`, `unassigned` en segundos; suman `followed_s`), `passes` por equipo (completos, cortados y su reparto por tercio y por carril de origen), `changes` (`confirmed`, `inferred`, `tagged_unmatched`) y `leftovers` (trozos sin nombre por revisar); `network` (red de pases del equipo analizado, con nombres) |
 | `maps` | tiros (`goal_y`, `goal_z` si se marcaron), centros con destino, centros sin destino o sin posición por equipo, duelos (nulo si no hay) y cuadrículas 5 × 3 de pérdidas y recuperaciones |
 | `transitions` | por equipo: pérdidas → tiro del contrario y recuperaciones → tiro propio en menos de 15 s, con su momento, zona y segundos; tasas `{k, n}` |
 | `set_pieces` | córners, tiros libres, saques de meta y penales por equipo; jugadas marcadas como balón parado |
+| `key_players` | `rows`: toques por jugadora `{player, team, touches, per10, points}` (por 10 min de balón seguido) y `print` (si la tabla entra en la impresión, `report.print_touches`) |
 | `texts`, `plays`, `method` | textos de la analista, jugadas para revisar y líneas del método |
 
 Un momento (`moment`) es `{video_id, t, label, minute, youtube, app}`: `t` en segundos del video, `minute` el minuto de
@@ -189,7 +190,16 @@ de juego cerrados: un tramo cubierto por dos archivos cuenta una vez. Sin tramos
 **Toques y balón interpolado.** Un toque (`touches` en `web/lib/positions.ts`) solo sale de una posición del balón marcada
 a mano o de un evento etiquetado. Donde el balón está interpolado (línea recta entre dos marcas) no hay toque: el balón
 pasó por encima o cerca y nadie lo cortó. Por eso los pases largos, centros e intercepciones se marcan donde sale el
-balón y donde cae o se corta.
+balón y donde cae o se corta. Tampoco toca una jugadora en una posición rellenada (`interpolated`), ni un trozo sin
+nombre de un equipo que tiene nombres en esa parte (más de la mitad de sus posiciones con nombre, `NAMED_TEAM_MIN`):
+es una segunda caja o un trozo sin unir, y el informe los lista para corregirlos en la mesa.
+
+**Posesión y pases** (`ballReport` en `web/lib/positions.ts`). Pase: dos toques seguidos del mismo equipo, de jugadoras
+distintas, en menos de 5 s; cortado: el siguiente toque es del otro equipo en ese tiempo. Posesión: un equipo la tiene
+desde su toque hasta un toque del otro, como mucho 5 s sin tocarla; lo disputado (una rival casi a la misma distancia),
+lo que pasa más de 5 s sin toque y lo anterior al primer toque queda sin asignar. Solo dentro de los tramos de juego. Un
+cambio de equipo leído del balón queda confirmado si hay una pérdida etiquetada de ese equipo (o una recuperación del
+otro) a menos de 2 s; si no, es inferido.
 
 ## Modelo de referencia de una sede (`web/lib/venue.ts`)
 

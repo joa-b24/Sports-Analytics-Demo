@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autoFixed, behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passNetwork, passesAndTurnovers, positionsAt, touches } from "./positions.ts";
+import { autoFixed, ballReport, behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passNetwork, passesAndTurnovers, positionsAt, touches, unnamedLeftovers } from "./positions.ts";
 
 // A corrected part: 30 fps, one of every 3 frames. `at(i)` gives the positions of processed frame i.
 const fixed = ({ n = 10, people, at, ball = [] }) => ({
@@ -51,7 +51,7 @@ test("who has the ball, passes and changes of team", () => {
   assert.deepEqual(touches(f).map((t) => t.id), [1, 2, 3]);
   const r = passesAndTurnovers(f);
   assert.deepEqual(r.passes.map((p) => [p.from, p.to]), [[1, 2]]);
-  assert.deepEqual(r.turnovers, [{ frame: 9, lost: "own" }]);
+  assert.deepEqual(r.turnovers, [{ frame: 9, from_frame: 6, from: 2, lost: "own" }]);
   const net = passNetwork([{ file: f, ownRight: true }], "own");
   assert.deepEqual(net.edges, [{ a: "Ana", b: "Bea", count: 1 }]);
   assert.equal(net.passes, 1);
@@ -138,3 +138,84 @@ test("an uncorrected part gives positions by team, box by box, without referees 
   assert.deepEqual(f.venue, { length_m: 102, width_m: 66 });
 });
 
+
+// ---------------------------------------------------------------------------------------------- phase 2: ball report
+
+const M = (frame, x, y, source = "manual") => ({ frame, x, y, source });
+const seg = (start, end, tipo = "juego") => ({ segment_id: `s${start}`, start, end, tipo });
+const ev = (t_video, type, team) => ({ event_id: `e${t_video}${type}`, match_id: "m", video_id: "v1", t_video, period: 1, type, team, player_id: null, x: null, y: null, outcome: null, note: null });
+
+test("A → A → B del mismo equipo es 1 pase; B → rival, 1 cambio; tras un hueco mayor que PASS_MAX_S, nada", () => {
+  const people = [P(1, "own", "Ana"), P(2, "own", "Bea"), P(3, "opp")];
+  const at = () => [q(1, 20, 30), q(2, 40, 30), q(3, 60, 30)];
+  const ball = [M(0, 20, 30), M(30, 20, 30), M(60, 40, 30), M(90, 60, 30), M(300, 20, 30)];
+  const r = passesAndTurnovers(fixed({ n: 120, people, at, ball }));
+  assert.deepEqual(r.passes.map((p) => [p.from, p.to, p.from_frame]), [[1, 2, 30]]);
+  assert.deepEqual(r.turnovers.map((t) => [t.from, t.lost]), [[2, "own"]]);
+});
+
+test("una jugadora en posición interpolada no toca el balón", () => {
+  const f = fixed({ people: [P(1, "own", "Ana")], at: () => [q(1, 20, 30, "interpolated")], ball: [M(0, 20, 30)] });
+  assert.equal(touches(f).length, 0);
+});
+
+test("posesión: solo en tramos de juego con el balón seguido, y suma justo el tiempo medido", () => {
+  // 20 s of video; ball marked near Ana for the first 15 s; a pause from 5 s to 10 s.
+  const ball = Array.from({ length: 150 }, (_, i) => M(i * 3, 20.5, 30));
+  const f = fixed({ n: 200, people: [P(1, "own", "Ana"), P(3, "opp")], at: () => [q(1, 20, 30), q(3, 80, 30)], ball });
+  const r = ballReport([{ file: f, ownRight: true }], { v1: [seg(0, 5), seg(5, 10, "pausa"), seg(10, 20)] }, []);
+  assert.equal(r.followed_s, 10);
+  assert.deepEqual(r.possession, { own: 10, opp: 0, unassigned: 0 });
+  // Without play stretches all the followed ball counts.
+  assert.equal(ballReport([{ file: f, ownRight: true }], {}, []).followed_s, 15);
+});
+
+test("posesión: un balón disputado o sin toques por más de PASS_MAX_S queda sin asignar", () => {
+  // Ana has it 0-1 s; then 1-2 s Ana and a rival equally near (contested); then 2-9 s the ball is far from everyone.
+  const ball = Array.from({ length: 90 }, (_, i) => (i < 10 ? M(i * 3, 20.5, 30) : i < 20 ? M(i * 3, 21, 30) : M(i * 3, 50, 10)));
+  const f = fixed({ n: 90, people: [P(1, "own", "Ana"), P(3, "opp")], at: () => [q(1, 20, 30), q(3, 22, 30)], ball });
+  const r = ballReport([{ file: f, ownRight: true }], {}, []);
+  assert.equal(r.followed_s, 9);
+  assert.equal(r.possession.own, 1);
+  assert.equal(r.possession.opp, 0);
+  assert.equal(r.possession.unassigned, 8);
+});
+
+test("un cambio de equipo con una pérdida etiquetada a menos de 2 s queda confirmado; si no, inferido", () => {
+  const people = [P(1, "own", "Ana"), P(3, "opp")];
+  const at = () => [q(1, 20, 30), q(3, 60, 30)];
+  const ball = [M(0, 20, 30), M(30, 60, 30), M(240, 20, 30), M(270, 60, 30)];
+  const f = fixed({ n: 100, people, at, ball });
+  // Changes at 1 s and 9 s; a loss tagged at 2.5 s confirms the first one; a loss at 20 s matches nothing.
+  const r = ballReport([{ file: f, ownRight: true }], {}, [ev(2.5, "loss", "own"), ev(20, "loss", "own")]);
+  assert.deepEqual(r.changes.map((c) => [c.t, c.confirmed]), [[1, true], [9, false]]);
+  assert.equal(r.passes.own.cut, 2);
+});
+
+test("trozos sin nombre: en un equipo con nombres no tocan el balón (lo toca la jugadora de al lado); en un rival sin nombres sí", () => {
+  // Ana and a second box of hers 0.3 m away, without a name; the second box is nearer to the ball.
+  const own = fixed({
+    people: [P(1, "own", "Ana"), P(2, "own"), P(7, "own", "Bea"), P(8, "own", "Cris")],
+    at: () => [q(1, 20, 30), q(2, 20.3, 30), q(7, 40, 30), q(8, 50, 30)],
+    ball: [M(0, 20.4, 30)],
+  });
+  assert.deepEqual(unnamedLeftovers(own).map((l) => l.id), [2]);
+  assert.deepEqual(touches(own).map((t) => t.id), [1]);
+  // A rival with one named player out of four: its unnamed players are just unnamed.
+  const at = () => [q(3, 60, 30), q(4, 70, 30), q(5, 80, 30), q(6, 90, 30)];
+  const opp = fixed({ people: [P(3, "opp", "GK"), P(4, "opp"), P(5, "opp"), P(6, "opp")], at, ball: [M(0, 70.2, 30)] });
+  assert.equal(unnamedLeftovers(opp).length, 0);
+  assert.deepEqual(touches(opp).map((t) => t.id), [4]);
+});
+
+test("pases por tercio y carril de origen, con el equipo atacando a la derecha", () => {
+  const people = [P(1, "own", "Ana"), P(2, "own", "Bea")];
+  // Ana in the middle third, left wing (low y); the part is played with own attacking left, so it is mirrored.
+  const at = () => [q(1, 105 - 50, 68 - 5), q(2, 105 - 60, 68 - 5)];
+  const ball = [M(0, 105 - 50, 68 - 5), M(15, 105 - 60, 68 - 5)];
+  const r = ballReport([{ file: fixed({ people, at, ball }), ownRight: false }], {}, []);
+  assert.equal(r.passes.own.completed, 1);
+  assert.deepEqual(r.passes.own.completed_by_third, [0, 1, 0]);
+  assert.deepEqual(r.passes.own.completed_by_lane, [1, 0, 0, 0, 0]);
+  assert.deepEqual(r.players.map((p) => [p.player, p.touches]), [["Ana", 1], ["Bea", 1]]);
+});
