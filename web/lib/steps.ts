@@ -62,14 +62,21 @@ export function matchSteps(i: StepInput): Record<StepId, StepStatus> {
   // Tracking: processed parts against the stretches of play, and how many of them have corrections.
   const parts = names.filter((n) => /^tracks_v\d+_\d+_\d+\.json$/.test(n));
   const keys = new Set(parts.map((n) => n.replace(/^tracks_(v\d+)_(\d+)_(\d+)\.json$/, `${i.folder}|$1|$2_$3`)));
-  const corrected = i.trackEdits.filter((e) => keys.has(e.key) && hasCorrections(e)).length;
+  const correctedKeys = i.trackEdits.filter((e) => keys.has(e.key) && hasCorrections(e)).map((e) => e.key);
+  const corrected = correctedKeys.length;
+  // Corrected in this browser but without its tracks_fixed file in the folder: the analysis and the report do not see
+  // those corrections until the part is saved.
+  const unsaved = correctedKeys.filter((k) => {
+    const [, v, range] = k.split("|");
+    return !names.includes(`tracks_fixed_${v}_${range}.json`);
+  }).length;
   const tracking: StepStatus = noFolder || !i.files
     ? { state: "optional", text: noFolder ? "falta la carpeta" : "sin acceso a la carpeta" }
     : parts.length === 0
       ? { state: "optional", text: "sin procesar" }
       : {
-          state: corrected === parts.length ? "done" : "partial",
-          text: `${parts.length} parte(s)${stretches ? ` de ${stretches} tramos` : ""} · ${corrected} corregida(s)`,
+          state: corrected === parts.length && unsaved === 0 ? "done" : "partial",
+          text: `${parts.length} parte(s)${stretches ? ` de ${stretches} tramos` : ""} · ${corrected} corregida(s)${unsaved ? ` · ${unsaved} sin guardar` : ""}`,
         };
 
   const toReview = i.events.filter((e) => missingReview(e).length > 0).length;

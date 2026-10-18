@@ -323,7 +323,7 @@ python -m yt_dlp --compat-options no-certifi --js-runtimes node --remote-compone
 | El menú lateral | `NAV` en `web/components/Shell.tsx` |
 | Tipos de evento, resultados o teclas | `web/lib/types.ts` + `src/sportsan/schema.py` + `docs/data_contract.md` (los tres a la vez) |
 | Cómo se calcula una cifra de Análisis | `web/lib/analysis.ts` |
-| Qué sale en el informe, sus niveles y umbrales | `web/lib/report.ts` (`LEVEL_MIN_COVERAGE`, `NAMED_MIN`, `RECENT_N`) |
+| Qué sale en el informe y qué fuente pide cada sección | `web/lib/report.ts` (`dataLevel`, `NEEDS`, `RECENT_N`) |
 | Umbrales de carga y ACWR | `web/lib/load.ts` |
 | Medidas o marcas de una sede | App → Configuración (o `BUILTIN_SPECS` en `web/lib/venue.ts`) |
 | Colores de uniforme | App → Corrección de tracks → Uniformes, o `jersey_colors` en `match.yaml` |

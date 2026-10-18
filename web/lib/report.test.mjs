@@ -27,20 +27,20 @@ const sample = () => [
   ev(505, "shot", "own", { outcome: "off_target" }),
 ];
 
-test("solo eventos: nivel N1, secciones N2+ no disponibles y sin cifras de posesión ni pases", () => {
+test("solo eventos: nivel N1, las secciones de balón y tracking no disponibles y sin cifras de posesión ni pases", () => {
   const r = buildReport(input({ events: sample() }));
   assert.equal(r.cover.level.level, 1);
   assert.match(r.cover.level.label, /N1/);
   assert.equal(r.summary.possession.ok, false);
-  assert.match(r.summary.possession.need, /N2/);
+  assert.match(r.summary.possession.need, /^Requiere el balón seguido/);
   assert.equal(r.key_players.touches.ok, false);
-  assert.match(r.key_players.touches.need, /N4/);
+  assert.match(r.key_players.touches.need, /^Requiere nombres/);
   assert.equal(r.patterns.ok, false);
   assert.ok(!r.summary.rows.some((x) => /posesi|pase/i.test(x.label)));
   assert.equal(JSON.stringify(r).match(/"possession_pct"|"passes":/), null);
 });
 
-test("nivel: el balón seguido a mano en más de la mitad del juego da N2; las marcas de eventos no cuentan", () => {
+test("nivel: sin umbral; cualquier balón seguido a mano da N2 y dice su cobertura; las marcas de eventos no cuentan", () => {
   const fps = 10;
   const stride = 10;
   const frames = Array.from({ length: 200 }, (_, i) => i * stride); // 0..199 s
@@ -49,17 +49,32 @@ test("nivel: el balón seguido a mano en más de la mitad del juego da N2; las m
     file: { kind: "tracks_fixed", match_id: "m1", video_id: "v1", fps, start_frame: 0, end_frame: 2000, stride, people: [], frames: [], ball },
   });
   const seg = { v1: [{ segment_id: "s01", start: 0, end: 200, tipo: "juego" }] };
-  const manual = frames.slice(0, 150).map((f) => ({ frame: f, x: 50, y: 30, source: "manual" }));
-  const lv = dataLevel([ev(1, "shot", "own")], seg, [part(manual)]);
+  const manual = (k) => frames.slice(0, k).map((f) => ({ frame: f, x: 50, y: 30, source: "manual" }));
+  const lv = dataLevel([ev(1, "shot", "own")], seg, [part(manual(150))]);
   assert.equal(lv.level, 2);
   assert.equal(Math.round((lv.ball.share ?? 0) * 100), 75);
-  assert.match(lv.label, /N2 · balón seguido en 75 %/);
+  assert.match(lv.label, /N2 · balón seguido en 75 % del tiempo de juego/);
+  // 10 % is still N2: there is no minimum, the coverage says how much.
+  const little = dataLevel([ev(1, "shot", "own")], seg, [part(manual(20))]);
+  assert.equal(little.level, 2);
+  assert.match(little.label, /balón seguido en 10 %/);
   const fromEvents = frames.map((f) => ({ frame: f, x: 50, y: 30, source: "event" }));
   assert.equal(dataLevel([ev(1, "shot", "own")], seg, [part(fromEvents)]).level, 1);
-  // Without play stretches the coverage cannot be said: no N2.
-  const none = dataLevel([ev(1, "shot", "own")], {}, [part(manual)]);
-  assert.equal(none.level, 1);
+  // Without play stretches the share cannot be said: minutes instead, and a hint to mark them.
+  const none = dataLevel([ev(1, "shot", "own")], {}, [part(manual(150))]);
+  assert.equal(none.level, 2);
   assert.equal(none.ball.share, null);
+  assert.match(none.label, /balón seguido en 3 min/);
+  assert.match(none.next, /tramos de juego/);
+});
+
+test("cada sección pide su fuente: con balón, la posesión ya no dice «requiere»", () => {
+  const ball = Array.from({ length: 30 }, (_, i) => ({ frame: i * 10, x: 50, y: 30, source: "manual" }));
+  const parts = [{ ownRight: true, file: { kind: "tracks_fixed", match_id: "m1", video_id: "v1", fps: 10, start_frame: 0, end_frame: 300, stride: 10, people: [], frames: [], ball } }];
+  const r = buildReport(input({ events: sample(), parts }));
+  assert.equal(r.cover.level.sources.ball, true);
+  assert.doesNotMatch(r.summary.possession.need, /^Requiere/);
+  assert.match(r.key_players.touches.need, /^Requiere nombres/);
 });
 
 test("partido de rival: lados y textos con focus_team y other_team, nunca «nosotras»", () => {

@@ -31,3 +31,13 @@ test("a match on its way", () => {
   assert.deepEqual(s.plays, { state: "partial", text: "1 de 2 animadas" });
   assert.equal(s.analysis.text, "con forma del equipo");
 });
+
+test("a part corrected in the browser but not saved to the folder is not done", () => {
+  const s = matchSteps({
+    ...base,
+    folder: "f",
+    trackEdits: [{ key: "f|v1|0_9000", identity: { 1: 2 }, people: {}, removed: [], splits: [], manual: [] }],
+    files: { tracking: ["tracks_v1_0_9000.json"] },
+  });
+  assert.deepEqual(s.tracking, { state: "partial", text: "1 parte(s) · 1 corregida(s) · 1 sin guardar" });
+});

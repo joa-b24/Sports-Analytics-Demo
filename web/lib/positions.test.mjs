@@ -58,6 +58,22 @@ test("who has the ball, passes and changes of team", () => {
   assert.equal(net.unnamed, 0);
 });
 
+test("an interpolated ball is never a touch, even right next to a player (it went over her)", () => {
+  // Ana (1) passes to Bea (2); the straight line between the two marks passes over an opponent (3).
+  const people = [P(1, "own", "Ana"), P(2, "own", "Bea"), P(3, "opp")];
+  const at = () => [q(1, 20, 30), q(2, 40, 30), q(3, 30, 30.5)];
+  const ball = [
+    { frame: 0, x: 20.5, y: 30, source: "manual" },
+    { frame: 3, x: 30, y: 30, source: "interpolated" },
+    { frame: 6, x: 39.5, y: 30, source: "manual" },
+  ];
+  const f = fixed({ people, at, ball });
+  assert.deepEqual(touches(f).map((t) => t.id), [1, 2]);
+  const r = passesAndTurnovers(f);
+  assert.deepEqual(r.passes.map((p) => [p.from, p.to]), [[1, 2]]);
+  assert.equal(r.turnovers.length, 0);
+});
+
 test("a ball between two rivals at the same distance belongs to nobody", () => {
   const f = fixed({ people: [P(1, "own"), P(3, "opp")], at: () => [q(1, 20, 30), q(3, 21, 30)], ball: [{ frame: 0, x: 20.5, y: 30, source: "manual" }] });
   assert.equal(touches(f).length, 0);

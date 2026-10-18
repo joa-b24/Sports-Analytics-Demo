@@ -177,12 +177,15 @@ export interface Touch {
 }
 
 // Who has the ball in each frame where the ball is known: the nearest player within POSSESS_M, unless a player of
-// the other team is about as near (contested: nobody).
+// the other team is about as near (contested: nobody). An interpolated ball (straight line between two marks) is never
+// a touch: the ball went over or past whoever was near that line, and nobody cut it. Touches only come from where the
+// ball was marked by hand or from a tagged event.
 export function touches(f: FixedFile): Touch[] {
   const team = new Map(f.people.map((p) => [p.id, p.team]));
   const byFrame = new Map(f.frames.map((fr) => [fr.frame, fr.positions]));
   const out: Touch[] = [];
   for (const b of f.ball) {
+    if (b.source === "interpolated") continue;
     const ps = byFrame.get(b.frame);
     if (!ps) continue;
     const near = ps

@@ -79,11 +79,8 @@ export const LEVEL_NAMES: Record<Exclude<Level, 0>, string> = {
   3: "tracking revisado",
   4: "tracking completo corregido",
 };
-// Share of the play time that the ball (N2) or the reviewed tracking (N3) must cover for the level to count. Under it
-// the figures would rest on a small sample of the match; the coverage is still shown.
-export const LEVEL_MIN_COVERAGE = 0.5;
-// N4: share of the positions of the analysed team, in the reviewed parts, that belong to a named player.
-export const NAMED_MIN = 0.8;
+// There is no minimum coverage: a source counts as soon as there is some, and every figure that comes from it says on
+// how much of the play time it was measured. The level is only a summary for the cover.
 
 export interface Coverage {
   seconds: number;
@@ -98,7 +95,10 @@ export interface LevelInfo {
   play_s: number | null;
   ball: Coverage;
   tracking: Coverage;
+  // Share of the positions of the analysed team, in the reviewed parts, that belong to a named player.
   named_share: number | null;
+  // Which sources there are. Each section asks for its own, not for a level.
+  sources: { events: boolean; ball: boolean; tracking: boolean; names: boolean };
   // "Nivel de datos: N2 · balón seguido en 64 % del tiempo de juego"
   label: string;
   // What is missing for the next level, in plain words.
@@ -184,36 +184,25 @@ export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, 
   const tracking: Coverage = { seconds: trackS, share: share(trackS) };
   const named_share = ownSeen > 0 ? ownNamed / ownSeen : null;
 
-  const enough = (c: Coverage) => c.share !== null && c.share >= LEVEL_MIN_COVERAGE;
-  let level: Level = events.length > 0 ? 1 : 0;
-  let next: string | null = null;
-  if (level === 0) next = "Etiqueta eventos del partido para tener el nivel N1.";
-  else if (!enough(ball))
-    next =
-      play_s === null
-        ? "Marca los tramos de juego: sin ellos no se puede medir qué parte del partido tiene el balón seguido (N2)."
-        : `N2 pide el balón seguido en al menos ${pct(LEVEL_MIN_COVERAGE)} del tiempo de juego${ball.seconds > 0 ? ` (hoy ${pct(ball.share ?? 0)})` : ""}.`;
-  else {
-    level = 2;
-    if (!enough(tracking)) next = `N3 pide el tracking revisado en al menos ${pct(LEVEL_MIN_COVERAGE)} del tiempo de juego${trackS > 0 ? ` (hoy ${pct(tracking.share ?? 0)})` : ""}.`;
-    else {
-      level = 3;
-      if (named_share === null || named_share < NAMED_MIN)
-        next = `N4 pide nombre en al menos ${pct(NAMED_MIN)} de las posiciones del equipo analizado${named_share !== null ? ` (hoy ${pct(named_share)})` : ""}.`;
-      else level = 4;
-    }
-  }
+  const sources = { events: events.length > 0, ball: ball.seconds > 0, tracking: trackS > 0, names: (named_share ?? 0) > 0 };
+  // The level is the last of the ladder with its source there (N3 needs N2: the ball is marked in the reviewed parts).
+  const level: Level = !sources.events ? 0 : !sources.ball ? 1 : !sources.tracking ? 2 : !sources.names ? 3 : 4;
+  const cover = (c: Coverage) => (c.share !== null ? pct(c.share) : `${Math.round(c.seconds / 60)} min`);
+  const bits = [
+    sources.ball ? `balón seguido en ${cover(ball)}` : "sin balón seguido",
+    ...(sources.tracking ? [`tracking revisado en ${cover(tracking)}`] : []),
+  ];
   const tail =
     level === 0
       ? "sin eventos"
-      : level === 1
-        ? ball.seconds > 0 && ball.share !== null
-          ? `solo eventos · balón seguido en ${pct(ball.share)} del tiempo de juego`
-          : "solo eventos"
-        : level === 2
-          ? `balón seguido en ${pct(ball.share ?? 0)} del tiempo de juego`
-          : `balón seguido en ${pct(ball.share ?? 0)} y tracking revisado en ${pct(tracking.share ?? 0)} del tiempo de juego`;
-  return { level, events: events.length, play_s, ball, tracking, named_share, label: `Nivel de datos: N${level} · ${tail}`, next };
+      : `${bits.join(" · ")}${play_s !== null && (sources.ball || sources.tracking) ? " del tiempo de juego" : ""}${sources.names ? ` · nombre en ${pct(named_share ?? 0)} de las posiciones` : ""}`;
+  const next =
+    level === 0
+      ? "Etiqueta eventos del partido."
+      : play_s === null && (sources.ball || sources.tracking)
+        ? "Marca los tramos de juego para saber qué parte del partido está medida."
+        : null;
+  return { level, events: events.length, play_s, ball, tracking, named_share, sources, label: `Nivel de datos: N${level} · ${tail}`, next };
 }
 
 // What a section needs. `ok` false: the report shows `need` instead (and nothing when printed).
@@ -221,13 +210,14 @@ export interface Gate {
   ok: boolean;
   need: string;
 }
-const NEEDS: Record<Exclude<Level, 0>, string> = {
-  1: "Requiere eventos etiquetados: N1",
-  2: "Requiere el balón seguido: N2",
-  3: "Requiere el tracking revisado: N3",
-  4: "Requiere el tracking completo corregido, con nombres: N4",
-};
-const gate = (have: Level, need: Exclude<Level, 0>, extra?: string): Gate => ({ ok: have >= need && !extra, need: extra ?? NEEDS[need] });
+const NEEDS = {
+  events: "Requiere eventos etiquetados",
+  ball: "Requiere el balón seguido en alguna parte del partido",
+  tracking: "Requiere partes del tracking revisadas en la mesa de corrección",
+  names: "Requiere nombres en el tracking y el balón seguido",
+} as const;
+// `wip`: the source is there but the section is not built yet.
+const gate = (have: boolean, need: keyof typeof NEEDS, wip?: string): Gate => ({ ok: have && !wip, need: have && wip ? wip : NEEDS[need] });
 
 // --------------------------------------------------------------------------------------------- moments
 
@@ -503,7 +493,7 @@ export function buildReport(input: ReportInput): ReportData {
   const side = (e: MatchEvent) => e.team as Side;
 
   const level = dataLevel(raw, segmentsByVideo, parts);
-  const L = level.level;
+  const src = level.sources;
 
   // Summary.
   const own = countByType(events, "own");
@@ -633,7 +623,7 @@ export function buildReport(input: ReportInput): ReportData {
     summary: {
       rows: summaryRows,
       bins: { "5": timeBins(events, timeline.segments, 5), "10": timeBins(events, timeline.segments, 10) },
-      possession: gate(L, 2, L >= 2 ? "Posesión y pases: en desarrollo (siguiente versión del reporte)." : undefined),
+      possession: gate(src.ball, "ball", "Posesión y pases: en desarrollo (siguiente versión del reporte)."),
     },
     maps: {
       shots,
@@ -647,8 +637,8 @@ export function buildReport(input: ReportInput): ReportData {
     },
     transitions: { own: transOf("own"), opp: transOf("opp") },
     set_pieces: { own: setPieceOf("own"), opp: setPieceOf("opp"), plays: orderedPlays.filter((p) => p.abp).map(playRow) },
-    patterns: gate(L, 1, "Patrones: en desarrollo (siguiente versión del reporte)."),
-    key_players: { touches: gate(L, 4, L >= 4 ? "Toques por jugadora: en desarrollo (siguiente versión del reporte)." : undefined) },
+    patterns: gate(src.events, "events", "Patrones: en desarrollo (siguiente versión del reporte)."),
+    key_players: { touches: gate(src.names && src.ball, "names", "Toques por jugadora: en desarrollo (siguiente versión del reporte).") },
     plays: orderedPlays.map(playRow),
     texts: {
       resumen: report.resumen,

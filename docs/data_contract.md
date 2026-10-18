@@ -177,13 +177,19 @@ juego (nulo sin tramos), `youtube` el enlace al momento (3 s antes) y `app` la r
 (`/partido?id=..&video=..&t=..`). En las cifras, `own` es siempre el equipo analizado (`focus_team`), también en el
 informe de un rival.
 
-**Niveles de datos.** N1 = hay eventos. N2 = balón seguido a mano en al menos el 50 % del tiempo de juego (cuenta cada
-cuadro procesado con una marca a mano o unido a una por menos de 3 s; las posiciones tomadas de los eventos no cuentan).
-N3 = además, partes revisadas en la mesa de corrección (con jugadoras de algún equipo) en al menos el 50 % del tiempo de
-juego. N4 = además, al menos el 80 % de las posiciones del equipo analizado en esas partes tienen nombre. Sin tramos de
-juego marcados no se puede medir la cobertura y el nivel se queda en N1. La cobertura se cuenta en celdas de 0.5 s por
-video: un tramo cubierto por dos archivos (una exportación unida y sus partes) cuenta una vez; un último tramo de juego sin
-cerrar no cuenta.
+**Niveles de datos.** No hay umbral mínimo: cada sección pide su fuente (eventos, balón seguido, tracking revisado,
+nombres) y toda cifra dice sobre qué parte del tiempo de juego se midió. El nivel de la portada es solo un resumen:
+N1 = hay eventos; N2 = además, balón seguido a mano en alguna parte (cuenta cada cuadro procesado con una marca a mano o
+unido a una por menos de 3 s; las posiciones tomadas de los eventos no cuentan); N3 = además, partes revisadas en la mesa
+de corrección (con jugadoras de algún equipo); N4 = además, nombres en esas partes (`cover.level.named_share` dice en qué
+proporción de las posiciones del equipo analizado). La cobertura se cuenta en celdas de 0.5 s por video sobre los tramos
+de juego cerrados: un tramo cubierto por dos archivos cuenta una vez. Sin tramos de juego se da en minutos.
+`cover.level.sources` dice qué fuentes hay.
+
+**Toques y balón interpolado.** Un toque (`touches` en `web/lib/positions.ts`) solo sale de una posición del balón marcada
+a mano o de un evento etiquetado. Donde el balón está interpolado (línea recta entre dos marcas) no hay toque: el balón
+pasó por encima o cerca y nadie lo cortó. Por eso los pases largos, centros e intercepciones se marcan donde sale el
+balón y donde cae o se corta.
 
 ## Modelo de referencia de una sede (`web/lib/venue.ts`)
 
