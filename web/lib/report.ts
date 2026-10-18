@@ -16,6 +16,7 @@ import {
   SHOT_WINDOW_S,
   boxEntries,
   crosses as crossTally,
+  finishEvents,
   finalThirdEntries,
   goalKicks,
   playTime,
@@ -472,7 +473,6 @@ export interface ReportInput {
   now?: string;
 }
 
-const isShot = (e: MatchEvent) => e.type === "shot" || e.type === "goal";
 const zoneLabel = (e: MatchEvent) => {
   const z = laneThirdOf(e);
   return z ? `${LANES_5[z.lane]} · ${THIRDS_3[z.third]}` : null;
@@ -557,7 +557,7 @@ export function buildReport(input: ReportInput): ReportData {
   const box = { own: boxEntries(events, "own"), opp: boxEntries(events, "opp") };
   const summaryRows: SummaryRow[] = [
     { key: "goals", label: "Goles", own: own.goal, opp: opp.goal },
-    { key: "shots", label: "Tiros (con goles)", own: sh.own.total, opp: sh.opp.total },
+    { key: "shots", label: "Tiros", own: sh.own.total, opp: sh.opp.total },
     { key: "on_target", label: "Tiros a puerta", own: sh.own.onTarget, opp: sh.opp.onTarget },
     { key: "final_third", label: "Entradas al último tercio", own: finalThirdEntries(events, "own").total, opp: finalThirdEntries(events, "opp").total },
     { key: "box", label: "Entradas al área", own: box.own.n, opp: box.opp.n, rate: box },
@@ -569,8 +569,10 @@ export function buildReport(input: ReportInput): ReportData {
   ];
 
   // Maps.
-  const shots: ShotPoint[] = events
-    .filter((e) => isShot(e) && e.x !== null && e.y !== null)
+  // One point per finish (lib/analysis.ts finishes): goal, shot and penalty of the same action are drawn once.
+  const finishList = finishEvents(events);
+  const shots: ShotPoint[] = finishList
+    .filter((e) => e.x !== null && e.y !== null)
     .map((e) => ({
       id: e.event_id,
       team: side(e),
@@ -699,7 +701,7 @@ export function buildReport(input: ReportInput): ReportData {
     },
     maps: {
       shots,
-      shots_no_pos: events.filter((e) => isShot(e) && (e.x === null || e.y === null)).length,
+      shots_no_pos: finishList.filter((e) => e.x === null || e.y === null).length,
       crosses: arrows,
       crosses_no_end: per((s) => crossEvents.filter((e) => e.team === s && e.x !== null && e.y !== null && (e.x_end == null || e.y_end == null)).length),
       crosses_no_pos: per((s) => crossEvents.filter((e) => e.team === s && (e.x === null || e.y === null)).length),

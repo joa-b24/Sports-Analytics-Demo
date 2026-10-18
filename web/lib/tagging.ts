@@ -10,7 +10,7 @@ export const DUPLICATE_S = 3;
 // An event is "active" (shown over the video and highlighted) from its time until this much later (s).
 export const ACTIVE_S = 2;
 
-export type Pass = 1 | 2 | 3 | 4;
+export type Pass = 1 | 2 | 3;
 
 // Events of the same type and team within DUPLICATE_S of `e` (itself left out).
 export function duplicatesOf(events: MatchEvent[], e: Pick<MatchEvent, "event_id" | "type" | "team" | "t_video" | "video_id">): MatchEvent[] {
@@ -56,8 +56,19 @@ export function cleanEnd(type: EventType, v: { x_end: number | null; y_end: numb
   return { x_end: landing ? v.x_end : null, y_end: landing ? v.y_end : null, goal_y: goal ? v.goal_y : null, goal_z: goal ? v.goal_z : null };
 }
 
-// What pass 3 still has to fill in: where it ended. Null when the type has no end position.
+// Whether this event asks for an end position in pass 3. A shot marked as blocked in pass 2 never reached the goal, and
+// a free kick that was not a shot (cleared, play went on) has no spot on the goal: neither asks for one.
+export function asksEnd(e: Pick<MatchEvent, "type" | "outcome">): boolean {
+  const kind = endKind(e.type);
+  if (kind === null) return false;
+  if (e.type === "shot" && e.outcome === "blocked") return false;
+  if (e.type === "free_kick" && e.outcome && e.outcome !== "shot") return false;
+  return true;
+}
+
+// What pass 3 still has to fill in: where it ended. Null when the event does not ask for an end (asksEnd).
 export function missingEnd(e: MatchEvent): boolean | null {
+  if (!asksEnd(e)) return null;
   const kind = endKind(e.type);
   if (kind === "goal") return e.goal_y == null || e.goal_z == null;
   if (kind === "landing") return e.x_end == null || e.y_end == null;
@@ -72,11 +83,11 @@ export interface EventFilter {
 }
 export const NO_FILTER: EventFilter = { types: [], team: "all", player: "", onlyMissing: false };
 
-// The events a pass works on, in time order: pass 3 only takes the types with an end position.
+// The events a pass works on, in time order: pass 3 only takes the events that ask for an end position (asksEnd).
 export function eventsFor(pass: Pass, events: MatchEvent[], f: EventFilter): MatchEvent[] {
   const player = f.player.trim().toLowerCase();
   return events
-    .filter((e) => (pass === 3 ? endKind(e.type) !== null : true))
+    .filter((e) => (pass === 3 ? asksEnd(e) : true))
     .filter((e) => f.types.length === 0 || f.types.includes(e.type))
     .filter((e) => f.team === "all" || e.team === f.team)
     .filter((e) => !player || (e.player_id ?? "").toLowerCase().includes(player))

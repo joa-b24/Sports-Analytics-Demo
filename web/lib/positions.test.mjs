@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autoFixed, ballReport, behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passNetwork, passesAndTurnovers, positionsAt, touches, unnamedLeftovers } from "./positions.ts";
+import { autoFixed, ballReport, passStretches, behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passNetwork, passesAndTurnovers, positionsAt, touches, unnamedLeftovers } from "./positions.ts";
 
 // A corrected part: 30 fps, one of every 3 frames. `at(i)` gives the positions of processed frame i.
 const fixed = ({ n = 10, people, at, ball = [] }) => ({
@@ -218,4 +218,26 @@ test("pases por tercio y carril de origen, con el equipo atacando a la derecha",
   assert.deepEqual(r.passes.own.completed_by_third, [0, 1, 0]);
   assert.deepEqual(r.passes.own.completed_by_lane, [1, 0, 0, 0, 0]);
   assert.deepEqual(r.players.map((p) => [p.player, p.touches]), [["Ana", 1], ["Bea", 1]]);
+});
+
+test("pases por tramo: completo con el equipo analizado y el balón seguidos; sin tracking, nada", () => {
+  const frames = Array.from({ length: 100 }, (_, i) => ({
+    frame: i * 3,
+    // Own team seen in the first 90 processed frames, the other team never.
+    positions: i < 90 ? [1, 2, 3, 4, 5].map((id) => ({ id, x: 50, y: 30, source: "auto" })) : [],
+  }));
+  const file = {
+    kind: "tracks_fixed", match_id: "m1", video_id: "v1", fps: 30, start_frame: 0, end_frame: 300, stride: 3,
+    people: [1, 2, 3, 4, 5].map((id) => ({ id, team: "own", player_id: null, tracks: [] })),
+    ball: frames.slice(0, 80).map((f) => ({ frame: f.frame, x: 50, y: 30, source: "manual" })),
+    frames,
+  };
+  const segs = { v1: [{ segment_id: "s01", start: 0, end: 10, tipo: "juego" }, { segment_id: "s02", start: 10, end: 20, tipo: "juego" }] };
+  const rows = passStretches([{ file, ownRight: true }], segs);
+  assert.equal(rows.length, 2);
+  assert.ok(rows[0].done);
+  assert.ok(Math.abs(rows[0].own - 0.9) < 1e-9 && Math.abs(rows[0].ball - 0.8) < 1e-9 && rows[0].opp === 0);
+  // The second stretch has no tracking at all.
+  assert.equal(rows[1].done, false);
+  assert.equal(rows[1].own, 0);
 });

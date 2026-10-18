@@ -85,29 +85,85 @@ export function transitionMoments(all: MatchEvent[], team: Side): TransitionMome
   return out;
 }
 
+// A goal and a shot of the same team tagged closer than this (s) are one action: the shot that went in. A penalty or a
+// free kick taken as a shot is tagged with its shot too, so it is counted once, as that shot.
+export const SAME_ACTION_S = 5;
+
+// Each finish of a team, once: a shot (with its goal, if it went in) or a goal tagged without a shot (an own goal, a
+// deflection). Tagging a goal, a shot and a penalty for the same action gives one shot and one goal, not three.
+export interface Finish {
+  shot: MatchEvent | null;
+  goal: MatchEvent | null;
+}
+export function finishes(all: MatchEvent[], team: Side): Finish[] {
+  const shots = byTime(all.filter((e) => e.team === team && e.type === "shot"));
+  const goals = byTime(all.filter((e) => e.team === team && e.type === "goal"));
+  const vid = (e: MatchEvent) => e.video_id ?? "v1";
+  const used = new Set<string>();
+  const out: Finish[] = shots.map((shot) => ({ shot, goal: null }));
+  for (const g of goals) {
+    let best: Finish | null = null;
+    for (const f of out) {
+      const s = f.shot;
+      if (!s || used.has(s.event_id) || vid(s) !== vid(g) || Math.abs(s.t_video - g.t_video) > SAME_ACTION_S) continue;
+      if (!best || Math.abs(s.t_video - g.t_video) < Math.abs((best.shot as MatchEvent).t_video - g.t_video)) best = f;
+    }
+    if (best) {
+      best.goal = g;
+      used.add((best.shot as MatchEvent).event_id);
+    } else out.push({ shot: null, goal: g });
+  }
+  return out.sort((a, b) => (a.shot ?? a.goal)!.t_video - (b.shot ?? b.goal)!.t_video);
+}
+
+// One event per finish, for maps and lists: the shot, marked as a goal (type "goal") when it went in, with what is
+// missing taken from its goal (position, spot on the goal); a goal without a shot as it is.
+export function finishEvents(all: MatchEvent[]): MatchEvent[] {
+  return (["own", "opp"] as Side[]).flatMap((team) =>
+    finishes(all, team).map(({ shot, goal }) => {
+      if (!shot) return goal as MatchEvent;
+      if (!goal) return shot;
+      return {
+        ...shot,
+        type: "goal" as const,
+        x: shot.x ?? goal.x,
+        y: shot.y ?? goal.y,
+        goal_y: shot.goal_y ?? goal.goal_y ?? null,
+        goal_z: shot.goal_z ?? goal.goal_z ?? null,
+        player_id: shot.player_id ?? goal.player_id,
+      };
+    }),
+  );
+}
+
 export interface ShotBreakdown {
+  // Shots (a goal without a shot is not one).
   total: number;
+  // Every goal, with or without its shot.
   goals: number;
-  // Goals count as on target.
+  // Goals tagged without a shot (own goals, deflections): counted in `goals`, not in `total`.
+  goalsWithoutShot: number;
+  // Shots on target, the ones that went in included.
   onTarget: number;
   offTarget: number;
   blocked: number;
-  // Shots tagged without a result.
+  // Shots tagged without a result (and not followed by a goal).
   unknown: number;
 }
 
 // A1
 export function shotBreakdown(events: MatchEvent[], team: Side): ShotBreakdown {
-  const out: ShotBreakdown = { total: 0, goals: 0, onTarget: 0, offTarget: 0, blocked: 0, unknown: 0 };
-  for (const e of events) {
-    if (e.team !== team || !isShot(e)) continue;
+  const out: ShotBreakdown = { total: 0, goals: 0, goalsWithoutShot: 0, onTarget: 0, offTarget: 0, blocked: 0, unknown: 0 };
+  for (const { shot, goal } of finishes(events, team)) {
+    if (goal) out.goals++;
+    if (!shot) {
+      out.goalsWithoutShot++;
+      continue;
+    }
     out.total++;
-    if (e.type === "goal") {
-      out.goals++;
-      out.onTarget++;
-    } else if (e.outcome === "on_target") out.onTarget++;
-    else if (e.outcome === "off_target") out.offTarget++;
-    else if (e.outcome === "blocked") out.blocked++;
+    if (goal || shot.outcome === "on_target") out.onTarget++;
+    else if (shot.outcome === "off_target") out.offTarget++;
+    else if (shot.outcome === "blocked") out.blocked++;
     else out.unknown++;
   }
   return out;
@@ -261,7 +317,7 @@ export function timeBins(events: MatchEvent[], segments: Segment[], binMin: numb
     }
     const i = Math.floor(t / 60 / binMin);
     while (bins.length <= i) bins.push({ label: `${bins.length * binMin}–${(bins.length + 1) * binMin}′`, own: zero(), opp: zero() });
-    const m: BinMeasure | null = isShot(e)
+    const m: BinMeasure | null = e.type === "shot"
       ? "shots"
       : e.type === "recovery"
         ? "recoveries"

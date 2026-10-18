@@ -24,7 +24,6 @@ import {
   type MatchEvent,
 } from "@/lib/types";
 import { EventsTable } from "./EventsTable";
-import { PassTagger } from "./PassTagger";
 import { ReviewPanel } from "./ReviewPanel";
 import { VideoTimeline } from "./VideoTimeline";
 
@@ -50,13 +49,13 @@ type Props = {
 const PASSES: { id: Pass; label: string; help: string }[] = [
   { id: 1, label: "1 · Identificar", help: "Con el video corriendo: qué pasó y de qué equipo. Una tecla por evento." },
   { id: 2, label: "2 · Revisar", help: "Uno por uno: posición, jugadora, resultado, detalle y nota." },
-  { id: 3, label: "3 · Ejecución", help: "Tiros, centros, córners, tiros libres y penales: a dónde fueron." },
-  { id: 4, label: "4 · Pases", help: "Quién se la pasa a quién, para la red de pases: el número de cada jugadora que recibe el balón, en orden." },
+  { id: 3, label: "3 · Ejecución", help: "Tiros, centros, córners, tiros libres y penales: a dónde fueron. Un tiro bloqueado no pide dirección." },
 ];
 const teamColor = (e: MatchEvent) => (e.team === "own" ? COLORS.own : e.team === "opp" ? COLORS.opp : "var(--color-faint)");
 
 export function TagTab({ match, videoId, defaultPeriod, events, segments, time, duration, playerRef, playClip, overlaySlot, belowSlot, tableSlot }: Props) {
-  const pass = (Number(usePref("tagPass", "1")) || 1) as Pass;
+  // Pass 4 (passes by hand) was removed: a browser that was on it opens pass 1. Passes are read from the tracking.
+  const pass = Math.min(3, Math.max(1, Number(usePref("tagPass", "1")) || 1)) as Pass;
   const setPass = (p: Pass) => setPref("tagPass", String(p));
   const [team, setTeam] = useState<"own" | "opp">("own");
   const [period, setPeriod] = useState<1 | 2>(defaultPeriod);
@@ -424,7 +423,6 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
         </Card>
       )}
 
-      {pass === 4 && <PassTagger match={match} videoId={videoId} period={period} time={time} playerRef={playerRef} />}
 
       {(pass === 2 || pass === 3) && (
         <ReviewPanel
@@ -463,7 +461,6 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
             activeIds={activeIds}
           />
         );
-        if (pass === 4) return null;
         return tableSlot ? createPortal(table, tableSlot) : table;
       })()}
     </div>

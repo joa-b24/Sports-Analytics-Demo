@@ -655,3 +655,64 @@ export function positionsAt(o: Oriented, t: number): { players: Dot[]; ball: [nu
 // The part that covers a stretch of a video, if any.
 export const partFor = <T extends Oriented>(parts: T[], videoId: string, t0: number, t1: number): T | null =>
   parts.find((o) => o.file.video_id === videoId && t1 * o.file.fps > o.file.start_frame && t0 * o.file.fps < o.file.end_frame) ?? null;
+
+// ------------------------------------------------------------------------------------------- passes by stretch
+
+// Passes are read from the tracking, never tagged by hand. A stretch of play has them when the analysed team was
+// tracked for most of it (at least PASS_MIN_OWN of its players seen in a processed frame) and the ball was followed
+// (by hand, from events or by the ball tracker) for most of it. The other team tracked as well is a plus.
+export const PASS_MIN_OWN = 5;
+export const PASS_PLAYERS_SHARE = 0.8;
+export const PASS_BALL_SHARE = 0.7;
+export interface PassStretch {
+  video_id: string;
+  segment_id: string;
+  start: number;
+  end: number;
+  // Share of the stretch (0..1) with the analysed team tracked, the other team tracked and the ball followed.
+  own: number;
+  opp: number;
+  ball: number;
+  done: boolean;
+}
+export function passStretches(parts: Oriented[], segmentsByVideo: Record<string, Segment[]>): PassStretch[] {
+  const out: PassStretch[] = [];
+  for (const [video_id, segs] of Object.entries(segmentsByVideo)) {
+    for (const g of segs) {
+      if (g.tipo !== "juego" || g.end === null) continue;
+      let n = 0;
+      let own = 0;
+      let opp = 0;
+      let ball = 0;
+      for (const o of parts) {
+        const f = o.file;
+        if (f.video_id !== video_id) continue;
+        const team = new Map(f.people.map((p) => [p.id, p.team]));
+        const balls = new Set(f.ball.map((b) => b.frame));
+        for (const fr of f.frames) {
+          const t = fr.frame / f.fps;
+          if (t < g.start || t >= (g.end as number)) continue;
+          n++;
+          let a = 0;
+          let b = 0;
+          for (const q of fr.positions) {
+            if (q.source === "interpolated") continue;
+            const tm = team.get(q.id);
+            if (tm === "own") a++;
+            else if (tm === "opp") b++;
+          }
+          if (a >= PASS_MIN_OWN) own++;
+          if (b >= PASS_MIN_OWN) opp++;
+          if (balls.has(fr.frame)) ball++;
+        }
+      }
+      // Shares over the whole stretch: what no part covers counts as not tracked.
+      const ref = parts.find((o) => o.file.video_id === video_id)?.file;
+      const expected = ref ? Math.max(n, Math.round((((g.end as number) - g.start) * ref.fps) / ref.stride)) : n;
+      const share = (k: number) => (expected ? Math.min(1, k / expected) : 0);
+      const s = { own: share(own), opp: share(opp), ball: share(ball) };
+      out.push({ video_id, segment_id: g.segment_id, start: g.start, end: g.end as number, ...s, done: s.own >= PASS_PLAYERS_SHARE && s.ball >= PASS_BALL_SHARE });
+    }
+  }
+  return out;
+}

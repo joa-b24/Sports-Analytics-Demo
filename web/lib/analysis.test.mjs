@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  finishEvents,
   boxEntries,
   crosses,
   finalThirdEntries,
@@ -47,16 +48,31 @@ test("transitions do not depend on the order of the input", () => {
   assert.deepEqual(transitions(events, "own").lossToShotAgainst, { k: 1, n: 1 });
 });
 
-test("shots: goals are on target, shots without a result stay unknown", () => {
+test("tiros: un gol, su tiro y su penal son una sola acción; un gol sin tiro no es tiro; un tiro libre o un penal solos tampoco", () => {
   const events = [
-    ev(1, "goal", "own"),
-    ev(2, "shot", "own", { outcome: "on_target" }),
-    ev(3, "shot", "own", { outcome: "off_target" }),
-    ev(4, "shot", "own", { outcome: "blocked" }),
-    ev(5, "shot", "own"),
+    // Penalty scored, tagged three times (goal, shot and penalty) at nearly the same moment.
+    ev(100, "penalty", "own"),
+    ev(101, "goal", "own"),
+    ev(100.5, "shot", "own", { outcome: "on_target" }),
+    ev(200, "shot", "own", { outcome: "off_target" }),
+    ev(300, "shot", "own", { outcome: "blocked" }),
+    ev(400, "shot", "own"),
+    // A goal without a shot (own goal of the other team, a deflection).
+    ev(500, "goal", "own"),
+    // A free kick crossed into the box: not a shot.
+    ev(600, "free_kick", "own", { outcome: "cleared" }),
+    // A shot that went in tagged without its result: on target because of its goal.
+    ev(700, "shot", "own"),
+    ev(703, "goal", "own"),
     ev(6, "shot", "opp", { outcome: "on_target" }),
   ];
-  assert.deepEqual(shotBreakdown(events, "own"), { total: 5, goals: 1, onTarget: 2, offTarget: 1, blocked: 1, unknown: 1 });
+  assert.deepEqual(shotBreakdown(events, "own"), { total: 5, goals: 3, goalsWithoutShot: 1, onTarget: 2, offTarget: 1, blocked: 1, unknown: 1 });
+  // One mark per finish on the maps: 5 shots (2 of them goals) and the goal without a shot.
+  const marks = finishEvents(events).filter((e) => e.team === "own");
+  assert.equal(marks.length, 6);
+  assert.equal(marks.filter((e) => e.type === "goal").length, 3);
+  // A goal links to one shot only: two goals right after one shot leave the second without a shot.
+  assert.equal(shotBreakdown([ev(10, "shot", "own"), ev(11, "goal", "own"), ev(12, "goal", "own")], "own").goalsWithoutShot, 1);
 });
 
 test("lanes are seen by the attacking team", () => {

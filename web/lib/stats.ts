@@ -8,9 +8,10 @@ export function countByType(events: MatchEvent[], team: Team): Record<EventType,
   return out;
 }
 
-// A goal is also a shot: "tiros" in the UI means shot + goal.
+// Shots of a team. A goal is not a shot by itself (own goals, deflections): the shot is tagged on its own, and a goal
+// tagged with it does not count it twice (lib/analysis.ts finishes).
 export function shotsOf(events: MatchEvent[], team: Team): MatchEvent[] {
-  return events.filter((e) => e.team === team && (e.type === "shot" || e.type === "goal"));
+  return events.filter((e) => e.team === team && e.type === "shot");
 }
 
 // 3 x 3 grid: rows are lanes across the width (y), columns are thirds along the length (x).

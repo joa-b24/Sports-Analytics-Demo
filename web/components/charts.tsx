@@ -3,6 +3,7 @@
 import { useId } from "react";
 import { COLORS, Pitch } from "./Pitch";
 import { CountUp } from "./motion";
+import { finishEvents } from "@/lib/analysis";
 import { fmtT } from "@/lib/format";
 import type { Segment } from "@/lib/segments";
 import { EVENT_LABELS, EVENT_TYPES, PITCH, type MatchEvent } from "@/lib/types";
@@ -100,8 +101,10 @@ export function CompareBars({
 
 // Shots on the pitch: filled = goal, hollow = no goal. Colour = team.
 export function ShotMap({ events, aLabel, bLabel }: { events: MatchEvent[]; aLabel: string; bLabel: string }) {
-  const shots = events.filter((e) => (e.type === "shot" || e.type === "goal") && e.x !== null && e.y !== null);
-  const missing = events.filter((e) => (e.type === "shot" || e.type === "goal") && (e.x === null || e.y === null)).length;
+  // One mark per finish: a goal tagged together with its shot (and its penalty) is drawn once.
+  const all = finishEvents(events);
+  const shots = all.filter((e) => e.x !== null && e.y !== null);
+  const missing = all.filter((e) => e.x === null || e.y === null).length;
   return (
     <div>
       <Legend

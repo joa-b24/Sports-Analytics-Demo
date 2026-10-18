@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { BinChart, CompareBars, EventTimeline, PartsDuo, RateDuo, ShotMap, StatTile, ZoneMap, type PartsRow } from "@/components/charts";
+import { PassStretchesCard } from "@/components/match/PassStretches";
 import { PassesCards } from "@/components/match/PassesCards";
 import { PositionsCards } from "@/components/match/PositionsCards";
 import { TeamShapeCard } from "@/components/match/TeamShape";
@@ -74,8 +75,8 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             etiquetado»; los de posiciones, abajo, salen de las partes corregidas.
           </p>
         </Card>
-        <Section title="Pases y jugadoras" note="pases etiquetados a mano">
-          <PassesCards match={match} events={[]} />
+        <Section title="Pases y jugadoras" note="desde el tracking">
+          <PassStretchesCard match={match} />
         </Section>
         <Section title="Con posiciones medidas" note="desde el tracking">
           <PositionsCards match={match} videoIds={videoIds} events={[]} />
@@ -114,7 +115,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       who: name(s),
       color: color(s),
       parts: [
-        { label: "A puerta (con goles)", value: sh.onTarget },
+        { label: "A puerta (con los goles)", value: sh.onTarget },
         { label: "Fuera", value: sh.offTarget },
         { label: "Bloqueado", value: sh.blocked },
       ],
@@ -156,7 +157,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         {/* Headline comparison, unboxed: the figures are the hierarchy. */}
         <Reveal className="grid grid-cols-2 gap-x-8 gap-y-7 lg:grid-cols-4">
           <StatTile label="Goles" a={a.goal} b={b.goal} aLabel={A} bLabel={B} />
-          <StatTile label="Tiros (incluye goles)" a={shotsOf(evs, "own").length} b={shotsOf(evs, "opp").length} aLabel={A} bLabel={B} />
+          <StatTile label="Tiros" a={shotsOf(evs, "own").length} b={shotsOf(evs, "opp").length} aLabel={A} bLabel={B} />
           <StatTile label="Recuperaciones" a={a.recovery} b={b.recovery} aLabel={A} bLabel={B} />
           <StatTile label="Pérdidas" a={a.loss} b={b.loss} aLabel={A} bLabel={B} />
         </Reveal>
@@ -311,8 +312,11 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         </div>
       </Section>
 
-      <Section title="Pases y jugadoras" note="pases etiquetados a mano">
-        <PassesCards match={match} events={videoEvents ?? events} />
+      <Section title="Pases y jugadoras" note="pases desde el tracking; eventos por jugadora">
+        <div className="space-y-4">
+          <PassStretchesCard match={match} />
+          <PassesCards match={match} events={videoEvents ?? events} />
+        </div>
       </Section>
 
       <Section title="Con posiciones medidas" note="desde el tracking">

@@ -7,7 +7,8 @@ import { networkFromPasses, passStats } from "@/lib/passes";
 import { useStore } from "@/lib/store";
 import { EVENT_LABELS, type EventType, type Match, type MatchEvent } from "@/lib/types";
 
-// Pass network and the numbers of each player, from the passes tagged by hand (pass 4) and the events. No tracking.
+// Pass network and the numbers of each player, from the passes tagged by hand before pass 4 was removed (kept so old
+// data still shows) and the events. Passes now come from the tracking (lib/positions.ts, Informe).
 
 type Side = "own" | "opp";
 // Events counted per player in the table, in this order.
@@ -45,8 +46,8 @@ export function PassesCards({ match, events }: { match: Match; events: MatchEven
         <div className="mb-3">{toggle}</div>
         {net.passes === 0 ? (
           <p className="text-sm text-pretty text-muted">
-            Todavía no hay pases etiquetados de {name(team)}. En «Video y etiquetado», pasada <strong>4 · Pases</strong>: con el video corriendo,
-            el número de cada jugadora que recibe el balón, en orden.
+            Los pases ya no se etiquetan a mano: la red de pases de {name(team)} sale del tracking (jugadoras y balón) y está en el Informe.
+            Aquí solo se ven los pases etiquetados antes, si los hay.
           </p>
         ) : (
           <>

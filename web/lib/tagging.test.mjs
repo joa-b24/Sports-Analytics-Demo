@@ -53,3 +53,13 @@ test("a new type keeps the end position only when it takes the same kind", () =>
   assert.deepEqual(cleanEnd("shot", { x_end: 90, y_end: 30, goal_y: 2, goal_z: null }), { x_end: null, y_end: null, goal_y: null, goal_z: null });
   assert.deepEqual(cleanEnd("corner", { x_end: 94, y_end: 34, goal_y: 2, goal_z: 1 }), { x_end: 94, y_end: 34, goal_y: null, goal_z: null });
 });
+
+test("pasada 3: un tiro bloqueado no pide dirección a puerta, ni un tiro libre que no fue tiro", () => {
+  assert.equal(missingEnd(ev("a", 1, "shot", "own", { outcome: "blocked" })), null);
+  assert.equal(missingEnd(ev("a", 1, "shot", "own", { outcome: "off_target" })), true);
+  assert.equal(missingEnd(ev("a", 1, "free_kick", "own", { outcome: "cleared" })), null);
+  assert.equal(missingEnd(ev("a", 1, "free_kick", "own", { outcome: "shot" })), true);
+  assert.equal(missingEnd(ev("a", 1, "free_kick")), true);
+  const evs = [ev("b", 1, "shot", "own", { outcome: "blocked" }), ev("c", 2, "shot", "own"), ev("d", 3, "foul")];
+  assert.deepEqual(eventsFor(3, evs, NO_FILTER).map((e) => e.event_id), ["c"]);
+});
