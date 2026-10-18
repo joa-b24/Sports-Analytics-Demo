@@ -8,7 +8,7 @@ import pytest
 from sportsan.clips import cut_clips as cc
 
 
-def test_plan_renderiza_los_editados_y_corta_los_demas(tmp_path):
+def test_plan_renders_edited_and_cuts_the_rest(tmp_path):
     (tmp_path / "edits").mkdir()
     (tmp_path / "edits" / "edit_c1.json").write_text("{}", encoding="utf-8")
     clips = [
@@ -24,7 +24,7 @@ def test_plan_renderiza_los_editados_y_corta_los_demas(tmp_path):
     assert plan[2]["missing_edit"] == "c_sin_archivo"
 
 
-def test_argumentos_del_corte():
+def test_cut_args():
     a = cc.cut_args("ffmpeg", Path("v1.mp4"), 97, 110.5, "whatsapp", Path("o.mp4"))
     assert a[a.index("-ss") + 1] == "97.000" and a[a.index("-to") + 1] == "110.500"
     assert a[a.index("-vf") + 1] == "scale=-2:'min(720,ih)'"
@@ -32,7 +32,7 @@ def test_argumentos_del_corte():
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="sin ffmpeg")
-def test_corta_un_clip_de_un_video_sintetico(tmp_path, monkeypatch):
+def test_cuts_a_clip_from_synthetic_video(tmp_path, monkeypatch):
     cv2 = pytest.importorskip("cv2")
     import numpy as np
 

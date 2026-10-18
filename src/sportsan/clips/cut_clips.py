@@ -3,7 +3,7 @@ clips»). Un clip con `edit_id` y su `edits/edit_<id>.json` sale con sus dibujos
 demás se cortan del video tal cual.
 
 Uso (desde la raíz del repo):
-    python -m sportsan.clips.cut_clips --match <carpeta del partido> [--profile charla|whatsapp] [--force]
+    python -m sportsan.clips.cut_clips [--match <carpeta del partido>] [--profile charla|whatsapp] [--force]
 
 Escribe en matches/<id>/clips/: <clip_id>_<perfil>.mp4 (o <edit_id>_<perfil>.mp4 si está editado). Lo que ya existe se
 salta salvo con --force. Nunca modifica el video original.
@@ -15,7 +15,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from ..config import project_root
+from ..config import load_config, project_root
 from ..ingest.cut_segments import find_ffmpeg
 from .render import PROFILES, find_video, render_edit
 
@@ -42,8 +42,9 @@ def cut_args(ffmpeg: str, video: Path, t0: float, t1: float, profile: str, out: 
     ]
 
 
-def cut_clips(match: str, profile: str = "charla", force: bool = False) -> list[Path]:
-    folder = project_root() / "matches" / match
+def cut_clips(match: str | None = None, profile: str = "charla", force: bool = False) -> list[Path]:
+    # Sin --match: SPORTSAN_MATCH o default_match, como los demás comandos.
+    folder = project_root() / "matches" / (match or load_config()["match_id"])
     lists = sorted(folder.glob("clips_*.json"))
     if not lists:
         raise SystemExit(f"No hay clips_*.json en {folder}. Expórtalo desde la app: Informe → «Exportar lista de clips».")
@@ -72,7 +73,7 @@ def cut_clips(match: str, profile: str = "charla", force: bool = False) -> list[
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Corta los clips del informe de un partido (los editados, con sus dibujos).")
-    ap.add_argument("--match", required=True, help="carpeta del partido en matches/")
+    ap.add_argument("--match", default=None, help="carpeta del partido en matches/ (por defecto, el de config/project.yaml)")
     ap.add_argument("--profile", choices=sorted(PROFILES), default="charla")
     ap.add_argument("--force", action="store_true", help="vuelve a escribir aunque ya exista")
     a = ap.parse_args(argv)

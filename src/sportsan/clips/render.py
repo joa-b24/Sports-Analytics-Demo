@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import re
 import subprocess
 from pathlib import Path
 
@@ -195,11 +197,13 @@ def snapshot_from_folder(edit: dict, folder: Path) -> dict | None:
     fixed = json.loads((tdir / fixed_name).read_text(encoding="utf-8")) if fixed_name and (tdir / fixed_name).exists() else None
     parts: list[dict] = []
     fps_known: float | None = None
-    for p in sorted(tdir.glob(f"tracks_{edit['video_id']}_*_*.json")):
-        if p.name.endswith("_index.json"):
+    name_re = re.compile(rf"^tracks_{re.escape(edit['video_id'])}_(\d+)_(\d+)\.json$")
+    for p in sorted(tdir.glob(f"tracks_{edit['video_id']}_*.json")):
+        m = name_re.match(p.name)
+        if not m:
             continue
-        a, b = (int(x) for x in p.stem.split("_")[-2:])
-        # Once the frame rate is known, parts outside the clip are skipped by their name, without reading them.
+        a, b = int(m.group(1)), int(m.group(2))
+        # Conocido el fps, las partes fuera del clip se saltan por su nombre, sin leerlas.
         if fps_known and (a > edit["t_end"] * fps_known or b < edit["t_start"] * fps_known):
             continue
         t = json.loads(p.read_text(encoding="utf-8"))
@@ -220,10 +224,8 @@ def snapshot_from_folder(edit: dict, folder: Path) -> dict | None:
     if not venue:
         return None
     fps, stride = meta["fps"], meta["stride"]
-    f0, f1 = edit["t_start"] * fps - stride, edit["t_end"] * fps + stride
-    roster_file = project_root() / "config" / "roster.json"
-    roster = json.loads(roster_file.read_text(encoding="utf-8")) if roster_file.exists() else []
-    numbers = {r.get("player_id"): r.get("number") for r in roster if isinstance(r, dict)}
+    f0, f1 = math.floor(edit["t_start"] * fps) - stride, math.ceil(edit["t_end"] * fps) + stride
+    numbers = roster_numbers(project_root() / "config" / "roster.json")
     tracks: dict[str, list] = {}
     for fr in (fixed or {}).get("frames", []):
         if f0 <= fr["frame"] <= f1:
@@ -234,6 +236,15 @@ def snapshot_from_folder(edit: dict, folder: Path) -> dict | None:
     return {"fps": fps, "stride": stride, "image_w": meta["image_w"], "image_h": meta["image_h"],
             "venue": {"length_m": venue["length_m"], "width_m": venue["width_m"]},
             "homographies": sorted([c for c in calib if f0 <= c[0] <= f1], key=lambda c: c[0]), "people": people, "tracks": tracks}
+
+
+def roster_numbers(path: Path) -> dict:
+    """Dorsal de cada jugadora de config/roster.json (`{schema_version, team, players: [{player_id, number}]}`)."""
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    players = data.get("players", []) if isinstance(data, dict) else data
+    return {r.get("player_id"): r.get("number") for r in players if isinstance(r, dict)}
 
 
 def _encode(frames, size: tuple[int, int], fps: float, profile: str, out: Path) -> Path:
@@ -307,7 +318,7 @@ def framing_box(framing: str | None) -> tuple[float, float, float, float]:
         return (105 / 2 - 2, -2, 105 / 2 + 4, 68 + 4)
     if framing == "left":
         return (-2, -2, 105 / 2 + 4, 68 + 4)
-    return (-2, -2, 105 + 4, 68 + 4)
+    return (-2, -2, 105 + 4, 68 + 8)
 
 
 def board_plan(board: dict, fps: float) -> list[float]:

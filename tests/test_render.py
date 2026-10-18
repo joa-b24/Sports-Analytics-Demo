@@ -12,7 +12,7 @@ from sportsan.clips import render as rn
 FIXTURE = Path(__file__).parent / "fixtures" / "projection_cases.json"
 
 
-def test_proyeccion_igual_que_la_app():
+def test_projection_matches_app():
     fx = json.loads(FIXTURE.read_text(encoding="utf-8"))
     for c in fx["cases"]:
         to = g.pitch_to_image(c["H"], c["venue"])
@@ -24,7 +24,7 @@ def test_proyeccion_igual_que_la_app():
     assert g.pitch_to_image(None, {"length_m": 100, "width_m": 65}) is None
 
 
-def test_dibujos_del_caso_comun_siguen_iguales():
+def test_shared_drawing_cases_unchanged():
     # Los dibujos del fixture los genera este módulo; la app los compara con los suyos (web/lib/clips.test.mjs).
     fx = json.loads(FIXTURE.read_text(encoding="utf-8"))
     d = fx["drawings"]
@@ -46,7 +46,7 @@ def edit(**kw):
     return e
 
 
-def test_plan_de_cuadros_con_dos_pausas():
+def test_frame_plan_with_two_freezes():
     e = edit(freezes=[{"t": 11.0, "duration_s": 0.5, "reveal": []}, {"t": 10.5, "duration_s": 1.0, "reveal": ["a"]}, {"t": 30, "duration_s": 5, "reveal": []}])
     plan = g.frame_plan(e, 10)
     # 2 s de video (20 cuadros) + 1 s + 0.5 s de pausas; la pausa en 30 s queda fuera del clip.
@@ -64,7 +64,7 @@ def test_plan_de_cuadros_con_dos_pausas():
     assert g.reveal_count({"duration_s": 1.0, "reveal": ["a"]}, 0.5) == 1
 
 
-def test_sin_h_se_ocultan_los_dibujos_y_el_texto_se_queda():
+def test_no_h_hides_pitch_drawings_keeps_screen_text():
     pos = lambda i, t: (50.0, 30.0)  # noqa: E731
     ring = g.resolve({"id": "h", "kind": "highlight", "anchors": [{"kind": "player", "identity": 4}], "t_in": 0, "t_out": 9, "style": {}}, 1, pos)
     text = g.resolve({"id": "t", "kind": "text", "anchors": [{"kind": "screen", "x": 0.25, "y": 0.1}], "t_in": 0, "t_out": 9, "style": {"label": "Presión"}}, 1, pos)
@@ -83,7 +83,7 @@ def snap():
             "people": [{"id": 7, "team": "own", "player_id": "Jugadora Siete", "number": 7}, {"id": 8, "team": "own", "player_id": "Jugadora Ocho", "number": None}]}
 
 
-def test_jugadora_que_desaparece_medio_segundo_o_dos():
+def test_player_missing_half_second_or_two():
     pos = g.snapshot_positions(snap())
     x, _ = pos(7, 3060 / 30)
     assert abs(x - 30.6) < 1e-6
@@ -92,7 +92,7 @@ def test_jugadora_que_desaparece_medio_segundo_o_dos():
     assert pos(7, 3320 / 30) is None
 
 
-def test_rotulo_por_dorsal_nunca_nombre():
+def test_number_label_never_name():
     s = snap()
     assert g.label_for(7, "number", s) == "7"
     assert g.label_for(8, "number", s) is None
@@ -103,7 +103,7 @@ def test_rotulo_por_dorsal_nunca_nombre():
     assert rn.label_mode_for({"label_mode": "none"}, "whatsapp") == "none"
 
 
-def test_argumentos_de_ffmpeg_por_perfil():
+def test_ffmpeg_args_by_profile():
     out = Path("x.mp4")
     charla = rn.ffmpeg_args("ffmpeg", "charla", 1920, 1080, 29.97, out)
     whats = rn.ffmpeg_args("ffmpeg", "whatsapp", 1920, 1080, 29.97, out)
@@ -119,7 +119,7 @@ def test_argumentos_de_ffmpeg_por_perfil():
     assert low[low.index("-vf") + 1] == "scale=-2:480"
 
 
-def test_plan_del_pizarron_espera_en_cada_paso():
+def test_board_plan_holds_each_step():
     board = {"keyframes": [{"t": 0, "pos": {"o1": [10, 10]}}, {"t": 2, "pos": {"o1": [30, 10]}}]}
     ts = rn.board_plan(board, 10)
     hold = round(rn.BOARD_HOLD_S * 10)
@@ -132,7 +132,7 @@ needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="sin ff
 
 
 @needs_ffmpeg
-def test_render_corto_sobre_video_sintetico(tmp_path):
+def test_short_render_on_synthetic_video(tmp_path):
     cv2 = pytest.importorskip("cv2")
     pytest.importorskip("PIL")
     folder = tmp_path / "matches" / "m1"
@@ -177,7 +177,7 @@ def test_render_corto_sobre_video_sintetico(tmp_path):
 
 
 @needs_ffmpeg
-def test_render_del_pizarron(tmp_path, monkeypatch):
+def test_board_render(tmp_path, monkeypatch):
     cv2 = pytest.importorskip("cv2")
     pytest.importorskip("PIL")
     monkeypatch.setattr(rn, "project_root", lambda: tmp_path)
@@ -190,3 +190,21 @@ def test_render_del_pizarron(tmp_path, monkeypatch):
     assert out == tmp_path / "clips" / "board_b1_charla.mp4" and out.exists()
     cap = cv2.VideoCapture(str(out))
     assert int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) == len(rn.board_plan(board, 30))
+
+
+def test_first_frame_after_a_freeze_keeps_what_appeared_in_it():
+    # A 29.97 fps, la pausa en 10.02 s cae entre cuadros: el primero tras ella (300 = 10.01 s) no debe esconder lo que
+    # apareció en la pausa, que empieza en 10.02.
+    e = edit(t_start=10.0, t_end=10.2, freezes=[{"t": 10.02, "duration_s": 0.1, "reveal": ["t"]}])
+    plan = g.frame_plan(e, 29.97)
+    after = [p for p in plan if p[2] is None and p[0] >= round(10.02 * 29.97)]
+    assert after and all(p[1] >= 10.02 for p in after)
+    before = [p for p in plan if p[2] is None and p[0] < round(10.02 * 29.97)]
+    assert all(p[1] < 10.02 for p in before)
+
+
+def test_roster_numbers_reads_the_app_file(tmp_path):
+    f = tmp_path / "roster.json"
+    f.write_text(json.dumps({"schema_version": 1, "team": "Equipo A", "players": [{"player_id": "Jugadora Uno", "number": 9}]}), encoding="utf-8")
+    assert rn.roster_numbers(f) == {"Jugadora Uno": 9}
+    assert rn.roster_numbers(tmp_path / "no_existe.json") == {}

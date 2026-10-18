@@ -284,3 +284,10 @@ test("«ver» abre el clip editado si existe y, si no, el tramo sin editar; la l
   assert.deepEqual([pl.t_start, pl.t_end, pl.edit_id], [600, 612, "c_play"]);
   assert.equal(list.clips.filter((c) => c.edit_id === null).length, list.clips.length - 2);
 });
+
+test("sin nombres: los identificadores de clips y ediciones no se tocan", () => {
+  const edits = [{ edit_id: "c_ana_x", match_id: "m1", video_id: "v1", t_start: 104, t_end: 112, title: "c", freezes: [], annotations: [], label_mode: "number" }];
+  const r = buildReport(input({ events: sample().map((e) => ({ ...e, player_id: e.player_id ?? "ana" })), edits, roster: [{ player_id: "ana", number: 5 }], anonymize: true }));
+  assert.equal(r.transitions.own.losses[0].moment.edit.edit_id, "c_ana_x");
+  assert.equal(clipList(r).clips.find((c) => c.kind === "transition" && c.edit_id).edit_id, "c_ana_x");
+});

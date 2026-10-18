@@ -64,6 +64,7 @@ Cada frente es dueño de su carpeta y se comunica con los demás solo a través 
 | B. Tracking | `src/sportsan/tracking/`, `notebooks/` | segmentos + anclas | parquets de tracking, balón y calibración |
 | C. Métricas | `src/sportsan/metrics/` | DataFrames del contrato | DataFrames/matrices |
 | D. App web | `web/` | eventos, jugadas, sesiones, anclas (y exportes de B/C) | UI |
+| E. Clips | `src/sportsan/clips/` | ediciones de clip (`edits/edit_*.json`), jugadas del pizarrón (`data/boards/`), `clips_<match_id>.json` y el video | MP4 en `matches/<id>/clips/` y `clips/` |
 
 `app/` (Streamlit) queda como referencia y no se sigue desarrollando.
 

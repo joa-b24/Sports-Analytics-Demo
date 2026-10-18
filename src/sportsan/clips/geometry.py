@@ -142,10 +142,10 @@ def pitch_to_image(H, venue: dict) -> ToImage | None:
     if H is None:
         return None
     M = np.asarray(H, dtype=float).reshape(3, 3)
-    try:
-        inv = np.linalg.inv(M)
-    except np.linalg.LinAlgError:
+    # El mismo umbral que `invert` de la app: una matriz casi singular no es una calibración.
+    if abs(np.linalg.det(M)) < 1e-14:
         return None
+    inv = np.linalg.inv(M)
     L, W = float(venue["length_m"]), float(venue["width_m"])
     if inv[2] @ np.array([L / 2, W / 2, 1.0]) < 0:
         inv = -inv
@@ -251,12 +251,15 @@ def frame_plan(edit: dict, fps: float) -> list[tuple[int, float, dict | None, fl
     """
     plan: list[tuple[int, float, dict | None, float]] = []
     cur = round(edit["t_start"] * fps)
+    # Tras una pausa el video sigue desde su instante: el primer cuadro puede caer un poco antes (round), y no debe
+    # esconder lo que apareció en la pausa (que empieza justo en ella).
+    floor_t = edit["t_start"]
 
     def video(to_t: float):
         nonlocal cur
         end = round(to_t * fps)
         for f in range(cur, end):
-            plan.append((f, f / fps, None, 0.0))
+            plan.append((f, max(f / fps, floor_t), None, 0.0))
         cur = max(cur, end)
 
     for fz in clip_freezes(edit):
@@ -264,6 +267,7 @@ def frame_plan(edit: dict, fps: float) -> list[tuple[int, float, dict | None, fl
         src = round(fz["t"] * fps)
         for i in range(round(fz["duration_s"] * fps)):
             plan.append((src, fz["t"], fz, i / fps))
+        floor_t = fz["t"]
     video(edit["t_end"])
     return plan
 
@@ -337,7 +341,9 @@ def label_for(identity, mode: str, snap: dict | None) -> str | None:
     if p is None:
         return None
     number = str(p["number"]) if p.get("number") is not None else None
-    return (p.get("player_id") or number) if mode == "name" else number
+    if mode == "name":
+        return p["player_id"] if p.get("player_id") is not None else number
+    return number
 
 
 def drawings_at(edit: dict, t_video: float, position_of, stop: dict | None, shown: int) -> list[Resolved]:

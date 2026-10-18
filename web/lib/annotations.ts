@@ -343,7 +343,8 @@ export function clipDrawingsAt(
 ): Resolved[] {
   const hidden = new Set(stop ? stop.freeze.reveal.slice(stop.shown) : []);
   return resolveAll(
-    edit.annotations.filter((a) => !hidden.has(a.id)),
+    // A drawing that breaks its own rules (an edited or imported file) is left out, as in the render.
+    edit.annotations.filter((a) => !hidden.has(a.id) && isValidAnnotation(a)),
     t_video,
     ctx,
   );

@@ -391,16 +391,18 @@ Va fuera de git porque lleva los nombres de las jugadoras del tracking corregido
 | snapshot | copia de lo que el clip necesita del tracking, para que el render dibuje lo mismo que la app: `fps`, `stride`, `image_w`, `image_h`, `venue` (`{length_m, width_m}`), `homographies` (`[cuadro, H]`, H de imagen a metros reales como en `tracks_*`, `null` sin calibración), `people` (`{id, team, player_id, number}`) y `tracks` (por identidad, `[cuadro, x, y, source]` de `tracks_fixed`). `null` si al guardar no había calibración |
 
 Reglas de dibujo (las mismas en la app, `web/lib/annotations.ts` y `web/lib/clips.ts`, y en el render):
-- La H de un cuadro sin calibración propia es la mezcla de las dos procesadas a su alrededor si están a menos de `max(2·stride, fps/2)` cuadros, o la más cercana a menos de la mitad de eso; si no, no hay H y **los dibujos sobre el césped se ocultan** (el texto en pantalla se queda).
+- La H de un cuadro sin calibración propia es la mezcla de las dos procesadas a su alrededor si están a `max(2·stride, round(fps/2))` cuadros o menos, o la más cercana a la mitad de eso o menos; si no, no hay H y **los dibujos sobre el césped se ocultan** (el texto en pantalla se queda).
 - Un punto de la cancha normalizada pasa a metros reales con `venue` y de ahí a píxeles con la inversa de H; el signo de la inversa se elige para que el centro de la cancha quede delante de la cámara. Flechas, zonas y el círculo a los pies se proyectan punto por punto (en perspectiva).
-- Una jugadora se sigue con sus posiciones medidas o marcadas a mano (`interpolated` no cuenta). Si no se vio durante menos de 1 s (más allá del paso normal entre cuadros procesados) se toma la recta entre donde se perdió y donde reaparece; si fue más, el dibujo atado a ella se oculta.
+- Una jugadora se sigue con sus posiciones medidas o marcadas a mano (`interpolated` no cuenta). Si no se vio durante menos de 1 s (más allá del paso normal entre cuadros procesados) se toma la recta entre donde se perdió y donde reaparece; si fue más, el dibujo atado a ella se oculta. Antes de la primera posición vista o después de la última solo se coloca a un paso (`stride`) o menos de ella.
+- Un dibujo que no cumple sus reglas (anclas por tipo, resaltar solo a una jugadora, pantalla solo para texto, `t_out` después de `t_in`) no se dibuja ni en la app ni en el MP4.
 
 ## Clips en MP4 (`python -m sportsan.clips.render`)
 
 - **Clip editado:** `--edit matches/<id>/edits/edit_<id>.json` escribe `matches/<id>/clips/<edit_id>_<perfil>.mp4` (fuera de git).
   Lee el video original (nunca lo modifica) y la `snapshot` de la edición; si la edición no la trae, la arma con `fixed_file`,
   las `tracks_<video>_*.json` del tramo y `config/roster.json`. Cuadros de salida: los del video de `round(t_start·fps)` a
-  `round(t_end·fps)` sin incluirlo, y en cada pausa el cuadro de su instante repetido `round(duration_s·fps)` veces.
+  `round(t_end·fps)` sin incluirlo, y en cada pausa el cuadro de su instante repetido `round(duration_s·fps)` veces. Tras una
+  pausa, los cuadros cuentan como mínimo desde su instante, para que lo que apareció en ella no parpadee.
 - **Pizarrón:** `--board <board_id>` lee `data/boards/board_<id>.json` (el `Board` tal como lo guarda la app, exportado desde
   Pizarrón → «Exportar para video»; fuera de git) y escribe `clips/board_<id>_<perfil>.mp4` en la raíz: cancha vista desde arriba
   a 1920 x 1080 y 30 fps, 1.2 s de espera en cada paso y el movimiento en línea recta hasta el siguiente.

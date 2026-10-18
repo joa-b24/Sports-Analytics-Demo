@@ -772,7 +772,7 @@ function anonymize(data: ReportData, input: ReportInput): ReportData {
     .map(([n, c]) => [new RegExp(`(?<![\\p{L}\\p{N}])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "giu"), c] as const);
   const scrub = (s: string) => patterns.reduce((acc, [re, c]) => acc.replace(re, c), s);
   // Links and identifiers are not text: left as they are.
-  const keep = new Set(["youtube", "app", "video_id", "id", "match_id", "generated", "date", "kind", "key", "result", "source"]);
+  const keep = new Set(["youtube", "app", "video_id", "id", "match_id", "edit_id", "clip_id", "generated", "date", "kind", "key", "result", "source"]);
   const walk = (v: unknown, key?: string): unknown => {
     if (typeof v === "string") return key === "player" ? (code.get(v) ?? scrub(v)) : key && keep.has(key) ? v : scrub(v);
     if (Array.isArray(v)) return v.map((x) => walk(x));
