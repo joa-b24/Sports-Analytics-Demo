@@ -149,7 +149,8 @@ Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Track
 | `charts.tsx` | Todos los gráficos: `StatTile`, `CompareBars`, `ShotMap`, `ZoneMap`, `LineChart`, `EventTimeline`, `MiniBars`, `RateDuo`, `PartsDuo`, `BinChart`, `AcwrChart` |
 | `Locked.tsx` | Marco para lo que aún no funciona, con su motivo (falta de datos / en desarrollo / requiere tracking) |
 | `motion.tsx` | Aparición al hacer scroll (`Reveal`) y cifras que cuentan (`CountUp`) |
-| `VenueEditor.tsx` | Editor de sedes |
+| `VenueEditor.tsx` | Editor de sedes: medidas con botones −/+ para el ajuste fino (con Mayús, ×10) |
+| `SatelliteFit.tsx` | Captura satelital de la sede: medir (barra de escala, largo, ancho) y calzar el modelo encima con dos puntos; ajuste fino de posición, giro y escala (botones o flechas, Q/E, −/+). La matemática está en `lib/overlay.ts` (test: `overlay.test.mjs`) |
 | `MatchList.tsx` | Lista de partidos y alta de uno nuevo |
 | `LocalPick.tsx` | `FilePicker`: un botón con menú para abrir un archivo de la carpeta del partido (se relee al abrirlo) o «Otro archivo…» de cualquier sitio; `partLabel` |
 | `BallStrip.tsx` | Barra de dónde hay balón para animar en un tramo (posición conocida o trazada entre marcas, marcas a mano y de eventos); bajo el video de la mesa y bajo la animación de Jugadas |
