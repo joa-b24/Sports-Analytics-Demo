@@ -134,9 +134,9 @@ Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Track
 |---|---|---|---|
 | Tramos | `SegmentsTab.tsx` | Marcas de corte → tramos de juego/pausa; exporta e importa `segments.csv` | `lib/segments.ts` |
 | Etiquetado | `TagTab.tsx` | Cuatro pasadas: 1 identificar (teclas, etiqueta sobre el video, aviso de duplicado, `J` = jugada), 2 revisar uno por uno (`ReviewPanel.tsx`), 3 ejecución: destino de tiros en la portería (`GoalFrame.tsx`) y de centros y córners en la cancha; 4 pases (`PassTagger.tsx`): el número de cada jugadora que recibe, en orden, para la red de pases. Bajo el video, línea de tiempo (`VideoTimeline.tsx`) y eventos activos; abajo, la tabla con filtros (`EventsTable.tsx`) | `lib/tagging.ts`; catálogo en `lib/types.ts` |
-| Jugadas | `PlaysTab.tsx` | Jugadas y su animación: posiciones medidas si la jugada cae en una parte corregida (`tracks_fixed_*`), si no keyframes a mano | `lib/positions.ts` (`positionsAt`), `lib/stats.ts` (`interpolate`) |
+| Jugadas | `PlaysTab.tsx` | Jugadas y su animación (casilla «Balón parado»: el informe la lista en esa sección): posiciones medidas si la jugada cae en una parte corregida (`tracks_fixed_*`), si no keyframes a mano | `lib/positions.ts` (`positionsAt`), `lib/stats.ts` (`interpolate`) |
 | Análisis | `AnalysisTab.tsx` | Respuestas a las preguntas del cuerpo técnico; «Pases y jugadoras» (`PassesCards.tsx`: red de pases y tabla por jugadora, de los pases etiquetados); con posiciones medidas: forma del bloque (`TeamShape.tsx`), mapa de calor y jugadoras detrás del balón (`PositionsCards.tsx`; partes corregidas y, donde no las hay, las procesadas contadas solo por equipo) | `lib/analysis.ts`, `lib/stats.ts`, `lib/passes.ts`, `lib/positions.ts`, `lib/fixed.ts` |
-| Informe | `ReportTab.tsx` | Informe imprimible | los mismos |
+| Informe | `ReportTab.tsx` | Informe imprimible por niveles de datos (N1 eventos, N2 balón seguido, N3 tracking revisado, N4 tracking con nombres): portada con nivel, últimos resultados (de la app y escritos a mano), resumen, mapas (tiros y portería, centros con destino, duelos, pérdidas y recuperaciones en 5 carriles × 3 tercios), transiciones con enlace «ver», balón parado (con las jugadas marcadas como balón parado), patrones (pendiente), jugadoras clave, fortalezas/debilidades/plan o conclusiones, jugadas y método. Una sección sin su nivel dice qué le falta y no se imprime. «Exportar datos del reporte» descarga `report_<match_id>.json` y lo guarda en la carpeta del partido; «Sin nombres» cambia los nombres por el dorsal. Solo dibuja: todo el cálculo está en `lib/report.ts` | `lib/report.ts` (`buildReport`, `dataLevel`, `recentResults`), que usa `lib/analysis.ts` y `lib/stats.ts` (`zoneGrid5x3`) |
 
 ### 5.3 Piezas compartidas (`web/components/`)
 
@@ -323,6 +323,7 @@ python -m yt_dlp --compat-options no-certifi --js-runtimes node --remote-compone
 | El menú lateral | `NAV` en `web/components/Shell.tsx` |
 | Tipos de evento, resultados o teclas | `web/lib/types.ts` + `src/sportsan/schema.py` + `docs/data_contract.md` (los tres a la vez) |
 | Cómo se calcula una cifra de Análisis | `web/lib/analysis.ts` |
+| Qué sale en el informe, sus niveles y umbrales | `web/lib/report.ts` (`LEVEL_MIN_COVERAGE`, `NAMED_MIN`, `RECENT_N`) |
 | Umbrales de carga y ACWR | `web/lib/load.ts` |
 | Medidas o marcas de una sede | App → Configuración (o `BUILTIN_SPECS` en `web/lib/venue.ts`) |
 | Colores de uniforme | App → Corrección de tracks → Uniformes, o `jersey_colors` en `match.yaml` |

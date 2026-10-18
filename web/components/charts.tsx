@@ -139,19 +139,19 @@ export function ShotMap({ events, aLabel, bLabel }: { events: MatchEvent[]; aLab
 
 const ZONE_STEPS = 6;
 
-// 3 x 3 zone counts (thirds along the pitch x lanes across it), one hue, few to many.
-export function ZoneMap({ grid, missing }: { grid: number[][]; missing: number }) {
+// Zone counts (thirds along the pitch x lanes across it: 3 x 3, or the 5 x 3 of the report), one hue, few to many.
+export function ZoneMap({ grid, missing, showDirection = true }: { grid: number[][]; missing: number; showDirection?: boolean }) {
   const max = Math.max(0, ...grid.flat());
-  const cw = PITCH.length / 3;
-  const ch = PITCH.width / 3;
+  const cw = PITCH.length / (grid[0]?.length || 3);
+  const ch = PITCH.width / (grid.length || 3);
   return (
     <div>
-      <Pitch>
+      <Pitch showDirection={showDirection}>
         {grid.map((row, r) =>
           row.map((v, c) => {
             const step = max === 0 || v === 0 ? -1 : Math.min(ZONE_STEPS - 1, Math.floor((v / max) * (ZONE_STEPS - 1) + 0.0001));
             return (
-              <g key={`${r}-${c}`} className="a-fade" style={i(r * 3 + c)}>
+              <g key={`${r}-${c}`} className="a-fade" style={i(r * row.length + c)}>
                 <rect
                   x={c * cw + 0.5}
                   y={r * ch + 0.5}

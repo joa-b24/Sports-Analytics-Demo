@@ -83,7 +83,7 @@ Resultado de la calibración de cada frame: `n_keypoints` (visibles y confiables
 | video_id | str | no | a qué video del partido se refiere `t_video`; `v1` si solo hay uno |
 | t_video | float | no | segundos dentro de ese video |
 | period | int | no | 1 o 2 |
-| type | str | no | `shot, goal, loss, recovery, foul, corner, free_kick, throw_in, penalty, key_pass, other, final_third_entry, box_entry, goal_kick, cross` |
+| type | str | no | `shot, goal, loss, recovery, foul, corner, free_kick, throw_in, penalty, key_pass, other, final_third_entry, box_entry, goal_kick, cross, duel` |
 | team | str | no | `own`, `opp`, `ref`, `unk` |
 | player_id | str | sí | |
 | x, y | float | sí | posición del evento en metros |
@@ -104,11 +104,16 @@ Resultado de la calibración de cada frame: `n_keypoints` (visibles y confiables
 | cross | `shot`, `cleared`, `play_on` | |
 | goal_kick | `kept` (conservan el balón), `lost` | `short`, `long` |
 | recovery | | `forward`, `backward` (primer pase tras recuperar) |
+| duel | `won`, `lost` (para el equipo del evento) | `aerial`, `ground` |
 
 Las dos parejas de destino van juntas (las dos o ninguna). Un archivo sin esas columnas es válido: se anotan en la tercera
 pasada del etiquetado y casi siempre faltarán. Un tiro libre que es un centro se anota como `cross` si interesa dónde cayó.
 
 `final_third_entry` y `box_entry` no llevan resultado: si acaban en tiro se deduce de los eventos siguientes.
+
+`duel` (2026-10-17) es opcional: solo se etiqueta en los partidos donde se quiere el mapa de duelos, porque alarga la
+pasada 1. Se anota una vez por duelo, con el equipo de la jugadora que se quiere seguir y su resultado para ese equipo.
+Un partido sin duelos no tiene el mapa; no significa que no los hubo.
 
 ## `passes_<match_id>.csv` (pases etiquetados a mano, exportados desde la app; fuera del repo)
 
@@ -134,8 +139,8 @@ red de pases y de los pases por jugadora (no sale del tracking). En la app viven
 
 Viven en el navegador y se exportan como un JSON de respaldo. Los eventos usan las columnas de arriba.
 
-- **`matches`:** `match_id`, `name`, `kind` (`own`: nuestro partido, `rival`: partido de un rival, `reference`: video de referencia de otros equipos), `date`, `focus_team`, `other_team`, `youtube_id`, `report` (texto del informe por sección), `is_demo`.
-- **`plays`:** `play_id`, `match_id`, `title`, `t_start` y `t_end` (segundos de `t_video`), `note`, `keyframes`. Cada keyframe es `{t, pos}` con `t` en `t_video` y `pos` un mapa `token → [x, y]` en metros. Tokens: `o1..o11` (equipo analizado), `r1..r11` (contrario), `ball`. Entre keyframes la posición se interpola linealmente. Los keyframes puestos a mano son un esquema, no una medición.
+- **`matches`:** `match_id`, `name`, `kind` (`own`: nuestro partido, `rival`: partido de un rival, `reference`: video de referencia de otros equipos), `date`, `focus_team`, `other_team`, `youtube_id`, `report` (texto del informe por sección: `resumen`, `fortalezas`, `debilidades`, `balon_parado`, `jugadoras_clave`, `plan`; desde el 2026-10-17 también, opcionales, `conclusiones` (sustituye al plan en un partido propio), `jornada` y `results_manual`, una lista de `{date, opponent, home, goals_for, goals_against, competition}` con resultados del equipo analizado en partidos que no están en la app; un informe guardado antes los abre vacíos), `is_demo`.
+- **`plays`:** `play_id`, `match_id`, `title`, `t_start` y `t_end` (segundos de `t_video`), `note`, `keyframes`. Cada keyframe es `{t, pos}` con `t` en `t_video` y `pos` un mapa `token → [x, y]` en metros. Tokens: `o1..o11` (equipo analizado), `r1..r11` (contrario), `ball`. Entre keyframes la posición se interpola linealmente. Los keyframes puestos a mano son un esquema, no una medición. `abp` (opcional, 2026-10-17): la jugada es de balón parado y el informe la lista en esa sección.
 - **`sessions`** (entrenamientos, una fila por jugadora y sesión): `date` (AAAA-MM-DD), `session_id`, `player_id` y `metrics`, un mapa `nombre → número` con las columnas numéricas del CSV del sensor. Nombres sugeridos: `duration_min, total_distance_m, hsr_distance_m, sprints, max_speed_kmh, player_load, hr_avg, hr_max`. Celda vacía = valor faltante.
 
 - **`anchors`** (calibración manual, una fila por cuadro calibrado): `anchor_id`, `match_id`, `video_id`, `venue_id`, `frame` (índice en el video original), `t_video` (`frame / fps`), `image_w`, `image_h` y `points`, una lista de `{landmark_id, px, py}` con el punto de referencia de la sede y su posición en píxeles. La homografía no se guarda: se recalcula con los puntos. Se exportan como `anchors_<match_id>_<video_id>.json` con `schema_version` (2), `match_id`, `video_id`, `fps`, `venue` (`venue_id`, `name`, `length_m`, `width_m`) y `anchors`; en la exportación cada punto lleva además `x_m`, `y_m` (su posición en metros reales en la sede), para que Python no tenga que repetir el modelo de la sede. La versión 1 no traía esos campos y `sportsan.tracking.propagate` la rechaza.
@@ -147,6 +152,38 @@ Viven en el navegador y se exportan como un JSON de respaldo. Los eventos usan l
 - **`jerseys`**: colores de camiseta por `match_id` de la carpeta del partido, `{own, opp, ref, own_gk, opp_gk}` en `#rrggbb`. La app puede escribirlos en `jersey_colors` de `match.yaml`.
 - **`segments`** (marcas de corte del video, una fila por marca): `mark_id`, `match_id`, `video_id`, `t_video` y `tipo` (`juego`, `pausa`, `no_medible` o `fin`). Desde cada marca hasta la siguiente el video es de ese tipo; `fin` cierra el tramo anterior sin abrir otro. De ahí sale un solo `segments.csv` por partido (`web/lib/segments.ts`), con los videos en orden y la columna `video_id`; un último tramo sin cerrar no se exporta.
 - **`venues`** (sedes creadas o editadas en la app): `venue_id`, `name`, `kind` (`soccer` o `football_overlay`), `length_m`, `width_m`, `hash_far_m`, `hash_near_m`, `grid_dx_m`, `grid_dy_m`, `soccer_color`, `grid_color`. Una sede guardada con el `venue_id` de una del código la reemplaza.
+
+## `report_<match_id>.json` (datos del informe, exportados desde la app; carpeta del partido, fuera del repo)
+
+Todo lo que dibuja la pestaña Informe, calculado por `buildReport` de `web/lib/report.ts`. Lo escribe «Exportar datos del
+reporte» (descarga y, si el partido tiene carpeta, `matches/<match_id>/report_<match_id>.json`). Servirá para un visor
+estático que abra el informe sin la app. Campos principales:
+
+| Campo | Contenido |
+|---|---|
+| `version` | 1 |
+| `generated`, `anonymized` | fecha del informe; `true` si los nombres se cambiaron por el dorsal (o `J1`, `J2`... sin dorsal conocido), también en los textos libres |
+| `cover` | tipo de informe, partido, fecha, jornada, marcador (`score`, de los goles etiquetados; nulo sin eventos), `focus_team`, `other_team`, `level` |
+| `cover.level` | `level` (0 a 4), `play_s` (segundos de juego de los tramos; nulo sin tramos), `ball` y `tracking` (`{seconds, share}` del tiempo de juego), `named_share`, `label`, `next` |
+| `results` | últimos 5 resultados del equipo analizado (`V`/`E`/`D`), de la app (`source: app`) y escritos a mano (`manual`) |
+| `summary` | filas comparativas `{key, label, own, opp}` y tramos de 5 y 10 min |
+| `maps` | tiros (`goal_y`, `goal_z` si se marcaron), centros con destino, centros sin destino o sin posición por equipo, duelos (nulo si no hay) y cuadrículas 5 × 3 de pérdidas y recuperaciones |
+| `transitions` | por equipo: pérdidas → tiro del contrario y recuperaciones → tiro propio en menos de 15 s, con su momento, zona y segundos; tasas `{k, n}` |
+| `set_pieces` | córners, tiros libres, saques de meta y penales por equipo; jugadas marcadas como balón parado |
+| `texts`, `plays`, `method` | textos de la analista, jugadas para revisar y líneas del método |
+
+Un momento (`moment`) es `{video_id, t, label, minute, youtube, app}`: `t` en segundos del video, `minute` el minuto de
+juego (nulo sin tramos), `youtube` el enlace al momento (3 s antes) y `app` la ruta del reproductor de la app
+(`/partido?id=..&video=..&t=..`). En las cifras, `own` es siempre el equipo analizado (`focus_team`), también en el
+informe de un rival.
+
+**Niveles de datos.** N1 = hay eventos. N2 = balón seguido a mano en al menos el 50 % del tiempo de juego (cuenta cada
+cuadro procesado con una marca a mano o unido a una por menos de 3 s; las posiciones tomadas de los eventos no cuentan).
+N3 = además, partes revisadas en la mesa de corrección (con jugadoras de algún equipo) en al menos el 50 % del tiempo de
+juego. N4 = además, al menos el 80 % de las posiciones del equipo analizado en esas partes tienen nombre. Sin tramos de
+juego marcados no se puede medir la cobertura y el nivel se queda en N1. La cobertura se cuenta en celdas de 0.5 s por
+video: un tramo cubierto por dos archivos (una exportación unida y sus partes) cuenta una vez; un último tramo de juego sin
+cerrar no cuenta.
 
 ## Modelo de referencia de una sede (`web/lib/venue.ts`)
 

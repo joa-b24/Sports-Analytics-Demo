@@ -111,7 +111,10 @@ No pide teclas nuevas, solo cálculo:
 
 - **Pases uno a uno y posesión exacta.** Etiquetar cada pase multiplica el tiempo por partido; la posesión aproximada se puede
   estimar después con el tracking.
-- **Duelos y presión.** Dos personas rara vez coinciden en qué cuenta como duelo o como presión; sin acuerdo, el número no vale.
+- **Presión.** Dos personas rara vez coinciden en qué cuenta como presión; sin acuerdo, el número no vale.
+- **Duelos, solo como opción** (2026-10-17). Se añadió `duel` (tecla `D`, resultado ganado o perdido, detalle aéreo o en el
+  suelo) para el mapa de duelos del informe, pero no entra en el etiquetado normal: alarga mucho la pasada 1 y la duda sobre
+  qué cuenta como duelo sigue. Se etiqueta solo en los partidos donde se quiere ese mapa.
 - **Forma del bloque, superioridad numérica, distancia entre líneas.** Son de tracking (B4, C4).
 
 ### Antes de adoptarlo
@@ -120,6 +123,24 @@ No pide teclas nuevas, solo cálculo:
   analista puede sostener cada semana, se recorta empezando por los de coste medio.
 - Dos personas etiquetan el mismo tramo y se compara, tipo por tipo.
 - Cada gráfico nuevo muestra cuántos eventos hay detrás. Con menos de unos 10 no se saca conclusión.
+
+## 2b. Qué preguntas responde cada sección del informe
+
+El informe (`web/components/match/ReportTab.tsx`, cálculo en `web/lib/report.ts`) se organiza por niveles de datos
+(N1 eventos, N2 balón seguido, N3 tracking revisado, N4 tracking con nombres). Hoy, con eventos (N1):
+
+| Sección del informe | Preguntas | Nivel |
+|---|---|---|
+| 3. Resumen del juego (barras y tramos de 5 o 10 min) | A1 (tiros y a puerta), A2 y C2 (entradas al último tercio, total), A3, A5 (total), E1 (córners), F1 | N1 |
+| 4. Mapas: tiros y portería | A1, C2 (desde dónde les tiran) | N1 |
+| 4. Mapas: centros con destino | A5 | N1 |
+| 4. Mapas: pérdidas y recuperaciones, 5 carriles × 3 tercios | B1, C1 | N1 |
+| 4. Mapas: duelos (solo si se etiquetaron) | — (opcional) | N1 |
+| 5. Transiciones | B2, B3, D1, D2 | N1 |
+| 6. Balón parado | A4, E1, E2; E3 y E4 en el texto de la analista | N1 |
+| 3. Posesión y pases | — (pendiente, fase 2) | N2 |
+| 7. Patrones | A2 por 5 carriles, A4, B2, A5 por banda, B4 (pendiente, fase 3) | N1–N3 |
+| 8. Toques por jugadora | — (pendiente, fase 2) | N4 |
 
 ## 3. Cuestionarios del auxiliar (bienestar y carga)
 

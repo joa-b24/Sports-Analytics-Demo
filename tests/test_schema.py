@@ -156,3 +156,14 @@ def test_pases_invalidos(change):
     with pytest.raises(SchemaError):
         validate_passes(df)
 
+
+
+def test_duelo_con_resultado_y_detalle_es_valido(mock_dir):
+    ev = load_events(mock_dir).copy()
+    ev.loc[ev["type"] == "throw_in", "type"] = "duel"
+    ev.loc[ev["type"] == "duel", "outcome"] = "won"
+    ev.loc[ev["type"] == "duel", "detail"] = "aerial"
+    validate_events(ev)
+    ev.loc[ev["type"] == "duel", "detail"] = "long"
+    with pytest.raises(SchemaError):
+        validate_events(ev)

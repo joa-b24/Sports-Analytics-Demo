@@ -182,6 +182,10 @@ export function PlaysTab({
               <PlayIcon size={14} weight="fill" />
               Reproducir clip
             </button>
+            <label className="flex items-center gap-1.5 text-xs text-muted" title="El informe la lista en la sección de balón parado">
+              <input type="checkbox" checked={!!play.abp} onChange={(e) => patch(play.play_id, { abp: e.target.checked || undefined })} />
+              Balón parado
+            </label>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
             <span className="tc">

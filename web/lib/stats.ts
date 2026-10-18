@@ -1,4 +1,4 @@
-import { EVENT_TYPES, PITCH, type EventType, type Keyframe, type MatchEvent, type Team } from "./types";
+import { EVENT_TYPES, PITCH, type EventType, type Keyframe, type MatchEvent, type Team } from "./types.ts";
 
 // Pure functions over plain arrays: no storage, no React.
 
@@ -26,6 +26,35 @@ export function zoneCounts(events: MatchEvent[]): { grid: number[][]; missing: n
     const col = Math.min(2, Math.max(0, Math.floor(e.x / (PITCH.length / 3))));
     const row = Math.min(2, Math.max(0, Math.floor(e.y / (PITCH.width / 3))));
     grid[row][col]++;
+  }
+  return { grid, missing };
+}
+
+// 5 lanes x 3 thirds, seen by the team that does the action: as if it attacked to the right, its left wing on top.
+// Events are tagged with "own" attacking towards x = 105, so "opp" events are mirrored. Rows are lanes (0 = left wing),
+// columns are thirds (0 = where the team defends). An event right on a border goes to the next lane or third, never
+// to two. Used by the report (lib/report.ts) and the patterns.
+export const LANES_5 = ["Banda izquierda", "Intermedio izquierdo", "Centro", "Intermedio derecho", "Banda derecha"] as const;
+export const THIRDS_3 = ["Campo propio", "Medio", "Campo rival"] as const;
+
+export function laneThirdOf(e: Pick<MatchEvent, "x" | "y" | "team">): { lane: number; third: number } | null {
+  if (e.x === null || e.y === null) return null;
+  const mirror = e.team === "opp";
+  const x = mirror ? PITCH.length - e.x : e.x;
+  const y = mirror ? PITCH.width - e.y : e.y;
+  return {
+    lane: Math.min(4, Math.max(0, Math.floor(y / (PITCH.width / 5)))),
+    third: Math.min(2, Math.max(0, Math.floor(x / (PITCH.length / 3)))),
+  };
+}
+
+export function zoneGrid5x3(events: Pick<MatchEvent, "x" | "y" | "team">[]): { grid: number[][]; missing: number } {
+  const grid = [0, 1, 2, 3, 4].map(() => [0, 0, 0]);
+  let missing = 0;
+  for (const e of events) {
+    const z = laneThirdOf(e);
+    if (z) grid[z.lane][z.third]++;
+    else missing++;
   }
   return { grid, missing };
 }

@@ -19,6 +19,8 @@ const READABLE = [/^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.json$/, /^data\
 const WRITABLE = [
   /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors|labels)_[\w.-]+\.json$/,
   /^matches\/[\w.-]+\/(match\.yaml|segments\.csv)$/,
+  // Data of the report (lib/report.ts), kept next to the match; out of git (it carries player names).
+  /^matches\/[\w.-]+\/report_[\w.-]+\.json$/,
   /^config\/roster\.json$/,
 ];
 const TYPES: Record<string, string> = {

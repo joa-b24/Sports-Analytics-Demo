@@ -39,3 +39,5 @@ data/strava/
 config/roster.json
 # Pases etiquetados: llevan los nombres de la plantilla
 passes_*.csv
+# Datos del informe exportados desde la app (llevan nombres de jugadoras)
+matches/*/report_*.json

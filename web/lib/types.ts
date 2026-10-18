@@ -19,6 +19,8 @@ export const EVENT_TYPES = [
   "box_entry",
   "goal_kick",
   "cross",
+  // Optional (2026-10-17): only tagged in the matches where the duels map is wanted.
+  "duel",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -38,6 +40,7 @@ export const EVENT_LABELS: Record<EventType, string> = {
   box_entry: "Entrada al área",
   goal_kick: "Saque de meta",
   cross: "Centro",
+  duel: "Duelo",
 };
 
 // Keyboard shortcut for each event type in the tagging tool: a letter that recalls its Spanish name.
@@ -58,6 +61,7 @@ export const EVENT_KEYS: Record<EventType, string> = {
   box_entry: "i",
   goal_kick: "m",
   cross: "c",
+  duel: "d",
 };
 
 // Second datum of an event, by type. Same values as EVENT_OUTCOMES / EVENT_DETAILS in schema.py.
@@ -68,16 +72,19 @@ export const EVENT_OUTCOMES: Partial<Record<EventType, Record<string, string>>> 
   free_kick: { shot: "Remate", cleared: "Despeje", play_on: "Sigue la jugada" },
   cross: { shot: "Remate", cleared: "Despeje", play_on: "Sigue la jugada" },
   goal_kick: { kept: "La conservan", lost: "La pierden" },
+  duel: { won: "Ganado", lost: "Perdido" },
 };
 export const EVENT_DETAILS: Partial<Record<EventType, Record<string, string>>> = {
   corner: { inswing: "Cerrado", outswing: "Abierto", short: "En corto" },
   goal_kick: { short: "En corto", long: "En largo" },
   recovery: { forward: "Pase adelante", backward: "Pase atrás" },
+  duel: { aerial: "Aéreo", ground: "En el suelo" },
 };
 export const DETAIL_TITLES: Partial<Record<EventType, string>> = {
   corner: "Envío",
   goal_kick: "Salida",
   recovery: "Primer pase",
+  duel: "Tipo",
 };
 // Keys for the options of the last tagged event, in order.
 export const OUTCOME_KEYS = ["1", "2", "3"];
@@ -92,6 +99,18 @@ export const GOAL = { width: 7.32, height: 2.44 };
 // (a style the coach wants to copy, for instance); it is analysed the same way.
 export type MatchKind = "rival" | "own" | "reference";
 
+// A result of the analysed team in a match that is not in the app, written by hand in the report.
+export interface ManualResult {
+  date: string; // aaaa-mm-dd
+  opponent: string;
+  home: boolean;
+  goals_for: number;
+  goals_against: number;
+  competition: string;
+}
+
+// Texts and choices of the analyst for the report. The fields after `plan` came later (2026-10-17) and are optional:
+// reports saved before them open with their defaults (normalizeReport in lib/report.ts).
 export interface Report {
   resumen: string;
   fortalezas: string;
@@ -99,6 +118,12 @@ export interface Report {
   balon_parado: string;
   jugadoras_clave: string;
   plan: string;
+  // Match conclusions: in a report of our own match it takes the place of the match plan.
+  conclusiones?: string;
+  // Matchday of the competition ("Jornada 2"), free text.
+  jornada?: string;
+  // Results of the analysed team in matches that are not in the app.
+  results_manual?: ManualResult[];
 }
 
 export const EMPTY_REPORT: Report = {
@@ -108,6 +133,9 @@ export const EMPTY_REPORT: Report = {
   balon_parado: "",
   jugadoras_clave: "",
   plan: "",
+  conclusiones: "",
+  jornada: "",
+  results_manual: [],
 };
 
 // One video of a match. Times in events, plays and segment marks are times inside their own video.
@@ -177,6 +205,8 @@ export interface Play {
   t_end: number;
   note: string;
   keyframes: Keyframe[];
+  // A set piece (ABP): the report lists it under set pieces. Absent = no.
+  abp?: boolean;
 }
 
 export interface SessionRow {

@@ -64,14 +64,20 @@ const STATE_STYLE: Record<StepState, { dot: string; label: string }> = {
 const fileUrls = new Map<string, string>();
 
 function MatchPage() {
-  const id = useSearchParams().get("id");
+  const params = useSearchParams();
+  const id = params.get("id");
+  // A link to a moment (the report's «ver»): ?id=..&video=v2&t=754 opens that video in the tagging tab, at that time.
+  const linkVideo = params.get("video");
+  const linkT = Number(params.get("t"));
   const state = useStore();
   const hydrated = useHydrated();
   const [tab, setTab] = useState<TabId>("tag");
+  // Time to go to as soon as the player knows the length of the video (it cannot seek before).
+  const pendingSeek = useRef<number | null>(linkVideo && Number.isFinite(linkT) && linkT >= 0 ? linkT : null);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState<number | undefined>(undefined);
   const [, bump] = useState(0);
-  const [videoSel, setVideoSel] = useState("");
+  const [videoSel, setVideoSel] = useState(linkVideo ?? "");
   const [ytDraft, setYtDraft] = useState<string | null>(null);
   const [rate, setRate] = useState(1);
   const [playing, setPlaying] = useState(false);
@@ -180,6 +186,12 @@ function MatchPage() {
   const ytInput = ytDraft ?? video.youtube_id;
 
   const onTime = (t: number) => {
+    if (pendingSeek.current !== null && (playerRef.current?.getDuration() ?? 0) > 0) {
+      const to = pendingSeek.current;
+      pendingSeek.current = null;
+      playerRef.current?.seek(to);
+      return;
+    }
     if (stopAt.current !== null && t >= stopAt.current) {
       stopAt.current = null;
       playerRef.current?.pause();
@@ -513,7 +525,7 @@ function MatchPage() {
               }
             />
           )}
-          {tab === "report" && <ReportTab match={match} events={allEvents} plays={[...allPlays].sort((a, b) => videos.findIndex((v) => v.video_id === videoOf(a)) - videos.findIndex((v) => v.video_id === videoOf(b)) || a.t_start - b.t_start)} />}
+          {tab === "report" && <ReportTab match={match} events={allEvents} plays={allPlays} segmentsByVideo={segmentsByVideo} />}
         </div>
       </div>
 

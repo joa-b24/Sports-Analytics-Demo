@@ -415,6 +415,10 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
             Cada evento marcado aparece sobre el video unos segundos. Si hay otro igual del mismo equipo a menos de 3 s sale en amarillo
             como posible duplicado. Posición, jugadora y nota se ponen en la pasada 2.
           </p>
+          <p className="mt-1.5 text-[11px] text-pretty text-faint">
+            Duelos (D): etiquetarlos alarga mucho esta pasada. Hazlo solo en los partidos donde quieras su mapa en el informe; si un partido
+            no tiene duelos, el mapa no aparece.
+          </p>
         </Card>
       )}
 

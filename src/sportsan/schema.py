@@ -19,6 +19,8 @@ EVENT_TYPES = (
     "free_kick", "throw_in", "penalty", "key_pass", "other",
     # Catálogo ampliado (2026-10-11, docs/preguntas_cuerpo_tecnico.md)
     "final_third_entry", "box_entry", "goal_kick", "cross",
+    # Opcional (2026-10-17): solo en los partidos donde se quiere el mapa de duelos
+    "duel",
 )
 # Valores permitidos de `outcome` y `detail` por tipo de evento. Los dos son opcionales (nulos = no se anotó);
 # un tipo que no aparece aquí no admite ese campo.
@@ -28,11 +30,13 @@ EVENT_OUTCOMES = {
     "free_kick": ("shot", "cleared", "play_on"),
     "cross": ("shot", "cleared", "play_on"),
     "goal_kick": ("kept", "lost"),
+    "duel": ("won", "lost"),                 # del equipo del evento
 }
 EVENT_DETAILS = {
     "corner": ("inswing", "outswing", "short"),
     "goal_kick": ("short", "long"),
     "recovery": ("forward", "backward"),      # primer pase tras recuperar
+    "duel": ("aerial", "ground"),
 }
 
 # Dónde acabó la acción (2026-10-14). Columnas opcionales: si faltan o van vacías, no se anotó.

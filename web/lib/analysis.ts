@@ -60,6 +60,31 @@ export function transitions(all: MatchEvent[], team: Side): Transitions {
   return out;
 }
 
+// The moments behind B2 and D1: each loss (or recovery) of `team` and the shot that came after it within
+// SHOT_WINDOW_S (the first one). Losses are followed by a shot of the other team, recoveries by one of `team`.
+export interface TransitionMoment {
+  kind: "loss_to_shot" | "recovery_to_shot";
+  start: MatchEvent;
+  shot: MatchEvent;
+}
+
+export function transitionMoments(all: MatchEvent[], team: Side): TransitionMoment[] {
+  const events = byTime(all);
+  const out: TransitionMoment[] = [];
+  events.forEach((e, i) => {
+    if (e.team !== team || (e.type !== "loss" && e.type !== "recovery")) return;
+    const shooter = e.type === "loss" ? other(team) : team;
+    for (let j = i + 1; j < events.length && events[j].t_video - e.t_video <= SHOT_WINDOW_S; j++) {
+      const x = events[j];
+      if (x.team === shooter && isShot(x)) {
+        out.push({ kind: e.type === "loss" ? "loss_to_shot" : "recovery_to_shot", start: e, shot: x });
+        break;
+      }
+    }
+  });
+  return out;
+}
+
 export interface ShotBreakdown {
   total: number;
   goals: number;
