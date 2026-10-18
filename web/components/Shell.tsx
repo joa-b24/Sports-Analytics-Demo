@@ -11,6 +11,7 @@ import {
   House,
   Lock,
   SoccerBall,
+  Strategy,
   UsersThree,
   VideoCamera,
   type Icon,
@@ -30,6 +31,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
     items: [
       { href: "/", label: "Resumen", icon: House },
       { href: "/partidos", label: "Análisis con video", icon: VideoCamera },
+      { href: "/pizarron", label: "Pizarrón", icon: Strategy },
       { href: "/jugadoras", label: "Jugadoras", icon: UsersThree },
     ],
   },

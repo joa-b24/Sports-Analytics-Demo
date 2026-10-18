@@ -4,19 +4,22 @@ import {
   BracketsSquare,
   Play as PlayIcon,
   Plus,
+  Strategy,
   Trash,
 } from "@phosphor-icons/react";
+import { useRouter } from "next/navigation";
 import { IconButton } from "@/components/Modal";
 import { useRef, useState, type RefObject } from "react";
 import { BallStrip } from "@/components/BallStrip";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
 import { Card, btn, btnPrimary, input } from "@/components/Shell";
 import type { PlayerHandle } from "@/components/VideoPlayer";
+import { boardFromPlay, type MeasuredAt } from "@/lib/boards";
 import { useFixedParts } from "@/lib/fixed";
 import { fmtT } from "@/lib/format";
 import { partFor, positionsAt } from "@/lib/positions";
 import { TOKENS, defaultPositions, interpolate } from "@/lib/stats";
-import { mutate, setPref, uid, usePref } from "@/lib/store";
+import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
 import type { Keyframe, Match, Play } from "@/lib/types";
 
 type Props = {
@@ -57,6 +60,30 @@ export function PlaysTab({
   const measured = measuredOn && part ? positionsAt(part, time) : null;
   // What the measured animation shows: everybody, only players with a name, or only the ball.
   const show = usePref("plays:show", "all") as "all" | "named" | "ball";
+  const { roster } = useStore();
+  const router = useRouter();
+
+  // Copies the play onto the board: the measured positions when they are the ones shown, otherwise the keyframes.
+  // Tokens show the shirt number from the squad, never a name.
+  const toBoard = () => {
+    if (!play) return;
+    let measuredAt: MeasuredAt | undefined;
+    if (measuredOn && part) {
+      const people = new Map(part.file.people.map((p) => [p.id, p.player_id]));
+      const numberOf = (id: number) => {
+        const n = (roster ?? []).find((r) => r.player_id === people.get(id))?.number;
+        return n === null || n === undefined ? "" : String(n);
+      };
+      measuredAt = (t) => {
+        const m = positionsAt(part, t);
+        return m && { players: m.players.map((d) => ({ id: d.id, team: d.team, x: d.x, y: d.y, label: numberOf(d.id) })), ball: m.ball };
+      };
+    }
+    const id = uid("b");
+    const board = boardFromPlay(play, id, measuredAt);
+    mutate((s) => ({ ...s, boards: [...(s.boards ?? []), board] }));
+    router.push(`/pizarron?id=${id}`);
+  };
 
   const patch = (id: string, p: Partial<Play>) =>
     mutate((s) => ({
@@ -181,6 +208,22 @@ export function PlaysTab({
             >
               <PlayIcon size={14} weight="fill" />
               Reproducir clip
+            </button>
+            <button
+              type="button"
+              className={btn}
+              onClick={toBoard}
+              disabled={!measuredOn && kfs.length === 0}
+              title={
+                measuredOn
+                  ? "Copia las posiciones medidas al pizarrón (un paso cada 2 s) para dibujar encima y sacar láminas"
+                  : kfs.length > 0
+                    ? "Copia los keyframes al pizarrón para dibujar encima y sacar láminas"
+                    : "Añade keyframes o corrige su parte en Tracking para poder pasarla al pizarrón"
+              }
+            >
+              <Strategy size={14} />
+              Pasar al pizarrón
             </button>
             <label className="flex items-center gap-1.5 text-xs text-muted" title="El informe la lista en la sección de balón parado">
               <input type="checkbox" checked={!!play.abp} onChange={(e) => patch(play.play_id, { abp: e.target.checked || undefined })} />

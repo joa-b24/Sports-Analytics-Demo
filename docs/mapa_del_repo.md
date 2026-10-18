@@ -115,6 +115,7 @@ Cada pantalla es un archivo `web/app/<ruta>/page.tsx`. El menú lateral está en
 |---|---|---|---|
 | Resumen | `/` | `app/page.tsx` | Portada: últimos partidos y accesos |
 | Análisis con video | `/partidos` | `app/partidos/page.tsx` | Todos los videos en tres grupos: nuestros partidos, rivales y videos de referencia; alta de uno nuevo (`components/MatchList.tsx`). `/rivales` redirige aquí |
+| Pizarrón | `/pizarron?id=` | `app/pizarron/page.tsx` | Jugadas en el pizarrón: ABP diseñadas sin partido y jugadas que vienen de un partido («Pasar al pizarrón» en Jugadas). Lista filtrable por categoría (córner, tiro libre, saque de banda, salida de balón, otra) y a favor o en contra; encuadre (cancha entera o una mitad). Tres vistas: Editar (pasos, fichas y dibujos; `components/board/BoardEditor.tsx`), Animación (`BoardPlayer.tsx`) y Láminas para imprimir o guardar en PDF, de 2 a 4 pasos por página (`BoardSheets.tsx`) |
 | (al abrir un partido) | `/partido?id=` | `app/partido/page.tsx` | El partido: video, selector de video y las cinco pestañas (5.2) |
 | Jugadoras | `/jugadoras` | `app/jugadoras/page.tsx` | Plantilla (pegar lista, editar números; `components/RosterCard.tsx`) y lo que se sabe de cada jugadora. El perfil sigue bloqueado |
 | Sesiones | `/entrenamientos` | `app/entrenamientos/page.tsx` | Importa sesiones por CSV; carga, ACWR, cuestionario |
@@ -134,7 +135,7 @@ Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Track
 |---|---|---|---|
 | Tramos | `SegmentsTab.tsx` | Marcas de corte → tramos de juego/pausa; exporta e importa `segments.csv` | `lib/segments.ts` |
 | Etiquetado | `TagTab.tsx` | Cuatro pasadas: 1 identificar (teclas, etiqueta sobre el video, aviso de duplicado, `J` = jugada), 2 revisar uno por uno (`ReviewPanel.tsx`), 3 ejecución: destino de tiros en la portería (`GoalFrame.tsx`) y de centros y córners en la cancha; 4 pases (`PassTagger.tsx`): el número de cada jugadora que recibe, en orden, para la red de pases. Bajo el video, línea de tiempo (`VideoTimeline.tsx`) y eventos activos; abajo, la tabla con filtros (`EventsTable.tsx`) | `lib/tagging.ts`; catálogo en `lib/types.ts` |
-| Jugadas | `PlaysTab.tsx` | Jugadas y su animación (casilla «Balón parado»: el informe la lista en esa sección): posiciones medidas si la jugada cae en una parte corregida (`tracks_fixed_*`), si no keyframes a mano | `lib/positions.ts` (`positionsAt`), `lib/stats.ts` (`interpolate`) |
+| Jugadas | `PlaysTab.tsx` | Jugadas y su animación (casilla «Balón parado»: el informe la lista en esa sección): posiciones medidas si la jugada cae en una parte corregida (`tracks_fixed_*`), si no keyframes a mano. «Pasar al pizarrón» copia la jugada al Pizarrón (las posiciones medidas, un paso cada 2 s, o los keyframes); la jugada no cambia | `lib/positions.ts` (`positionsAt`), `lib/stats.ts` (`interpolate`) |
 | Análisis | `AnalysisTab.tsx` | Respuestas a las preguntas del cuerpo técnico; «Pases y jugadoras» (`PassesCards.tsx`: red de pases y tabla por jugadora, de los pases etiquetados); con posiciones medidas: forma del bloque (`TeamShape.tsx`), mapa de calor y jugadoras detrás del balón (`PositionsCards.tsx`; partes corregidas y, donde no las hay, las procesadas contadas solo por equipo) | `lib/analysis.ts`, `lib/stats.ts`, `lib/passes.ts`, `lib/positions.ts`, `lib/fixed.ts` |
 | Informe | `ReportTab.tsx` | Informe imprimible por niveles de datos (N1 eventos, N2 balón seguido, N3 tracking revisado, N4 tracking con nombres): portada con nivel, últimos resultados (de la app y escritos a mano), resumen, mapas (tiros y portería, centros con destino, duelos, pérdidas y recuperaciones en 5 carriles × 3 tercios), transiciones con enlace «ver», balón parado (con las jugadas marcadas como balón parado), patrones (pendiente), jugadoras clave (con toques por jugadora), fortalezas/debilidades/plan o conclusiones, jugadas y método. Una sección sin su nivel dice qué le falta y no se imprime. «Exportar datos del reporte» descarga `report_<match_id>.json` y lo guarda en la carpeta del partido; «Sin nombres» cambia los nombres por el dorsal. Con el balón seguido, posesión, pases por tercio y carril, cambios confirmados o inferidos y la red de pases leída del balón (`ReportBall.tsx`). Solo dibuja: todo el cálculo está en `lib/report.ts` | `lib/report.ts` (`buildReport`, `dataLevel`, `recentResults`), que usa `lib/analysis.ts`, `lib/stats.ts` (`zoneGrid5x3`) y `lib/positions.ts` (`ballReport`, `possessionCells`, `passNetwork`, `unnamedLeftovers`) |
 
@@ -156,6 +157,8 @@ Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Track
 | `BallStrip.tsx` | Barra de dónde hay balón para animar en un tramo (posición conocida o trazada entre marcas, marcas a mano y de eventos); bajo el video de la mesa y bajo la animación de Jugadas |
 | `Command.tsx` | `Command` (comando de terminal con botón de copiar) y `CopyButton` (copia y muestra una palomita) |
 | `Modal.tsx` | `Modal` (diálogo que se cierra con Esc o clic fuera) e `IconButton` (botón de solo icono; el texto va en el título) |
+| `board/BoardView.tsx` | El pizarrón en un momento: cancha (entera o una mitad), dibujos y fichas. Lo usan el editor, la animación y las láminas |
+| `board/BoardEditor.tsx` | Editor del pizarrón: pasos con su nota, herramientas (Mover `m`, Resaltar `r`, Flecha `f`, Línea `l`, Zona `z`, Texto `t`), color y trazo discontinuo, lista de dibujos del paso (rótulo, color, hasta qué paso dura) y fichas (dorsal o rol, quitar o poner). Un dibujo que empieza o acaba en una ficha la sigue. Flechas del teclado cambian de paso; Supr borra el dibujo elegido; en Mover, el punto medio de una flecha la curva |
 
 ### 5.4 La mesa de corrección, por zonas
 
@@ -188,6 +191,8 @@ Son funciones puras con test al lado (`<nombre>.test.mjs`). Si un número de la 
 | `store.ts` | Único acceso a los datos guardados (`useStore`, `mutate`) y preferencias de interfaz (`usePref`) | |
 | `analysis.ts` | Transiciones, tiros, carriles, entradas al área, balón parado, tramos de 5/10 min | `SHOT_WINDOW_S` (15), `COUNTERPRESS_WINDOW_S` (8) |
 | `stats.ts` | Conteos por tipo, zonas, interpolación de jugadas | |
+| `annotations.ts` | Modelo único de dibujos (pizarrón y, más adelante, video): en metros de la cancha o pegados a una ficha o identidad, nunca en píxeles; `resolve` (geometría en un momento; se oculta si falta una posición), contorno de zonas, curvas y puntas de flecha. Tipos `Annotation`, `Freeze`, `ClipEdit` | |
+| `boards.ts` | Pizarrón: posiciones de salida por categoría, pasos, encuadre, pasar una jugada al pizarrón, filtros, tamaño de las láminas | `STEP_S` (2), `BOARD_TAIL_S` (1), `MEASURED_STEP_S` (2), `SHEET` (área imprimible en mm) |
 | `load.ts` | Carga de sesión (RPE x minutos), ACWR, escalas del cuestionario | `ACUTE_DAYS` (7), `CHRONIC_DAYS` (28), `SAFE_ACWR` (0.8–1.3) |
 | `segments.ts` | Marcas → tramos → `segments.csv`; qué saltar al etiquetar (`skipTarget`) | |
 | `roster.ts` | Plantilla: leer una lista pegada, números provisionales, números repetidos | `UNKNOWN_FROM` (99) |
@@ -217,6 +222,7 @@ Todo en el `localStorage` del navegador, en la clave `sportsan:v1`, con esta for
 | `matches` | Partidos (nombre, equipos, videos, informe) | Rivales / Nuestros partidos |
 | `events` | Eventos etiquetados | pestaña Video y etiquetado |
 | `plays` | Jugadas con keyframes | pestaña Jugadas |
+| `boards` | Jugadas del pizarrón con sus pasos y dibujos | Pizarrón |
 | `segments` | Marcas de tramo | pestaña Tramos |
 | `sessions` | Sesiones de entrenamiento | Sesiones (CSV) |
 | `anchors` | Anclas de calibración | Calibración |

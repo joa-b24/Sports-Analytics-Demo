@@ -1,4 +1,5 @@
-// Mirror of docs/data_contract.md (events) plus the web-only tables (matches, plays, sessions).
+// Mirror of docs/data_contract.md (events) plus the web-only tables (matches, plays, sessions, boards).
+import type { Annotation } from "./annotations.ts";
 
 export type Team = "own" | "opp" | "ref" | "unk";
 
@@ -212,6 +213,53 @@ export interface Play {
   abp?: boolean;
 }
 
+// Kinds of board plays, each for or against us.
+export const BOARD_CATEGORIES = ["corner", "free_kick", "throw_in", "build_up", "other"] as const;
+export type BoardCategory = (typeof BOARD_CATEGORIES)[number];
+export const BOARD_CATEGORY_LABELS: Record<BoardCategory, string> = {
+  corner: "Córner",
+  free_kick: "Tiro libre",
+  throw_in: "Saque de banda",
+  build_up: "Salida de balón",
+  other: "Otra",
+};
+export type BoardSide = "for" | "against";
+export const BOARD_SIDE_LABELS: Record<BoardSide, string> = { for: "A favor", against: "En contra" };
+
+// What part of the pitch a board shows: all of it or one half (a set piece is seen better close up).
+export type BoardFraming = "full" | "right" | "left";
+export const BOARD_FRAMING_LABELS: Record<BoardFraming, string> = { full: "Cancha entera", right: "Mitad derecha", left: "Mitad izquierda" };
+
+// A piece of the board: a player (with shirt number or role) or the ball.
+export interface BoardToken {
+  id: string;
+  team: "own" | "opp" | "ball";
+  label: string;
+}
+
+// A step of a board play: positions at time t (seconds from the start of the board) and a short note for its sheet.
+export interface BoardStep extends Keyframe {
+  note?: string;
+}
+
+// A play on the board (lib/boards.ts). Without match_id it is a designed set piece; with it, it came from a play of
+// that match ("Pasar al pizarrón"), which is left as it was.
+export interface Board {
+  board_id: string;
+  title: string;
+  category: BoardCategory;
+  side: BoardSide;
+  notes: string;
+  tokens: BoardToken[];
+  keyframes: BoardStep[];
+  // Drawings anchored to tokens (`player` with the token id) or to points of the pitch.
+  annotations: Annotation[];
+  // Absent = the whole pitch.
+  framing?: BoardFraming;
+  match_id?: string;
+  play_id?: string;
+}
+
 export interface SessionRow {
   date: string;
   session_id: string;
@@ -341,6 +389,8 @@ export interface State {
   roster: RosterPlayer[];
   // Passes tagged by hand. Absent in backups made before they existed.
   passes: PassRow[];
+  // Board plays. Absent in backups made before the board existed.
+  boards: Board[];
   // Shirt colours by match_id of the match folder, as #rrggbb.
   jerseys: Record<string, { own: string; opp: string; ref: string; own_gk?: string; opp_gk?: string }>;
 }

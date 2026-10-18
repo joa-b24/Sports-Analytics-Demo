@@ -606,6 +606,15 @@ input[type="range"] {
     animation: pulse-ring 1.6s ease-out infinite;
   }
 
+  /* Dibujos del pizarrón y de los clips: entran al aparecer (flechas y líneas se trazan). */
+  .ann-in {
+    animation: fade 0.35s ease both;
+  }
+  .ann-draw {
+    stroke-dasharray: 1;
+    animation: draw 0.6s var(--ease-out-soft) both;
+  }
+
   /* Barra de avance de lectura, ligada al scroll de la página (donde el navegador lo soporta). */
   @supports (animation-timeline: scroll()) {
     .scroll-progress {
@@ -649,6 +658,8 @@ input[type="range"] {
     --color-accent-300: #2442b0;
     --color-warn: #7a4a0b;
     --color-warn-900: #fdf3e2;
+    --color-danger: #b4232f;
+    --color-ok: #1b7a43;
     --color-own: #2f55e0;
     --color-opp: #d9541e;
     --color-ball: #0b0b0b;

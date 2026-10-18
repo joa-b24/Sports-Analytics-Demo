@@ -9,7 +9,7 @@ import type { State } from "./types";
 
 const KEY = "sportsan:v1";
 
-export const EMPTY: State = { matches: [], events: [], plays: [], sessions: [], anchors: [], segments: [], venues: [], trackEdits: [], roster: [], passes: [], jerseys: {} };
+export const EMPTY: State = { matches: [], events: [], plays: [], sessions: [], anchors: [], segments: [], venues: [], trackEdits: [], roster: [], passes: [], boards: [], jerseys: {} };
 
 let state: State | null = null;
 const listeners = new Set<() => void>();
