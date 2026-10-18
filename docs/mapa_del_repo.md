@@ -50,6 +50,7 @@ npm run dev
 | `python -m sportsan.tracking.library build / locate` | `demo/` | Biblioteca de calibración |
 | `python -m sportsan.tracking.process` | `demo/` | Detección + calibración de un video |
 | `python -m sportsan.clips.render --edit <edit_*.json> --profile charla\|whatsapp` | `demo/` | Exporta a MP4 un clip con sus dibujos y pausas (en `matches/<id>/clips/`). Con `--board <id>`, una jugada del pizarrón (en `clips/`). Necesita `pip install -e ".[clips]"` y ffmpeg |
+| `python -m sportsan.clips.cut_clips --match <carpeta> [--profile ...]` | `demo/` | Corta los clips de `clips_<match_id>.json` (los editados salen con sus dibujos) en `matches/<id>/clips/` |
 | `npm run dev` | `demo/web/` | Abre la app |
 | `npm test`, `npx eslint .`, `npm run build` | `demo/web/` | Verificación de la app |
 
@@ -95,7 +96,8 @@ matches/partido_2026_09_25/
     tracking_v1_<ini>_<fin>.parquet  lo mismo en la tabla del contrato (solo personas dentro de la cancha)
     tracks_v1_index.json           lista de partes hechas con sus indicadores
   edits/              dibujos sobre el video de una jugada (edit_<id>.json, desde la app; fuera de git)
-  clips/              clips exportados a MP4 (sportsan.clips.render; fuera de git)
+  clips/              clips exportados a MP4 (sportsan.clips.render y cut_clips; fuera de git)
+  clips_<match_id>.json  lista de clips del informe (desde la app; fuera de git)
 ```
 
 `<ini>` y `<fin>` son números de cuadro del video. Para pasar a tiempo: cuadro / 29.97. Ejemplo: 59940 = 33:20.
@@ -140,7 +142,7 @@ Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Track
 | Etiquetado | `TagTab.tsx` | Cuatro pasadas: 1 identificar (teclas, etiqueta sobre el video, aviso de duplicado, `J` = jugada), 2 revisar uno por uno (`ReviewPanel.tsx`), 3 ejecución: destino de tiros en la portería (`GoalFrame.tsx`) y de centros y córners en la cancha; 4 pases (`PassTagger.tsx`): el número de cada jugadora que recibe, en orden, para la red de pases. Bajo el video, línea de tiempo (`VideoTimeline.tsx`) y eventos activos; abajo, la tabla con filtros (`EventsTable.tsx`) | `lib/tagging.ts`; catálogo en `lib/types.ts` |
 | Jugadas | `PlaysTab.tsx` | Jugadas y su animación (casilla «Balón parado»: el informe la lista en esa sección): posiciones medidas si la jugada cae en una parte corregida (`tracks_fixed_*`), si no keyframes a mano. «Pasar al pizarrón» copia la jugada al Pizarrón (las posiciones medidas, un paso cada 2 s, o los keyframes); la jugada no cambia. «Dibujar sobre el clip» abre el editor de clips (`components/clip/ClipEditor.tsx`) | `lib/positions.ts` (`positionsAt`), `lib/stats.ts` (`interpolate`) |
 | Análisis | `AnalysisTab.tsx` | Respuestas a las preguntas del cuerpo técnico; «Pases y jugadoras» (`PassesCards.tsx`: red de pases y tabla por jugadora, de los pases etiquetados); con posiciones medidas: forma del bloque (`TeamShape.tsx`), mapa de calor y jugadoras detrás del balón (`PositionsCards.tsx`; partes corregidas y, donde no las hay, las procesadas contadas solo por equipo) | `lib/analysis.ts`, `lib/stats.ts`, `lib/passes.ts`, `lib/positions.ts`, `lib/fixed.ts` |
-| Informe | `ReportTab.tsx` | Informe imprimible por niveles de datos (N1 eventos, N2 balón seguido, N3 tracking revisado, N4 tracking con nombres): portada con nivel, últimos resultados (de la app y escritos a mano), resumen, mapas (tiros y portería, centros con destino, duelos, pérdidas y recuperaciones en 5 carriles × 3 tercios), transiciones con enlace «ver», balón parado (con las jugadas marcadas como balón parado), patrones (pendiente), jugadoras clave (con toques por jugadora), fortalezas/debilidades/plan o conclusiones, jugadas y método. Una sección sin su nivel dice qué le falta y no se imprime. «Exportar datos del reporte» descarga `report_<match_id>.json` y lo guarda en la carpeta del partido; «Sin nombres» cambia los nombres por el dorsal. Con el balón seguido, posesión, pases por tercio y carril, cambios confirmados o inferidos y la red de pases leída del balón (`ReportBall.tsx`). Solo dibuja: todo el cálculo está en `lib/report.ts` | `lib/report.ts` (`buildReport`, `dataLevel`, `recentResults`), que usa `lib/analysis.ts`, `lib/stats.ts` (`zoneGrid5x3`) y `lib/positions.ts` (`ballReport`, `possessionCells`, `passNetwork`, `unnamedLeftovers`) |
+| Informe | `ReportTab.tsx` | Informe imprimible por niveles de datos (N1 eventos, N2 balón seguido, N3 tracking revisado, N4 tracking con nombres): portada con nivel, últimos resultados (de la app y escritos a mano), resumen, mapas (tiros y portería, centros con destino, duelos, pérdidas y recuperaciones en 5 carriles × 3 tercios), transiciones con enlace «ver», balón parado (con las jugadas marcadas como balón parado), patrones (pendiente), jugadoras clave (con toques por jugadora), fortalezas/debilidades/plan o conclusiones, jugadas y método. Una sección sin su nivel dice qué le falta y no se imprime. «Exportar datos del reporte» descarga `report_<match_id>.json` y lo guarda en la carpeta del partido; «Exportar lista de clips» escribe `clips_<match_id>.json` (transiciones y jugadas, con su `edit_id`) para `sportsan.clips.cut_clips`; el «ver» de un momento con clip editado lo abre en modo presentación; «Sin nombres» cambia los nombres por el dorsal. Con el balón seguido, posesión, pases por tercio y carril, cambios confirmados o inferidos y la red de pases leída del balón (`ReportBall.tsx`). Solo dibuja: todo el cálculo está en `lib/report.ts` | `lib/report.ts` (`buildReport`, `dataLevel`, `recentResults`), que usa `lib/analysis.ts`, `lib/stats.ts` (`zoneGrid5x3`) y `lib/positions.ts` (`ballReport`, `possessionCells`, `passNetwork`, `unnamedLeftovers`) |
 
 ### 5.3 Piezas compartidas (`web/components/`)
 
@@ -266,6 +268,7 @@ Consecuencias: otro navegador u otra computadora empiezan vacíos; borrar los da
 | `metrics/report.py` | Escribe `team_metrics_<video>.json` para la pestaña Análisis | sí |
 | `clips/geometry.py` | Dibujos de un clip como en la app: anclas, línea de tiempo con pausas (`frame_plan`), proyección (`pitch_to_image`, `project`), regla de 1 s, rótulos | no |
 | `clips/render.py` | Exporta a MP4 un clip editado o una jugada del pizarrón (OpenCV + Pillow + ffmpeg), perfiles `charla` y `whatsapp` | sí |
+| `clips/cut_clips.py` | Clips del informe: renderiza los que tienen edición y corta los demás tal cual | sí |
 | `mock/generate.py` | Datos falsos para probar | sí |
 
 Constantes del tracking que quizá quieras ajustar: en `stitch.py`, `MAX_GAP_S` (3), `MAX_OFFSCREEN_S` (10), `MAX_SPEED_MS` (8), `DUPLICATE_M` (1.2), `MIN_LINK_S` (1: un fragmento más corto no se une), `IMMEDIATE_MAX_COLOR` (50); en `team.py`, `MAX_COLOR_DISTANCE` (40), `TEAM_MARGIN` (1.3), `MIN_VOTES` (5), `MIN_SHARE` (0.7); en `botsort_pitch.yaml`, `new_track_thresh` (0.3) y `track_buffer` (90); en `match.yaml`, `analysis_stride` (3 = 1 de cada 3 cuadros).

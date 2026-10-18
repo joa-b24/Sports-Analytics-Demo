@@ -29,6 +29,7 @@ import {
   type TimeBins,
   type TransitionMoment,
 } from "./analysis.ts";
+import type { ClipEdit } from "./annotations.ts";
 import { fmtT, youtubeLink } from "./format.ts";
 import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, possessionCells, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
 import type { Segment } from "./segments.ts";
@@ -209,6 +210,8 @@ export interface Moment {
   youtube: string | null;
   // The moment in the app's player (local video or YouTube).
   app: string;
+  // A clip edited with drawings that covers this moment: its link opens it in presentation mode. Null when there is none.
+  edit: { edit_id: string; app: string } | null;
 }
 
 // --------------------------------------------------------------------------------------------- recent results
@@ -358,6 +361,8 @@ export interface PlayRow {
   note: string;
   moment: Moment;
   end_label: string;
+  // End of the play in its video (s).
+  t_end: number;
 }
 
 // What the followed ball gives (N2). Seconds of play; every count says on how much of the play it was read.
@@ -453,6 +458,8 @@ export interface ReportInput {
   // Events of the match, each with the time inside its own video (they are put on one axis here).
   events: MatchEvent[];
   plays: Play[];
+  // Clips edited with drawings (lib/clips.ts). Absent = none.
+  edits?: ClipEdit[];
   segmentsByVideo: Record<string, Segment[]>;
   // Corrected (tracks_fixed) or processed parts, oriented with the analysed team attacking right (lib/fixed.ts).
   parts: Oriented[];
@@ -486,7 +493,12 @@ export function buildReport(input: ReportInput): ReportData {
   const original = new Map(raw.map((e) => [e.event_id, e]));
   const hasPlay = timeline.segments.some((g) => g.tipo === "juego");
 
-  const momentAt = (video_id: string, t: number): Moment => {
+  const edits = (input.edits ?? []).filter((e) => e.match_id === match.match_id).sort((a, b) => a.t_start - b.t_start);
+  const editLink = (e: ClipEdit | undefined) =>
+    e ? { edit_id: e.edit_id, app: `/partido?id=${encodeURIComponent(match.match_id)}&edit=${encodeURIComponent(e.edit_id)}` } : null;
+  // The edited clip of a stretch of a video: the first one that overlaps it (one instant: that covers it).
+  const editOver = (video_id: string, t0: number, t1 = t0) => edits.find((e) => e.video_id === video_id && e.t_start <= t1 && e.t_end >= t0);
+  const momentAt = (video_id: string, t: number, edit = editOver(video_id, t)): Moment => {
     const pt = hasPlay ? playTime(timeline.segments, t + (timeline.offsets[video_id] ?? 0)) : null;
     const yt = ytOf(video_id);
     return {
@@ -496,6 +508,7 @@ export function buildReport(input: ReportInput): ReportData {
       minute: pt === null ? null : Math.floor(pt / 60) + 1,
       youtube: yt ? youtubeLink(yt, Math.max(0, t - 3)) : null,
       app: `/partido?id=${encodeURIComponent(match.match_id)}&video=${encodeURIComponent(video_id)}&t=${Math.max(0, Math.floor(t - 3))}`,
+      edit: editLink(edit),
     };
   };
   const momentOf = (e: MatchEvent): Moment => {
@@ -606,15 +619,21 @@ export function buildReport(input: ReportInput): ReportData {
   const transOf = (s: Side): TeamTransitions => {
     const t = transitions(events, s);
     const moments = transitionMoments(events, s);
-    const row = (m: TransitionMoment): TransitionRow => ({
+    const row = (m: TransitionMoment): TransitionRow => {
+      const start = original.get(m.start.event_id) ?? m.start;
+      const shot = original.get(m.shot.event_id) ?? m.shot;
+      // A clip edited anywhere between the loss or recovery and the shot belongs to the transition.
+      const edit = videoOf(start) === videoOf(shot) ? editOver(videoOf(start), start.t_video, shot.t_video) : editOver(videoOf(start), start.t_video);
+      return {
       id: m.start.event_id,
-      moment: momentOf(m.start),
+      moment: momentAt(videoOf(start), start.t_video, edit),
       zone: zoneLabel(m.start),
       shot: momentOf(m.shot),
       goal: m.shot.type === "goal",
       seconds: Math.round(m.shot.t_video - m.start.t_video),
       player: m.start.player_id,
-    });
+      };
+    };
     return {
       losses: moments.filter((m) => m.kind === "loss_to_shot").map(row),
       recoveries: moments.filter((m) => m.kind === "recovery_to_shot").map(row),
@@ -638,7 +657,15 @@ export function buildReport(input: ReportInput): ReportData {
       },
     };
   };
-  const playRow = (p: Play): PlayRow => ({ id: p.play_id, title: p.title, note: p.note, moment: momentAt(videoOf(p), p.t_start), end_label: fmtT(p.t_end) });
+  const playRow = (p: Play): PlayRow => ({
+    id: p.play_id,
+    title: p.title,
+    note: p.note,
+    // Its own edited clip first; otherwise any that covers its start.
+    moment: momentAt(videoOf(p), p.t_start, edits.find((e) => e.play_id === p.play_id) ?? editOver(videoOf(p), p.t_start)),
+    end_label: fmtT(p.t_end),
+    t_end: p.t_end,
+  });
   const orderedPlays = [...plays]
     .filter((p) => p.match_id === match.match_id)
     .sort((a, b) => videos.findIndex((v) => v.video_id === videoOf(a)) - videos.findIndex((v) => v.video_id === videoOf(b)) || a.t_start - b.t_start);
@@ -754,3 +781,48 @@ function anonymize(data: ReportData, input: ReportInput): ReportData {
   };
   return walk(data) as ReportData;
 }
+
+// --------------------------------------------------------------------------------------------- clips list
+
+// The clips of a report, to cut or render with `python -m sportsan.clips.cut_clips` (clips_<match_id>.json in the
+// match folder): every transition (from a little before the loss or recovery to a little after the shot) and every
+// play. A clip with `edit_id` is rendered with its drawings; the others are cut from the video as they are.
+export const CLIP_BEFORE_S = 3;
+export const CLIP_AFTER_S = 2;
+export interface ClipItem {
+  clip_id: string;
+  kind: "transition" | "play";
+  title: string;
+  video_id: string;
+  t_start: number;
+  t_end: number;
+  edit_id: string | null;
+}
+const TRANSITION_TITLES: Record<string, string> = {
+  own_losses: "Pérdida que acaba en tiro del contrario",
+  own_recoveries: "Recuperación que acaba en tiro",
+  opp_losses: "Pérdida del contrario que acaba en tiro",
+  opp_recoveries: "Recuperación del contrario que acaba en tiro",
+};
+export function clipList(data: ReportData): { kind: "clips"; match_id: string; clips: ClipItem[] } {
+  const clips: ClipItem[] = [];
+  for (const side of ["own", "opp"] as const)
+    for (const group of ["losses", "recoveries"] as const)
+      for (const r of data.transitions[side][group]) {
+        const sameVideo = r.shot.video_id === r.moment.video_id;
+        clips.push({
+          clip_id: `tr_${r.id}`,
+          kind: "transition",
+          title: `${TRANSITION_TITLES[`${side}_${group}`]} · ${r.moment.label}`,
+          video_id: r.moment.video_id,
+          t_start: Math.max(0, r.moment.t - CLIP_BEFORE_S),
+          t_end: sameVideo ? r.shot.t + CLIP_AFTER_S : r.moment.t + SHOT_WINDOW_S,
+          edit_id: r.moment.edit?.edit_id ?? null,
+        });
+      }
+  for (const p of data.plays)
+    clips.push({ clip_id: `play_${p.id}`, kind: "play", title: p.title, video_id: p.moment.video_id, t_start: p.moment.t, t_end: p.t_end, edit_id: p.moment.edit?.edit_id ?? null });
+  return { kind: "clips", match_id: data.cover.match_id, clips };
+}
+
+export const clipsFileName = (match: Pick<Match, "folder" | "match_id">) => `clips_${match.folder ?? match.match_id}.json`;

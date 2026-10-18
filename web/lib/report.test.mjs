@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildReport, dataLevel, normalizeReport, recentResults, scoreOf } from "./report.ts";
+import { buildReport, clipList, dataLevel, normalizeReport, recentResults, scoreOf } from "./report.ts";
 import { laneThirdOf, zoneGrid5x3 } from "./stats.ts";
 import { EMPTY_REPORT, EVENT_DETAILS, EVENT_KEYS, EVENT_OUTCOMES, EVENT_TYPES } from "./types.ts";
 
@@ -260,4 +260,27 @@ test("un resultado escrito a mano sin goles no cuenta como empate", () => {
   const r = normalizeReport({ results_manual: [{ date: "2026-09-01", opponent: "Equipo H", home: true, competition: "" }] });
   assert.ok(Number.isNaN(r.results_manual[0].goals_for));
   assert.equal(recentResults("Equipo A", [], r.results_manual).rows.length, 0);
+});
+
+test("«ver» abre el clip editado si existe y, si no, el tramo sin editar; la lista de clips lleva su edit_id", () => {
+  const plays = [{ play_id: "p1", match_id: "m1", video_id: "v1", title: "Salida", t_start: 600, t_end: 612, note: "", keyframes: [] }];
+  const edit = (id, t_start, t_end, extra = {}) => ({ edit_id: id, match_id: "m1", video_id: "v1", t_start, t_end, title: id, freezes: [], annotations: [], label_mode: "number", ...extra });
+  const plain = buildReport(input({ events: sample(), plays }));
+  const loss = plain.transitions.own.losses[0];
+  assert.equal(loss.moment.edit, null);
+  assert.match(loss.moment.app, /video=v1&t=97/);
+  // An edit between the loss (100) and the shot (108) belongs to the transition, even if it starts after the loss.
+  const r = buildReport(input({ events: sample(), plays, edits: [edit("c_tr", 104, 112), edit("c_play", 590, 615, { play_id: "p1" }), edit("c_otro", 600, 610, { match_id: "m2" })] }));
+  const row = r.transitions.own.losses[0];
+  assert.equal(row.moment.edit.edit_id, "c_tr");
+  assert.equal(row.moment.edit.app, "/partido?id=m1&edit=c_tr");
+  assert.equal(r.transitions.own.recoveries[0].moment.edit, null);
+  assert.equal(r.plays[0].moment.edit.edit_id, "c_play");
+  const list = clipList(r);
+  assert.equal(list.kind, "clips");
+  const tr = list.clips.find((c) => c.clip_id === `tr_${row.id}`);
+  assert.deepEqual([tr.kind, tr.video_id, tr.t_start, tr.t_end, tr.edit_id], ["transition", "v1", 97, 110, "c_tr"]);
+  const pl = list.clips.find((c) => c.clip_id === "play_p1");
+  assert.deepEqual([pl.t_start, pl.t_end, pl.edit_id], [600, 612, "c_play"]);
+  assert.equal(list.clips.filter((c) => c.edit_id === null).length, list.clips.length - 2);
 });

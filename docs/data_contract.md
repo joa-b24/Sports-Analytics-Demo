@@ -409,3 +409,22 @@ Reglas de dibujo (las mismas en la app, `web/lib/annotations.ts` y `web/lib/clip
 - Reanudable: lo que ya existe se salta salvo con `--force`; se escribe primero `*.part.mp4` y se renombra al terminar.
 - La proyección es la de la app; `tests/fixtures/projection_cases.json` trae H, puntos y dibujos con sus píxeles, y los tests
   de los dos lados (`web/lib/clips.test.mjs`, `tests/test_render.py`) deben coincidir a menos de 0.5 px.
+
+## `clips_<match_id>.json` (clips del informe, carpeta del partido, fuera de git)
+
+Lo escribe la app (Informe → «Exportar lista de clips»); lo lee `python -m sportsan.clips.cut_clips --match <carpeta>`.
+Versión mínima, hecha con el editor de clips: la fase 4 del plan de reporte puede ampliarla.
+
+| campo | descripción |
+|---|---|
+| kind, match_id | `"clips"` y la carpeta del partido |
+| clips | lista de `{clip_id, kind, title, video_id, t_start, t_end, edit_id}` |
+
+- `kind`: `transition` (de 3 s antes de la pérdida o recuperación a 2 s después del tiro; si el tiro está en otro video, 15 s) o
+  `play` (la jugada, de su inicio a su fin). `clip_id` es `tr_<event_id>` o `play_<play_id>`.
+- `edit_id`: el clip editado de ese tramo, o `null`. Una transición toma la primera edición del mismo video que se cruza con el
+  tramo entre la pérdida o recuperación y el tiro; una jugada, la suya (`play_id`) o la primera que cubre su inicio.
+  `cut_clips` la exporta con sus dibujos si `edits/edit_<id>.json` está en la carpeta; si no, corta el tramo sin dibujos y avisa.
+- Los títulos salen del informe sin nombres (como «Sin nombres»), salvo lo que la analista haya escrito en el título de una jugada.
+- En `report_<match_id>.json`, cada momento (`moment`) lleva además `edit`: `{edit_id, app}` con el enlace que abre ese clip en
+  modo presentación (`/partido?id=..&edit=..`), o `null`.

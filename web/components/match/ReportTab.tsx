@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { DownloadSimple, Printer, Plus, Trash } from "@phosphor-icons/react";
+import { DownloadSimple, FilmStrip, Printer, Plus, Trash } from "@phosphor-icons/react";
 import { BinChart, CompareBars, Legend, ZoneMap } from "@/components/charts";
 import { GoalFrame } from "@/components/match/GoalFrame";
 import { BallBlock, LeftoversList, NetworkBlock, TouchesBlock, coverageText } from "@/components/match/ReportBall";
@@ -12,7 +12,7 @@ import { BIN_MEASURES, type BinMeasure, type Rate, type Tally } from "@/lib/anal
 import { useFixedParts } from "@/lib/fixed";
 import { downloadText } from "@/lib/format";
 import { writeLocal } from "@/lib/local";
-import { buildReport, normalizeReport, reportFileName, type Gate, type Moment, type ReportData, type SetPieceSide, type TransitionRow } from "@/lib/report";
+import { buildReport, clipList, clipsFileName, normalizeReport, reportFileName, type Gate, type Moment, type ReportData, type SetPieceSide, type TransitionRow } from "@/lib/report";
 import type { Segment } from "@/lib/segments";
 import { mutate, useStore } from "@/lib/store";
 import { EVENT_DETAILS, EVENT_OUTCOMES, GOAL, type ManualResult, type Match, type MatchEvent, type Play, type Report } from "@/lib/types";
@@ -34,6 +34,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       match,
       events,
       plays,
+      edits: state.edits ?? [],
       segmentsByVideo,
       parts: fixed?.parts ?? [],
       roster: state.roster ?? [],
@@ -41,7 +42,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       anonymize,
       now: new Date().toISOString().slice(0, 10),
     });
-  const data = useMemo(() => build(false), [match, events, plays, segmentsByVideo, fixed, state.roster, state.matches, state.events]); // eslint-disable-line react-hooks/exhaustive-deps
+  const data = useMemo(() => build(false), [match, events, plays, segmentsByVideo, fixed, state.roster, state.matches, state.events, state.edits]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setReport = (p: Partial<Report>) =>
     mutate((s) => ({
@@ -56,6 +57,20 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
     downloadText(name, text, "application/json");
     const ok = match.folder ? await writeLocal(`matches/${match.folder}/${name}`, text) : false;
     setSaved(ok ? `Guardado también en matches/${match.folder}/${name}.` : `Descargado ${name}.`);
+  };
+
+  // The clips of the report for `python -m sportsan.clips.cut_clips`: next to the match when the app runs on this
+  // computer, otherwise downloaded.
+  const exportClips = async () => {
+    const name = clipsFileName(match);
+    const text = JSON.stringify(clipList(build(true)), null, 1);
+    const ok = match.folder ? await writeLocal(`matches/${match.folder}/${name}`, text) : false;
+    if (!ok) downloadText(name, text, "application/json");
+    setSaved(
+      ok
+        ? `Lista de clips guardada en matches/${match.folder}/${name}. Para cortarlos: python -m sportsan.clips.cut_clips --match ${match.folder}`
+        : `Descargada ${name}: guárdala en la carpeta del partido para cortar los clips.`,
+    );
   };
 
   const A = data.cover.focus_team;
@@ -73,6 +88,10 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
           <button type="button" className={btn} onClick={() => void exportData()}>
             <DownloadSimple size={15} />
             Exportar datos del reporte
+          </button>
+          <button type="button" className={btn} onClick={() => void exportClips()} title="Transiciones y jugadas del informe como lista de clips (los editados salen con sus dibujos)">
+            <FilmStrip size={15} />
+            Exportar lista de clips
           </button>
           <button type="button" className={btnPrimary} onClick={() => window.print()}>
             <Printer size={15} />
@@ -198,8 +217,15 @@ function TextField({ value, hint, onChange }: { value: string; hint: string; onC
   );
 }
 
-// Link to a moment: YouTube when the video has a link (it works in the PDF too), otherwise the app's player.
+// Link to a moment: its edited clip if there is one (opens in presentation mode); otherwise YouTube when the video has
+// a link (it works in the PDF too), otherwise the app's player.
 function See({ m, children = "ver" }: { m: Moment; children?: React.ReactNode }) {
+  if (m.edit)
+    return (
+      <Link className="link print:hidden" href={m.edit.app} title="Abre el clip con sus dibujos, en modo presentación">
+        {children} (clip editado)
+      </Link>
+    );
   if (m.youtube)
     return (
       <a className="link" href={m.youtube} target="_blank" rel="noreferrer">

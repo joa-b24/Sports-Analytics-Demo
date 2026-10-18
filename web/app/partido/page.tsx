@@ -20,8 +20,9 @@ import {
   X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
+import { ClipEditor } from "@/components/clip/ClipEditor";
 import { AnalysisTab } from "@/components/match/AnalysisTab";
 import { PlaysTab } from "@/components/match/PlaysTab";
 import { ReportTab } from "@/components/match/ReportTab";
@@ -68,6 +69,9 @@ function MatchPage() {
   const id = params.get("id");
   // A link to a moment (the report's «ver»): ?id=..&video=v2&t=754 opens that video in the tagging tab, at that time.
   const linkVideo = params.get("video");
+  // A link to an edited clip (the report's «ver» when the moment has one): ?id=..&edit=<edit_id> opens it presenting.
+  const linkEdit = params.get("edit");
+  const router = useRouter();
   const linkT = Number(params.get("t"));
   const state = useStore();
   const hydrated = useHydrated();
@@ -235,8 +239,13 @@ function MatchPage() {
     playerRef.current?.seek(t0, true);
   };
 
+  const presentEdit = linkEdit ? (state.edits ?? []).find((e) => e.edit_id === linkEdit && e.match_id === match.match_id) : undefined;
+
   return (
     <div>
+      {presentEdit && (
+        <ClipEditor match={match} edit={presentEdit} startPresenting onClose={() => router.replace(`/partido?id=${encodeURIComponent(match.match_id)}`, { scroll: false })} />
+      )}
       <div className="mb-5 print:hidden">
         <Link
           href="/partidos"
