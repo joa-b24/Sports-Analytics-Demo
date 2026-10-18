@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Plus, Trash } from "@phosphor-icons/react";
+import { Copy, FilmStrip, Plus, Trash } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
@@ -10,7 +10,8 @@ import { BoardSheets } from "@/components/board/BoardSheets";
 import { IconButton } from "@/components/Modal";
 import { Card, PageHeader, btn, input } from "@/components/Shell";
 import { addStep, boardsOf, filterBoards, newBoard } from "@/lib/boards";
-import { fmtT } from "@/lib/format";
+import { downloadText, fmtT } from "@/lib/format";
+import { writeLocal } from "@/lib/local";
 import { mutate, setPref, uid, useHydrated, usePref, useStore } from "@/lib/store";
 import {
   BOARD_CATEGORIES,
@@ -54,6 +55,19 @@ function BoardsPage() {
     const sd: BoardSide = side === "all" ? "for" : side;
     const n = boards.filter((b) => b.category === c && b.side === sd).length + 1;
     insert(newBoard(uid("b"), c, sd, `${BOARD_CATEGORY_LABELS[c]} ${BOARD_SIDE_LABELS[sd].toLowerCase()} ${n}`));
+  };
+
+  // The board as a file for the render (python -m sportsan.clips.render --board <id>): into data/boards/ when the app
+  // runs on this computer, otherwise downloaded.
+  const [exported, setExported] = useState<{ id: string; text: string } | null>(null);
+  const exportBoard = async (b: Board) => {
+    const name = `board_${b.board_id}.json`;
+    const text = JSON.stringify(b);
+    if (await writeLocal(`data/boards/${name}`, text)) setExported({ id: b.board_id, text: `Guardada en data/boards/${name}. Para el video: python -m sportsan.clips.render --board ${b.board_id}` });
+    else {
+      downloadText(name, text, "application/json");
+      setExported({ id: b.board_id, text: `Descargada como ${name}: guárdala en data/boards/ del repositorio para exportarla a video.` });
+    }
   };
 
   const origin = board?.match_id ? state.matches.find((m) => m.match_id === board.match_id) : undefined;
@@ -151,6 +165,9 @@ function BoardsPage() {
                     </option>
                   ))}
                 </select>
+                <IconButton label="Exportar para video (MP4 con python -m sportsan.clips.render --board)" onClick={() => void exportBoard(board)}>
+                  <FilmStrip size={14} />
+                </IconButton>
                 <IconButton label="Duplicar la jugada" onClick={() => insert({ ...structuredClone(board), board_id: uid("b"), title: `${board.title} (copia)` })}>
                   <Copy size={14} />
                 </IconButton>
@@ -166,6 +183,7 @@ function BoardsPage() {
                   <Trash size={14} />
                 </IconButton>
               </div>
+              {exported?.id === board.board_id && <p className="text-xs text-ink-2">{exported.text}</p>}
               {board.match_id && (
                 <p className="text-xs text-muted">
                   Copiada de{" "}

@@ -23,6 +23,8 @@ tracking = ["ultralytics", "supervision==0.27.0", "opencv-python-headless", "sci
 calib = ["opencv-python-headless"]
 # Detección y seguimiento de jugadoras en la laptop (CPU). OpenVINO acelera el modelo.
 detect = ["ultralytics", "openvino", "opencv-python-headless", "scipy"]
+# Exportar clips editados y jugadas del pizarrón a MP4 (sportsan.clips.render); además hace falta ffmpeg.
+clips = ["opencv-python-headless", "pillow"]
 # Bajar videos de YouTube (sportsan.ingest.download_videos).
 ingest = ["yt-dlp"]
 dev = ["pytest"]

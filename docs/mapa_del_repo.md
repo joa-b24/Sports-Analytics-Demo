@@ -49,6 +49,7 @@ npm run dev
 | `python -m sportsan.tracking.propagate --anchors ...` | `demo/` | Calibración entre anclas de un tramo. Acepta la ruta completa o solo el nombre `anchors_<partido>_<video>.json` (lo busca en `matches/*/tracking/`) |
 | `python -m sportsan.tracking.library build / locate` | `demo/` | Biblioteca de calibración |
 | `python -m sportsan.tracking.process` | `demo/` | Detección + calibración de un video |
+| `python -m sportsan.clips.render --edit <edit_*.json> --profile charla\|whatsapp` | `demo/` | Exporta a MP4 un clip con sus dibujos y pausas (en `matches/<id>/clips/`). Con `--board <id>`, una jugada del pizarrón (en `clips/`). Necesita `pip install -e ".[clips]"` y ffmpeg |
 | `npm run dev` | `demo/web/` | Abre la app |
 | `npm test`, `npx eslint .`, `npm run build` | `demo/web/` | Verificación de la app |
 
@@ -94,6 +95,7 @@ matches/partido_2026_09_25/
     tracking_v1_<ini>_<fin>.parquet  lo mismo en la tabla del contrato (solo personas dentro de la cancha)
     tracks_v1_index.json           lista de partes hechas con sus indicadores
   edits/              dibujos sobre el video de una jugada (edit_<id>.json, desde la app; fuera de git)
+  clips/              clips exportados a MP4 (sportsan.clips.render; fuera de git)
 ```
 
 `<ini>` y `<fin>` son números de cuadro del video. Para pasar a tiempo: cuadro / 29.97. Ejemplo: 59940 = 33:20.
@@ -116,7 +118,7 @@ Cada pantalla es un archivo `web/app/<ruta>/page.tsx`. El menú lateral está en
 |---|---|---|---|
 | Resumen | `/` | `app/page.tsx` | Portada: últimos partidos y accesos |
 | Análisis con video | `/partidos` | `app/partidos/page.tsx` | Todos los videos en tres grupos: nuestros partidos, rivales y videos de referencia; alta de uno nuevo (`components/MatchList.tsx`). `/rivales` redirige aquí |
-| Pizarrón | `/pizarron?id=` | `app/pizarron/page.tsx` | Jugadas en el pizarrón: ABP diseñadas sin partido y jugadas que vienen de un partido («Pasar al pizarrón» en Jugadas). Lista filtrable por categoría (córner, tiro libre, saque de banda, salida de balón, otra) y a favor o en contra; encuadre (cancha entera o una mitad). Tres vistas: Editar (pasos, fichas y dibujos; `components/board/BoardEditor.tsx`), Animación (`BoardPlayer.tsx`) y Láminas para imprimir o guardar en PDF, de 2 a 4 pasos por página (`BoardSheets.tsx`) |
+| Pizarrón | `/pizarron?id=` | `app/pizarron/page.tsx` | Jugadas en el pizarrón: ABP diseñadas sin partido y jugadas que vienen de un partido («Pasar al pizarrón» en Jugadas). Lista filtrable por categoría (córner, tiro libre, saque de banda, salida de balón, otra) y a favor o en contra; encuadre (cancha entera o una mitad). Tres vistas: Editar (pasos, fichas y dibujos; `components/board/BoardEditor.tsx`), Animación (`BoardPlayer.tsx`) y Láminas para imprimir o guardar en PDF, de 2 a 4 pasos por página (`BoardSheets.tsx`). El botón de película la guarda en `data/boards/` para exportarla a MP4 |
 | (al abrir un partido) | `/partido?id=` | `app/partido/page.tsx` | El partido: video, selector de video y las cinco pestañas (5.2) |
 | Jugadoras | `/jugadoras` | `app/jugadoras/page.tsx` | Plantilla (pegar lista, editar números; `components/RosterCard.tsx`) y lo que se sabe de cada jugadora. El perfil sigue bloqueado |
 | Sesiones | `/entrenamientos` | `app/entrenamientos/page.tsx` | Importa sesiones por CSV; carga, ACWR, cuestionario |
@@ -262,6 +264,8 @@ Consecuencias: otro navegador u otra computadora empiezan vacíos; borrar los da
 | `metrics/team_shape.py` | `team_shape`, `heatmap` sobre la tabla de tracking | no |
 | `metrics/team_blocks.py` | Forma de cada equipo por cuadro y por tramos de juego: ancho, largo, altura de línea y bloque | no |
 | `metrics/report.py` | Escribe `team_metrics_<video>.json` para la pestaña Análisis | sí |
+| `clips/geometry.py` | Dibujos de un clip como en la app: anclas, línea de tiempo con pausas (`frame_plan`), proyección (`pitch_to_image`, `project`), regla de 1 s, rótulos | no |
+| `clips/render.py` | Exporta a MP4 un clip editado o una jugada del pizarrón (OpenCV + Pillow + ffmpeg), perfiles `charla` y `whatsapp` | sí |
 | `mock/generate.py` | Datos falsos para probar | sí |
 
 Constantes del tracking que quizá quieras ajustar: en `stitch.py`, `MAX_GAP_S` (3), `MAX_OFFSCREEN_S` (10), `MAX_SPEED_MS` (8), `DUPLICATE_M` (1.2), `MIN_LINK_S` (1: un fragmento más corto no se une), `IMMEDIATE_MAX_COLOR` (50); en `team.py`, `MAX_COLOR_DISTANCE` (40), `TEAM_MARGIN` (1.3), `MIN_VOTES` (5), `MIN_SHARE` (0.7); en `botsort_pitch.yaml`, `new_track_thresh` (0.3) y `track_buffer` (90); en `match.yaml`, `analysis_stride` (3 = 1 de cada 3 cuadros).

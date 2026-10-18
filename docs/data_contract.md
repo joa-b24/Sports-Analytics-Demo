@@ -394,3 +394,18 @@ Reglas de dibujo (las mismas en la app, `web/lib/annotations.ts` y `web/lib/clip
 - La H de un cuadro sin calibración propia es la mezcla de las dos procesadas a su alrededor si están a menos de `max(2·stride, fps/2)` cuadros, o la más cercana a menos de la mitad de eso; si no, no hay H y **los dibujos sobre el césped se ocultan** (el texto en pantalla se queda).
 - Un punto de la cancha normalizada pasa a metros reales con `venue` y de ahí a píxeles con la inversa de H; el signo de la inversa se elige para que el centro de la cancha quede delante de la cámara. Flechas, zonas y el círculo a los pies se proyectan punto por punto (en perspectiva).
 - Una jugadora se sigue con sus posiciones medidas o marcadas a mano (`interpolated` no cuenta). Si no se vio durante menos de 1 s (más allá del paso normal entre cuadros procesados) se toma la recta entre donde se perdió y donde reaparece; si fue más, el dibujo atado a ella se oculta.
+
+## Clips en MP4 (`python -m sportsan.clips.render`)
+
+- **Clip editado:** `--edit matches/<id>/edits/edit_<id>.json` escribe `matches/<id>/clips/<edit_id>_<perfil>.mp4` (fuera de git).
+  Lee el video original (nunca lo modifica) y la `snapshot` de la edición; si la edición no la trae, la arma con `fixed_file`,
+  las `tracks_<video>_*.json` del tramo y `config/roster.json`. Cuadros de salida: los del video de `round(t_start·fps)` a
+  `round(t_end·fps)` sin incluirlo, y en cada pausa el cuadro de su instante repetido `round(duration_s·fps)` veces.
+- **Pizarrón:** `--board <board_id>` lee `data/boards/board_<id>.json` (el `Board` tal como lo guarda la app, exportado desde
+  Pizarrón → «Exportar para video»; fuera de git) y escribe `clips/board_<id>_<perfil>.mp4` en la raíz: cancha vista desde arriba
+  a 1920 x 1080 y 30 fps, 1.2 s de espera en cada paso y el movimiento en línea recta hasta el siguiente.
+- **Perfiles:** `charla` (hasta 1080p, H.264 CRF 18) y `whatsapp` (hasta 720p, H.264 a 1.5 Mbps, `faststart`; rotula por dorsal
+  aunque la edición diga nombre). Nunca se agranda un video más pequeño. Sin audio.
+- Reanudable: lo que ya existe se salta salvo con `--force`; se escribe primero `*.part.mp4` y se renombra al terminar.
+- La proyección es la de la app; `tests/fixtures/projection_cases.json` trae H, puntos y dibujos con sus píxeles, y los tests
+  de los dos lados (`web/lib/clips.test.mjs`, `tests/test_render.py`) deben coincidir a menos de 0.5 px.

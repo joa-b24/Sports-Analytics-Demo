@@ -145,3 +145,25 @@ test("dibujar sobre una pausa lo añade a su lista de aparición; borrarlo lo qu
   assert.deepEqual(e.annotations.map((x) => x.id), ["a2"]);
   assert.equal(normalizeEdit({ edit_id: "x" }).label_mode, "number");
 });
+
+test("los dibujos completos (círculo, flecha curva, zona y línea con jugadoras, texto) coinciden con el render de Python", () => {
+  const fx = JSON.parse(readFileSync(new URL("../../tests/fixtures/projection_cases.json", import.meta.url), "utf8"));
+  const d = fx.drawings;
+  const cam = fx.cases.find((c) => c.name === d.case);
+  const to = pitchToImage(cam.H, cam.venue);
+  const ctx = { positionOf: (id) => d.positions[String(id)] ?? null };
+  const close = (a, b, what) => assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) < fx.tolerance_px, `${what}: ${a} vs ${b}`);
+  for (const { annotation, expected } of d.items) {
+    const p = project(resolve(annotation, d.t, ctx), to, cam.image, (id) => d.labels[String(id)] ?? null);
+    assert.equal(p.closed, expected.closed, annotation.id);
+    assert.equal(p.paths.length, expected.paths.length, annotation.id);
+    p.paths.forEach((path, i) => {
+      assert.equal(path.length, expected.paths[i].length, `${annotation.id} puntos`);
+      path.forEach((q, j) => close(q, expected.paths[i][j], `${annotation.id} ${j}`));
+    });
+    assert.equal(!!p.head, !!expected.head);
+    p.head?.forEach((q, j) => close(q, expected.head[j], `${annotation.id} punta`));
+    assert.equal(p.text?.value ?? null, expected.text?.[1] ?? null, annotation.id);
+    if (p.text) close(p.text.at, expected.text[0], `${annotation.id} texto`);
+  }
+});
