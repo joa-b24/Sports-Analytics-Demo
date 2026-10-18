@@ -37,3 +37,5 @@ data/strava/
 
 # Plantilla (nombres de jugadoras): vive en la app de esta computadora, no en el repo
 config/roster.json
+# Pases etiquetados: llevan los nombres de la plantilla
+passes_*.csv

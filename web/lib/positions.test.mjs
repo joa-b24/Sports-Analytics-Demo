@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passNetwork, passesAndTurnovers, positionsAt, touches } from "./positions.ts";
+import { autoFixed, behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passNetwork, passesAndTurnovers, positionsAt, touches } from "./positions.ts";
 
 // A corrected part: 30 fps, one of every 3 frames. `at(i)` gives the positions of processed frame i.
 const fixed = ({ n = 10, people, at, ball = [] }) => ({
@@ -87,3 +87,38 @@ test("positions of a moment are joined between processed frames", () => {
   assert.ok(Math.abs(s.ball[0] - 7) < 1e-9);
   assert.equal(positionsAt({ file: f, ownRight: true }, 5), null);
 });
+
+test("the ball distance is measured in real meters of the venue", () => {
+  // On a 52.5 x 34 m venue one unit of the drawing is half a metre: 3 units away is 1.5 m, close enough to have it.
+  const f = fixed({ people: [P(1, "own")], at: () => [q(1, 20, 30)], ball: [{ frame: 0, x: 23, y: 30, source: "manual" }] });
+  assert.equal(touches(f).length, 0);
+  assert.equal(touches({ ...f, venue: { length_m: 52.5, width_m: 34 } }).length, 1);
+});
+
+test("an uncorrected part gives positions by team, box by box, without referees or people off the pitch", () => {
+  const own = [100, 128, 160];
+  const opp = [30, 128, 128];
+  const ref = [90, 100, 180];
+  const box = (track, lab, x, inside, team, ident) => [track, 0, 0, 10, 30, 0.9, ...lab, x, 30, inside, team, ident];
+  const t = {
+    match_id: "m", video_id: "v1", fps: 30, start_frame: 0, end_frame: 6, stride: 3, image_w: 100, image_h: 100,
+    venue: { length_m: 102, width_m: 66 },
+    // The shirt colour of each team is measured from the file itself: twelve frames of the three kits, then identity 7
+    // wears the other shirt (a different person for the team-level analysis).
+    frames: [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        frame: i * 3,
+        boxes: [box(1, own, 10, true, "own", 7), box(2, opp, 20, true, "opp", 8), box(3, ref, 30, true, "ref", 9), box(4, own, 40, false, "own", 10)],
+      })),
+      { frame: 36, boxes: [box(1, opp, 11, true, "opp", 7), box(2, opp, 21, true, "opp", 8)] },
+    ],
+  };
+  const f = autoFixed(t);
+  assert.equal(f.auto, true);
+  assert.deepEqual(f.frames[0].positions.length, 2);
+  const teams = new Map(f.people.map((p) => [p.id, p.team]));
+  assert.deepEqual(f.frames[12].positions.map((q) => teams.get(q.id)), ["opp", "opp"]);
+  assert.notEqual(f.frames[0].positions[0].id, f.frames[12].positions[0].id);
+  assert.deepEqual(f.venue, { length_m: 102, width_m: 66 });
+});
+

@@ -36,7 +36,8 @@ from ..config import MATCHES_DIR, project_root
 
 COLUMNS = ["match_id", "kind", "date", "own_team", "other_team", "video_id", "period", "label", "url", "note"]
 # 1080p solo imagen en mp4; si YouTube no lo ofrece, el mejor mp4 hasta 1080p.
-FORMAT = "137/bestvideo[height<=1080][ext=mp4]"
+# YouTube: 1080p solo imagen. Otros sitios (Facebook) no tienen esos formatos: lo mejor hasta 1080p.
+FORMAT = "137/bestvideo[height<=1080][ext=mp4]/best[height<=1080]/best"
 # Sin estas opciones la descarga falla en esta computadora (certificados y reto de JavaScript de YouTube).
 YTDLP_OPTS = ["--compat-options", "no-certifi", "--js-runtimes", "node", "--remote-components", "ejs:github"]
 
@@ -45,6 +46,11 @@ def youtube_id(url: str) -> str:
     """Id de 11 caracteres de un enlace de YouTube ("" si no lo es)."""
     m = re.search(r"(?:v=|youtu\.be/|shorts/|embed/|live/)([\w-]{11})", url or "")
     return m.group(1) if m else ""
+
+
+def downloadable(url: str) -> bool:
+    """Un enlace que yt-dlp puede intentar bajar: YouTube o cualquier otra página (Facebook, por ejemplo)."""
+    return bool(youtube_id(url)) or bool(re.match(r"https?://", url or ""))
 
 
 def read_registry(path: Path) -> list[dict]:
@@ -136,7 +142,7 @@ def main(argv: list[str] | None = None) -> None:
     for r in rows:
         folder = root / MATCHES_DIR / r["match_id"]
         target = folder / "video" / f"{r['video_id']}.mp4"
-        state = "descargado" if target.exists() else ("falta" if youtube_id(r["url"]) else "sin enlace")
+        state = "descargado" if target.exists() else ("falta" if downloadable(r["url"]) else "sin enlace")
         print(f"  {r['match_id']:<28} {r['video_id']:<3} {r['label'] or '-':<14} {state}")
         if state == "falta":
             todo.append((r, folder, target))

@@ -10,7 +10,7 @@ export const DUPLICATE_S = 3;
 // An event is "active" (shown over the video and highlighted) from its time until this much later (s).
 export const ACTIVE_S = 2;
 
-export type Pass = 1 | 2 | 3;
+export type Pass = 1 | 2 | 3 | 4;
 
 // Events of the same type and team within DUPLICATE_S of `e` (itself left out).
 export function duplicatesOf(events: MatchEvent[], e: Pick<MatchEvent, "event_id" | "type" | "team" | "t_video" | "video_id">): MatchEvent[] {

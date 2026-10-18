@@ -224,8 +224,25 @@ def leave_one_out(
 
 # ---------------------------------------------------------------- entrada y salida
 
+def find_anchors(path: str | Path, matches_dir: Path | None = None) -> Path:
+    """Ruta del archivo de anclas. Si no existe tal cual y es solo un nombre (anchors_<partido>_<video>.json), se busca
+    en la carpeta tracking/ de cada partido, que es donde la app lo guarda."""
+    p = Path(path)
+    if p.exists() or p.parent != Path("."):
+        return p
+    from ..config import MATCHES_DIR, project_root
+
+    hits = sorted((matches_dir or project_root() / MATCHES_DIR).glob(f"*/tracking/{p.name}"))
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        raise FileNotFoundError(f"{p.name} está en varios partidos: " + ", ".join(str(h) for h in hits) + ". Da la ruta completa.")
+    raise FileNotFoundError(f"No encuentro {p.name} ni aquí ni en matches/*/tracking/. Expórtalo desde Calibración -> Exportar anclas.")
+
+
 def read_anchors(path: str | Path) -> dict:
     """Lee el JSON de anclas exportado por la app (Calibración -> Exportar anclas)."""
+    path = find_anchors(path)
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if data.get("schema_version") != ANCHORS_SCHEMA_VERSION:
         raise ValueError(

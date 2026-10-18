@@ -468,3 +468,77 @@ Se quitó el código de los experimentos que no mejoraron (las mediciones de arr
 (método `pitch`), `tracking/learn.py`, `tracking/diagnose.py`, los métodos `stitch2` y `legacy_split` y la opción
 `--link` de `process`, y la sección del formato de tracks v4 del contrato. `evaluate` mide `file` y `legacy`; cualquier
 cambio futuro a la unión se registra ahí y se mide contra las dos partes corregidas.
+
+## Unir menos para cortar menos (2026-10-16)
+
+Hipótesis de la analista: los cortes (lo caro de corregir) salen de unir de más; con tracks más simples bastaría con unir.
+Medido contra las dos partes corregidas (uniones + cortes que harían falta a mano):
+
+| Variante | Parte de 47 s | Parte de 101 s |
+|---|---|---|
+| Unión actual | 101 + 29 | 230 + 52 |
+| Sin unir tracks entre sí | 161 + 29 | 349 + 57 |
+| Sin unir nada (tracks del seguidor tal cual) | 531 + 17 | 1079 + 41 |
+
+- Las uniones entre tracks no añaden cortes. Casi todos los cortes ocurren dentro de un mismo track (el seguidor cambia
+  de persona en un cruce, con otra a menos de 1–2 m) y el resto donde una detección suelta pega dos fragmentos.
+- Que las sueltas no unan (todas, o solo las que están en un cruce a 1–2.5 m de otra) y no rellenar huecos en cruces:
+  quitan como mucho 6 cortes y suben las uniones de 331 a entre 333 y 1500. No se adopta.
+- Seguidor más estricto (BoT-SORT `match_thresh` 0.7 o 0.6, `track_buffer` 30), volviendo a detectar las dos partes:
+  de 477 operaciones a entre 1557 y 2285; también suben los cortes (de 101 a 367–498). No se adopta.
+- Repetir la detección con la configuración actual dio 145 + 47 en la parte corta (frente a 101 + 29 del archivo
+  original): el resultado del seguidor varía según dónde empieza la parte.
+
+## Red de pases y análisis por jugadora sin corregir identidades (2026-10-16)
+
+Corregir identidades de partidos completos no es viable (unas 2 h por tramo) y no se puede automatizar con lo medido
+(ver arriba y la re-identificación). Cambio de enfoque:
+
+- **Análisis por equipo con el tracking sin corregir.** `autoFixed` (`web/lib/positions.ts`) toma cada parte procesada
+  y cuenta cada caja por la camiseta que lleva: mapa de calor, jugadoras detrás del balón y animación de jugadas
+  funcionan sin corregir nada. El primer tiempo de Anáhuac (35.6 min) carga en ~1 s; mediana de 8 propias y 7 rivales
+  a la vista por cuadro. Donde hay parte corregida, se usa esa.
+- **Identidad solo en los toques.** Pasada 4 del etiquetado: se escribe el número de cada jugadora que recibe el balón,
+  en orden; dos seguidas del mismo equipo son un pase. Tabla `passes` en el contrato. De ahí salen la red de pases y los
+  pases por jugadora, sin tracking.
+- **Carga individual:** sin sensores, la referencia es el RPE de sesión (minutos × esfuerzo percibido). La distancia en
+  video no compara jugadoras: la cámara no ve a todas el mismo tiempo.
+- Mesa: se ocultan las personas con menos del 10 % de sus cajas en la cancha y sin nombre (en la parte de 10 min,
+  233 de 1837), y un botón corta de una vez todos los cambios de camiseta sostenidos (201 en 112 personas en esa parte).
+
+## Revisión rápida por muestras (2026-10-16, en prueba)
+
+Propuesta de la analista: en vez de ver el video, nombrar a las jugadoras en cuadros de muestra y que un modelo complete
+el resto (`web/lib/quick.ts`, vista «Revisión rápida» de la mesa). Simulado contra las dos partes corregidas: una
+«analista» confirma lo que propone el modelo y corrige lo demás en cada muestra.
+
+| Variante | Números por minuto de video | Cajas bien / mal / sin nombre |
+|---|---|---|
+| Solo las nuestras, cada 3 s | 40–69 | 83–95 % / 0–1 % / 5–16 % |
+| Los dos equipos, cada 3 s | 90–140 | 89–91 % / 1 % / 8–10 % |
+| Los dos equipos, cada 5 s | 73–112 | 82–91 % / 2–3 % / 6–15 % |
+
+La mayoría de los números se van en trozos que el seguidor empieza entre dos muestras. Pendiente: probarlo a mano en
+una parte y medir el tiempo real.
+
+Modo por jugadora (`nextCheckpoint`): se para solo tras un cruce con alguien del mismo equipo (pies a menos de una altura
+de caja), un cruce de más de 1 s con una rival, una reaparición tras más de 1 s perdida o un nombre pasado por el modelo.
+Simulado igual, solo nuestras: parte de 47 s, 66 Enter + 61 clics + 24 búsquedas (~5 min), 82 % bien, 0.8 % mal; parte
+de 101 s, 142 Enter + 73 clics + 39 búsquedas (~8 min), 95 % bien, 0 % mal. Con umbral de cruce 0.6 o 0.4 hay la mitad de
+paradas pero baja a 87–89 % bien en la segunda parte: queda en 1.0.
+
+
+Puentes por trayectoria (idea de la analista): entre dos tramos de una jugadora, nombrar los trozos sin nombre cuya
+posición en la cancha cabe en el camino de un extremo al otro (2 m + 7 m/s desde el extremo más cercano, huecos de hasta
+8 s). Solo con trozos enteros dentro del hueco: ningún cambio en las dos partes. Admitiendo trozos que se salen del hueco:
++1 a 2 puntos de cajas bien en el modo por jugadora, pero puede dejar un nombre en dos cajas a la vez. No se adopta.
+
+Medido a mano por la analista (2026-10-16), en una parte de 4 min: revisión rápida por jugadora ~25 min, balón por
+muestras ~8 min, verificación en la mesa ~10 min: unos 43 min, ~11 min de trabajo por minuto de video (antes, unas
+2 h por minuto). Primer tiempo de Anáhuac: 5 de 11 partes completas al medirlo.
+
+Ajustes tras el uso real (2026-10-17): los huecos se separan en «por revisar» (en medio de la imagen, más de 2 s o
+imposibles) y «fuera de cuadro» (en el borde de la imagen al perderla o al encontrarla, `offCamera`); al guardar se
+rellenan todos los huecos con una recta, por largos que sean, para poder medir la distancia total; y elegir la caja
+correcta entre dos de la misma persona separa solo el tramo continuo de la otra (`separateRun`), no su track entero.
+Medido por la analista: la parte de 10 min llevó ~2 h de revisión rápida y verificación, sin el balón.

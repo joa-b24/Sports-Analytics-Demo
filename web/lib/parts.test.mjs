@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ballPath, eventBall, hasCorrections, joinParts, manualBall, measuredPaths, pixelToPitch } from "./parts.ts";
+import { ballCoverage, ballPath, eventBall, hasCorrections, joinParts, manualBall, measuredPaths, pixelToPitch } from "./parts.ts";
 import { editsKey, emptyEdits, setBall, setPerson, setRemoved } from "./tracks.ts";
 
 const LAB = [100, 128, 128];
@@ -82,3 +82,36 @@ test("names join people across parts that are not in a row; parts that do not be
   assert.equal(hasCorrections(E(p1)), false);
   assert.equal(hasCorrections(name(p1, 1)), true);
 });
+
+test("a tagged event is only used as ball where there is no hand mark within 3 s", () => {
+  const m = (frame, x) => ({ frame, x, y: 10, source: "manual" });
+  const ev = (frame, x) => ({ frame, x, y: 50, source: "event" });
+  // Marks at 0 and 60 (2 s apart, joined by a line); an event at 30 would pull the ball 40 m off that line.
+  const path = ballPath([m(0, 10), ev(30, 40), m(60, 20), ev(600, 70)], 30, 3);
+  const at = (f) => path.find((b) => b.frame === f);
+  assert.equal(at(30).source, "interpolated");
+  assert.ok(Math.abs(at(30).y - 10) < 1e-9);
+  assert.equal(at(600).source, "event");
+});
+
+test("ball coverage: marks and the lines between them, out of play left out, and where it is missing", () => {
+  // 30 fps, 1 of 3 frames, 10 s. Marks every second for the first 4 s, the ball out from 4 to 6 s, nothing after.
+  const marks = [0, 30, 60, 90, 120];
+  const r = ballCoverage({ marks, out: [150], from: 0, to: 300, fps: 30, stride: 3, outHalf: 30 });
+  assert.deepEqual(r.missing, [[180, 300]]);
+  assert.ok(Math.abs(r.share - (1 - 120 / 240)) < 0.02);
+  assert.equal(ballCoverage({ marks: [...marks, 180, 210, 240, 270, 300], out: [150], from: 0, to: 300, fps: 30, stride: 3, outHalf: 30 }).missing.length, 0);
+});
+
+test("a line drawn by hand joins two marks whatever the time between them, and covers its stretch", () => {
+  const m = (frame, x) => ({ frame, x, y: 10, source: "manual" });
+  // 6 s between where it leaves and where it lands: too long for the automatic line, joined by hand.
+  const pts = [m(0, 10), m(180, 70)];
+  assert.equal(ballPath(pts, 30, 3).length, 2);
+  const linked = ballPath(pts, 30, 3, 3, [{ from: 0, to: 180 }]);
+  assert.equal(linked.length, 61);
+  assert.ok(Math.abs(linked.find((b) => b.frame === 90).x - 40) < 1e-9);
+  const cov = ballCoverage({ marks: [0, 180], out: [], from: 0, to: 180, fps: 30, stride: 3, outHalf: 15, links: [{ from: 0, to: 180 }] });
+  assert.deepEqual(cov.missing, []);
+});
+

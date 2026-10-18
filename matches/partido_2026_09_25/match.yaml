@@ -21,6 +21,18 @@ videos:
     # Colores como los mide el programa (mediana del torso; sale más apagado que el color elegido sobre el video).
     # Los elegidos en la app eran own "#084b9f", opp "#020202", ref "#d9f84d": el azul quedaba al límite (39 de 40).
     jersey_colors: {own: "#5c5a72", own_gk: "#d84242", opp: "#261f18", opp_gk: "#ff9a58", ref: "#c4d581"}
+  - video_id: v3
+    period: 2
+    label: "2.do tiempo (parte 2)"
+    youtube_id: "3RkiPUQb-lM"
+    file: video/v3.mp4
+    fps: 29.97003
+  - video_id: v2
+    period: 2
+    label: "2.do tiempo (parte 1)"
+    youtube_id: "mqG87vxhqBc"
+    file: video/v2.mp4
+    fps: 29.97003
   # - video_id: v2              # segundo tiempo: pendiente
   #   period: 2
   #   youtube_id: "REEMPLAZAR"

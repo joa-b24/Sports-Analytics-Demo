@@ -265,8 +265,28 @@ export interface TrackEdits {
   dropped?: { track: number; frame: number }[];
   // Ball marked by hand on the video (pixels), one per frame. Absent in older edits.
   ball?: { frame: number; px: number; py: number }[];
+  // Two ball marks joined by a straight line whatever the time between them: a long pass or a ball in the air, marked
+  // only where it leaves and where it lands.
+  ballLinks?: { from: number; to: number }[];
   // Pairs of identities rejected as "the same person" (suggestions declined in the table). Absent in older edits.
   rejected?: [number, number][];
+  // Quick review (lib/quick.ts): names given on sample frames, and the samples already gone through.
+  quick?: { labels: { frame: number; track: number; name: string; team?: "own" | "opp" }[]; seen: number[]; done?: string[] };
+  // Ball review by samples: every how many seconds, and the sample frames already gone through (ball marked or not seen).
+  ballReview?: { every: number; seen: number[] };
+}
+
+// A pass tagged by hand (pass 4 of the tagging): who to whom. to_id is null when it did not reach a teammate.
+export interface PassRow {
+  pass_id: string;
+  match_id: string;
+  video_id: string;
+  t_video: number;
+  period: 1 | 2;
+  team: "own" | "opp";
+  from_id: string;
+  to_id: string | null;
+  outcome: "complete" | "incomplete";
 }
 
 // A player of our squad. player_id is the name used everywhere (events, tracks, sessions); the number can change.
@@ -286,6 +306,8 @@ export interface State {
   trackEdits: TrackEdits[];
   // Our squad. Absent in backups made before it existed.
   roster: RosterPlayer[];
+  // Passes tagged by hand. Absent in backups made before they existed.
+  passes: PassRow[];
   // Shirt colours by match_id of the match folder, as #rrggbb.
   jerseys: Record<string, { own: string; opp: string; ref: string; own_gk?: string; opp_gk?: string }>;
 }

@@ -1,14 +1,14 @@
 "use client";
 
 import { ArrowsSplit, Eraser, MagnifyingGlassMinus, MagnifyingGlassPlus, Scissors, X } from "@phosphor-icons/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { btn } from "@/components/Shell";
 import { fmtT } from "@/lib/format";
 import type { TeamCode } from "@/lib/tracks";
 
 // The line of the selected person under the video: one mark per processed frame where she has a box, coloured by the
 // shirt of that box (so a change of team shows), her holes, the frames with two boxes, and the playhead. Click to go
-// to a moment; drag to choose a stretch and leave its boxes out, take it out as another person, or split there.
+// to a moment; feet marked by hand are white ticks and the holes the export will leave empty are red. Drag to choose a stretch and leave its boxes out, take it out as another person, or split there.
 
 export interface TimelinePoint {
   frame: number;
@@ -22,6 +22,9 @@ export function PersonTimeline({
   points,
   conflicts,
   hints,
+  manual = [],
+  open = [],
+  offCamera = [],
   start,
   end,
   frame,
@@ -37,6 +40,11 @@ export function PersonTimeline({
   conflicts: number[];
   // Frames worth a look (changes of shirt).
   hints: number[];
+  // Frames where her feet were marked by hand, and holes that will stay empty on export.
+  manual?: number[];
+  open?: [number, number][];
+  // Holes where she left the frame: nothing to fix, filled on export.
+  offCamera?: [number, number][];
   start: number;
   end: number;
   frame: number;
@@ -51,6 +59,39 @@ export function PersonTimeline({
   const [zoom, setZoom] = useState(end - start > 60 * fps);
   const [range, setRange] = useState<[number, number] | null>(null);
   const drag = useRef<{ from: number; moved: boolean } | null>(null);
+  // Ctrl + arrows choose a stretch from the frame on screen: the first press fixes one end there, the next ones move
+  // the other end one processed frame (with Shift, one second) and the video follows it. Esc lets it go.
+  const kb = useRef<{ anchor: number; edge: number } | null>(null);
+  const keys = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  useEffect(() => {
+    keys.current = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && range) {
+        // Only the stretch goes; the selected player stays.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        kb.current = null;
+        setRange(null);
+        return;
+      }
+      if (!(e.ctrlKey || e.metaKey) || (e.key !== "ArrowRight" && e.key !== "ArrowLeft")) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && !["range", "checkbox"].includes((el as HTMLInputElement).type)))) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const here = Math.round(frame / stride) * stride;
+      const cur = kb.current && range ? kb.current : { anchor: here, edge: here };
+      const step = (e.shiftKey ? Math.round(fps / stride) * stride : stride) * (e.key === "ArrowRight" ? 1 : -1);
+      const edge = Math.min(end, Math.max(start, cur.edge + step));
+      kb.current = { anchor: cur.anchor, edge };
+      setRange([Math.min(cur.anchor, edge), Math.max(cur.anchor, edge)]);
+      onSeek(edge);
+    };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keys.current(e);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
   const half = Math.round(WINDOW_S * fps);
   const v0 = zoom ? Math.max(start, Math.min(frame - half, end - 2 * half)) : start;
   const v1 = zoom ? Math.min(end, v0 + 2 * half) : end;
@@ -75,7 +116,7 @@ export function PersonTimeline({
     <div className="rounded-2xl bg-surface/70 p-3">
       <div className="mb-2 flex items-center gap-2 text-[11px] text-muted">
         <span className="text-ink-2">Línea de la seleccionada</span>
-        <span className="hidden sm:inline">clic: ir · arrastrar: elegir un tramo</span>
+        <span className="hidden sm:inline">clic: ir · arrastrar o Ctrl + flechas (Mayús: de 1 s): elegir un tramo · Esc: soltarlo</span>
         <span className="tc ml-auto">
           {fmtT(v0 / fps)} – {fmtT(v1 / fps)}
         </span>
@@ -95,6 +136,7 @@ export function PersonTimeline({
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
           drag.current = { from: at(e), moved: false };
+          kb.current = null;
         }}
         onPointerMove={(e) => {
           if (!drag.current) return;
@@ -125,6 +167,31 @@ export function PersonTimeline({
             }}
           />
         ))}
+        {offCamera
+          .filter(([a, b]) => b >= v0 && a <= v1)
+          .map(([a, b]) => (
+            <span
+              key={`o${a}`}
+              className="absolute top-4 bottom-4 rounded-sm bg-faint/40"
+              style={{ left: `${pct(a + stride)}%`, width: `max(2px, ${pct(b) - pct(a + stride)}%)` }}
+              title={`Fuera de cuadro ${((b - a) / fps).toFixed(1)} s: se rellena al guardar`}
+            />
+          ))}
+        {open
+          .filter(([a, b]) => b >= v0 && a <= v1)
+          .map(([a, b]) => (
+            <span
+              key={`g${a}`}
+              className="absolute top-4 bottom-4 rounded-sm bg-danger/60"
+              style={{ left: `${pct(a + stride)}%`, width: `max(2px, ${pct(b) - pct(a + stride)}%)` }}
+              title={`Hueco de ${((b - a) / fps).toFixed(1)} s que quedará vacío`}
+            />
+          ))}
+        {manual
+          .filter((f) => f >= v0 && f <= v1)
+          .map((f) => (
+            <span key={`m${f}`} className="absolute top-1.5 bottom-1.5 w-[3px] -translate-x-1/2 rounded-full bg-white" style={{ left: `${pct(f)}%` }} title="Marcada a mano" />
+          ))}
         {conflicts
           .filter((f) => f >= v0 && f <= v1)
           .map((f) => (
@@ -142,7 +209,7 @@ export function PersonTimeline({
       </div>
       <div className="tc mt-1 flex justify-between text-[10px] text-faint">
         <span>{fmtT(v0 / fps)}</span>
-        <span className="font-sans">color = camiseta de cada caja · rojo arriba: dos cajas a la vez · ámbar abajo: cambio de camiseta</span>
+        <span className="font-sans">color = camiseta · blanco: marca a mano · rojo en medio: hueco por revisar · gris: fuera de cuadro · rojo arriba: dos cajas · ámbar abajo: cambio de camiseta</span>
         <span>{fmtT(v1 / fps)}</span>
       </div>
       {range && (

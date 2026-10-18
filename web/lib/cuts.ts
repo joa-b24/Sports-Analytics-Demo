@@ -122,6 +122,22 @@ function reachable(a: Obs, b: Obs, fps: number): boolean {
 
 // Apply a hint: a jump or a team change splits the person there; an excursion is taken out as a person of its own,
 // and she goes on as herself after it.
+// Every change of shirt cut at once. Each person is cut from her last change backwards, so the earlier changes still
+// belong to her when their turn comes (a cut gives what follows to a new identity). Measured on the corrected parts:
+// 5 of 6 of these were real changes of person.
+export function applyTeamCuts(edits: TrackEdits, file: TracksFile, hints: CutHint[]): { edits: TrackEdits; cuts: number } {
+  let out = edits;
+  let cuts = 0;
+  const team = hints.filter((h) => h.kind === "team").sort((a, b) => a.person - b.person || b.frame - a.frame);
+  for (const h of team) {
+    const r = splitPerson(out, h.person, h.frame, file);
+    if (!r) continue;
+    out = r.edits;
+    cuts += 1;
+  }
+  return { edits: out, cuts };
+}
+
 export function applyHint(edits: TrackEdits, file: TracksFile, h: CutHint): TrackEdits {
   const first = splitPerson(edits, h.person, h.frame, file);
   if (!first) return edits;

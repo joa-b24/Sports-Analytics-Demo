@@ -8,6 +8,7 @@ import {
 } from "@phosphor-icons/react";
 import { IconButton } from "@/components/Modal";
 import { useRef, useState, type RefObject } from "react";
+import { BallStrip } from "@/components/BallStrip";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
 import { Card, btn, btnPrimary, input } from "@/components/Shell";
 import type { PlayerHandle } from "@/components/VideoPlayer";
@@ -15,7 +16,7 @@ import { useFixedParts } from "@/lib/fixed";
 import { fmtT } from "@/lib/format";
 import { partFor, positionsAt } from "@/lib/positions";
 import { TOKENS, defaultPositions, interpolate } from "@/lib/stats";
-import { mutate, uid } from "@/lib/store";
+import { mutate, setPref, uid, usePref } from "@/lib/store";
 import type { Keyframe, Match, Play } from "@/lib/types";
 
 type Props = {
@@ -54,6 +55,8 @@ export function PlaysTab({
       : null;
   const measuredOn = part !== null && source === "measured";
   const measured = measuredOn && part ? positionsAt(part, time) : null;
+  // What the measured animation shows: everybody, only players with a name, or only the ball.
+  const show = usePref("plays:show", "all") as "all" | "named" | "ball";
 
   const patch = (id: string, p: Partial<Play>) =>
     mutate((s) => ({
@@ -244,6 +247,21 @@ export function PlaysTab({
                   ))}
                 </div>
               )}
+              {measuredOn && (
+                <div className="seg">
+                  {(
+                    [
+                      ["all", "Todas"],
+                      ["named", "Con nombre"],
+                      ["ball", "Solo balón"],
+                    ] as const
+                  ).map(([k, label]) => (
+                    <button key={k} type="button" aria-pressed={show === k} className="seg-opt" onClick={() => setPref("plays:show", k)}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {!measuredOn && (
                 <>
                   <button type="button" className={btn} onClick={addKeyframe}>
@@ -288,7 +306,9 @@ export function PlaysTab({
             <p className="mb-2 text-xs text-muted">
               {measuredOn
                 ? measured
-                  ? "Posiciones medidas por el tracking corregido, sincronizadas con el video. Solo salen las jugadoras que se ven en cuadro."
+                  ? part?.file.auto
+                    ? "Posiciones medidas por el tracking, sin corregir: el equipo sale de la camiseta de cada caja y no hay nombres. Solo salen las jugadoras que se ven en cuadro."
+                    : "Posiciones medidas por el tracking corregido, sincronizadas con el video. Solo salen las jugadoras que se ven en cuadro."
                   : "El video está fuera de la parte corregida: pon el clip para ver las posiciones."
                 : kfs.length === 0
                   ? "Pausa el video en un momento clave y añade un keyframe: coloca a las jugadoras arrastrándolas. Con dos o más, la app interpola el movimiento y lo sincroniza con el clip."
@@ -310,7 +330,7 @@ export function PlaysTab({
             >
               {measured && (
                 <>
-                  {measured.players.map((d) => (
+                  {measured.players.filter((d) => show === "all" || (show === "named" && d.label)).map((d) => (
                     <g
                       key={d.id}
                       transform={`translate(${d.x} ${d.y})`}
@@ -399,6 +419,18 @@ export function PlaysTab({
                   );
                 })}
             </Pitch>
+            {measuredOn && part && play && (
+              <BallStrip
+                className="mt-2"
+                points={part.file.ball}
+                from={Math.round(play.t_start * part.file.fps)}
+                to={Math.round(play.t_end * part.file.fps)}
+                frame={Math.round(time * part.file.fps)}
+                stride={part.file.stride}
+                fps={part.file.fps}
+                onSeek={(f) => playerRef.current?.seek(f / part.file.fps)}
+              />
+            )}
             <div className="mt-1 flex flex-wrap gap-4 text-xs text-muted">
               <span className="inline-flex items-center gap-1.5">
                 <span
@@ -423,7 +455,7 @@ export function PlaysTab({
               </span>
               <span className="text-faint">
                 {measuredOn
-                  ? `Medidas, con ${match.focus_team} atacando hacia la derecha${part?.dir === "inferred" ? " (dirección deducida)" : ""}.`
+                  ? `Medidas${part?.file.auto ? " (sin corregir)" : ""}, con ${match.focus_team} atacando hacia la derecha${part?.dir === "inferred" ? " (dirección deducida)" : ""}.`
                   : part
                     ? "Posiciones colocadas a mano: son un esquema, no una medición."
                     : "Posiciones colocadas a mano: son un esquema. Esta jugada no cae en una parte corregida; si la corriges y guardas en Tracking, saldrá medida."}

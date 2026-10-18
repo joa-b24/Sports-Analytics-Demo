@@ -3,6 +3,7 @@
 //
 // Everything here only counts what the camera saw: a player out of frame is not absent, just not seen. Positions
 // filled inside short holes ("interpolated") are left out of the counts; they are not measurements.
+import { boxTeamOf, fileTeamRefs, type TracksFile } from "./tracks.ts";
 import { PITCH, type MatchEvent } from "./types.ts";
 
 export type FixedTeam = "own" | "opp" | "ref" | "unk";
@@ -20,6 +21,10 @@ export interface FixedFile {
   start_frame: number;
   end_frame: number;
   stride: number;
+  // Built from a part nobody corrected (autoFixed): teams are right box by box, identities are the program's.
+  auto?: boolean;
+  // Real size of the venue (m). Absent in files saved before 2026-10-16: then the loader takes it from match.yaml.
+  venue?: { length_m: number; width_m: number } | null;
   people: { id: number; team: FixedTeam; player_id: string | null; tracks: number[] }[];
   ball: { frame: number; x: number; y: number; source: string }[];
   frames: { frame: number; positions: FixedPosition[] }[];
@@ -36,6 +41,41 @@ export function parseFixed(text: string): FixedFile | null {
   }
 }
 
+// A processed part that nobody corrected, as positions by team. The team is read box by box from its shirt (as in the
+// correction table), so a program identity that passes from one team to the other is split in two: team-level
+// analysis (heat maps, players behind the ball, the animation) is right even if who is who is not. People off the
+// pitch and referees are left out. No names, so nothing here enters a pass network.
+const TEAM_SLOT: Record<string, number> = { own: 1, opp: 2 };
+export function autoFixed(t: TracksFile): FixedFile {
+  const refs = fileTeamRefs(t);
+  const teamOf = new Map<number, FixedTeam>();
+  const frames = t.frames.map((fr) => ({
+    frame: fr.frame,
+    positions: fr.boxes.flatMap((b) => {
+      if (!b[11] || b[9] === null || b[10] === null) return [];
+      const team = boxTeamOf(b, refs);
+      if (team !== "own" && team !== "opp") return [];
+      const id = (b[13] ?? b[0]) * 4 + TEAM_SLOT[team];
+      teamOf.set(id, team);
+      return [{ id, x: b[9], y: b[10], source: "auto" }];
+    }),
+  }));
+  return {
+    kind: "tracks_fixed",
+    auto: true,
+    match_id: t.match_id,
+    video_id: t.video_id,
+    fps: t.fps,
+    start_frame: t.start_frame,
+    end_frame: t.end_frame,
+    stride: t.stride,
+    venue: t.venue?.length_m && t.venue?.width_m ? { length_m: t.venue.length_m, width_m: t.venue.width_m } : null,
+    people: [...teamOf].map(([id, team]) => ({ id, team, player_id: null, tracks: [] })),
+    ball: [],
+    frames,
+  };
+}
+
 // --------------------------------------------------------------------------------------------- direction of play
 
 // Whether the analysed team ("own") attacks towards x = 105 in the pitch of this part. Inferred from where each
@@ -43,18 +83,21 @@ export function parseFixed(text: string): FixedFile | null {
 // are not seen enough, or sit too close to tell (then it has to be said by hand in the correction table).
 export const ATTACK_MIN_SAMPLES = 200;
 export const ATTACK_MIN_DIFF_M = 4;
-export function inferOwnAttacksRight(f: FixedFile): boolean | null {
-  const team = new Map(f.people.map((p) => [p.id, p.team]));
+// Several parts of the same video can be passed together (a video is one half: the direction does not change in it).
+export function inferOwnAttacksRight(files: FixedFile | FixedFile[]): boolean | null {
   const sum = { own: 0, opp: 0 };
   const n = { own: 0, opp: 0 };
-  for (const fr of f.frames)
-    for (const q of fr.positions) {
-      const t = team.get(q.id);
-      if ((t === "own" || t === "opp") && q.source !== "interpolated") {
-        sum[t] += q.x;
-        n[t] += 1;
+  for (const f of Array.isArray(files) ? files : [files]) {
+    const team = new Map(f.people.map((p) => [p.id, p.team]));
+    for (const fr of f.frames)
+      for (const q of fr.positions) {
+        const t = team.get(q.id);
+        if ((t === "own" || t === "opp") && q.source !== "interpolated") {
+          sum[t] += q.x;
+          n[t] += 1;
+        }
       }
-    }
+  }
   if (n.own < ATTACK_MIN_SAMPLES || n.opp < ATTACK_MIN_SAMPLES) return null;
   const diff = sum.opp / n.opp - sum.own / n.own;
   return Math.abs(diff) < ATTACK_MIN_DIFF_M ? null : diff > 0;
@@ -65,6 +108,14 @@ export interface Oriented {
   file: FixedFile;
   ownRight: boolean;
 }
+// Real meters per unit of the normalised pitch, along x and y. Without the venue size, 1 (an error of a few percent).
+export const metersPerUnit = (f: FixedFile): [number, number] =>
+  f.venue?.length_m && f.venue?.width_m ? [f.venue.length_m / PITCH.length, f.venue.width_m / PITCH.width] : [1, 1];
+const realDistance = (f: FixedFile, ax: number, ay: number, bx: number, by: number) => {
+  const [mx, my] = metersPerUnit(f);
+  return Math.hypot((ax - bx) * mx, (ay - by) * my);
+};
+
 export const orient = (o: Oriented, x: number, y: number): [number, number] => (o.ownRight ? [x, y] : [PITCH.length - x, PITCH.width - y]);
 
 // --------------------------------------------------------------------------------------------- heat maps
@@ -113,8 +164,8 @@ export function namedPlayers(parts: Oriented[], team: "own" | "opp"): { name: st
 
 // --------------------------------------------------------------------------------------------- ball and passes
 
-// A player has the ball when she is the nearest one to it and within this distance (m). Calibration noise is around
-// a metre, so tighter than this loses real touches.
+// A player has the ball when she is the nearest one to it and within this distance, in real meters of the venue (not
+// units of the 105 x 68 drawing). Calibration noise is around a metre, so tighter than this loses real touches.
 export const POSSESS_M = 2;
 // Two consecutive holders of the same team are a pass when the ball goes from one to the other within this time (s).
 export const PASS_MAX_S = 5;
@@ -135,7 +186,7 @@ export function touches(f: FixedFile): Touch[] {
     const ps = byFrame.get(b.frame);
     if (!ps) continue;
     const near = ps
-      .map((q) => ({ q, t: team.get(q.id), d: Math.hypot(q.x - b.x, q.y - b.y) }))
+      .map((q) => ({ q, t: team.get(q.id), d: realDistance(f, q.x, q.y, b.x, b.y) }))
       .filter((c) => (c.t === "own" || c.t === "opp") && c.d <= POSSESS_M)
       .sort((a, c) => a.d - c.d);
     if (near.length === 0) continue;

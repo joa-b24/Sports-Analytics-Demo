@@ -1,4 +1,4 @@
-from sportsan.ingest.download_videos import add_video_to_yaml, new_match_yaml, youtube_id
+from sportsan.ingest.download_videos import add_video_to_yaml, downloadable, new_match_yaml, youtube_id
 
 ROW = {"match_id": "2026_10_11_ccm_vs_up", "kind": "own", "date": "", "own_team": "Tec CCM", "other_team": "UP",
        "video_id": "v2", "period": "", "label": "Parte 2", "url": "https://youtu.be/OIvhk-vNs5c?t=3", "note": ""}
@@ -35,3 +35,11 @@ def test_partido_nuevo():
     assert text.startswith("match_id: 2026_10_11_ccm_vs_up\nkind: own")
     assert 'date: "REEMPLAZAR"' in text and 'own_team_name: "Tec CCM"' in text
     assert "  - video_id: v1\n" in text and "fps: REEMPLAZAR" in text
+
+
+def test_enlaces_que_se_pueden_bajar():
+    assert downloadable("https://www.youtube.com/watch?v=_-utAbJNqhI")
+    assert downloadable("https://www.facebook.com/watch/?v=1234567890")
+    assert not downloadable("")
+    assert not downloadable("pendiente")
+

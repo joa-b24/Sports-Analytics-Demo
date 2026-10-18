@@ -5,7 +5,7 @@ import { COLORS, Pitch } from "@/components/Pitch";
 import { Card, input } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
 import { fmtT } from "@/lib/format";
-import { behindBallAtLosses, heatmap, namedPlayers, passNetwork } from "@/lib/positions";
+import { behindBallAtLosses, heatmap, namedPlayers } from "@/lib/positions";
 import { PITCH, type Match, type MatchEvent } from "@/lib/types";
 
 // Cards from the corrected positions of the match (tracks_fixed_*.json, saved from the correction table): heat map,
@@ -18,25 +18,23 @@ export function PositionsCards({ match, videoIds, events }: { match: Match; vide
   const fixed = useFixedParts(match.folder, videoIds);
   const [heatTeam, setHeatTeam] = useState<Side>("own");
   const [heatPlayer, setHeatPlayer] = useState("");
-  const [netTeam, setNetTeam] = useState<Side>("own");
   const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
   const heat = useMemo(() => heatmap(parts, heatTeam, heatPlayer || null), [parts, heatTeam, heatPlayer]);
   const players = useMemo(() => namedPlayers(parts, heatTeam), [parts, heatTeam]);
-  const net = useMemo(() => passNetwork(parts, netTeam), [parts, netTeam]);
   const behind = useMemo(() => behindBallAtLosses(parts, events), [parts, events]);
   const name = (s: Side) => (s === "own" ? match.focus_team : match.other_team);
 
   if (!match.folder || !fixed || parts.length === 0) {
     return (
-      <Card title="Mapa de calor, red de pases y jugadoras detrás del balón" note="desde las partes corregidas">
+      <Card title="Mapa de calor y jugadoras detrás del balón" note="desde el tracking">
         <p className="text-sm text-pretty text-muted">
           {!match.folder
             ? "Este partido no tiene carpeta (se pone en «editar datos»)."
             : !fixed
               ? "Buscando partes corregidas en la carpeta del partido…"
               : fixed.unoriented.length > 0
-                ? `Hay ${fixed.unoriented.length} parte(s) corregida(s), pero no se sabe hacia dónde ataca cada equipo: indícalo en la vista Balón de la mesa de corrección.`
-                : "Todavía no hay partes corregidas. En la pestaña Tracking, corrige una parte y pulsa «Guardar»: aparecerán aquí."}
+                ? `Hay ${fixed.unoriented.length} parte(s) con posiciones, pero no se sabe hacia dónde ataca cada equipo: indícalo en la vista Balón de la mesa de corrección.`
+                : "Todavía no hay partes procesadas de este partido (pestaña Tracking)."}
         </p>
       </Card>
     );
@@ -44,11 +42,11 @@ export function PositionsCards({ match, videoIds, events }: { match: Match; vide
 
   const minutes = parts.reduce((n, o) => n + (o.file.end_frame - o.file.start_frame) / o.file.fps, 0) / 60;
   const inferred = parts.filter((o) => o.dir === "inferred").length;
+  const corrected = parts.filter((o) => !o.file.auto);
+  const correctedMin = corrected.reduce((n, o) => n + (o.file.end_frame - o.file.start_frame) / o.file.fps, 0) / 60;
   const max = Math.max(...heat.seconds, 1e-9);
   const cw = PITCH.length / heat.nx;
   const ch = PITCH.width / heat.ny;
-  const byKey = new Map(net.nodes.map((n) => [n.key, n]));
-  const maxEdge = Math.max(1, ...net.edges.map((e) => e.count));
   const avgBehind = behind.length ? behind.reduce((n, b) => n + b.behind, 0) / behind.length : null;
   const teamToggle = (value: Side, set: (s: Side) => void) => (
     <div className="seg">
@@ -63,8 +61,9 @@ export function PositionsCards({ match, videoIds, events }: { match: Match; vide
   return (
     <div className="space-y-4">
       <p className="text-xs text-pretty text-faint">
-        {parts.length} parte(s) corregida(s), {minutes.toFixed(1)} min de video
-        {inferred > 0 && ` · en ${inferred} la dirección de ataque se dedujo de dónde pasa el tiempo cada equipo`}
+        {minutes.toFixed(1)} min de video con posiciones, {correctedMin.toFixed(1)} de ellos corregidos a mano. Lo no corregido cuenta solo por
+        equipo (la camiseta de cada caja): sirve para mapas de calor, forma y jugadoras detrás del balón, no para saber quién es quién
+        {inferred > 0 && ` · en ${inferred} parte(s) la dirección de ataque se dedujo de dónde pasa el tiempo cada equipo`}
         {fixed.unoriented.length > 0 && ` · ${fixed.unoriented.length} sin dirección de ataque (no se usan)`}. Siempre con {match.focus_team} atacando
         hacia la derecha. Solo cuenta lo que salió en cuadro.
       </p>
@@ -103,34 +102,6 @@ export function PositionsCards({ match, videoIds, events }: { match: Match; vide
           <p className="mt-2 text-[11px] text-pretty text-faint">
             Tiempo en cada zona; las posiciones rellenadas en huecos cortos no cuentan. La portería de {name(heatTeam)} está a la{" "}
             {heatTeam === "own" ? "izquierda" : "derecha"}.
-          </p>
-        </Card>
-
-        <Card title="Red de pases" note={`balón seguido ${net.ballSeconds.toFixed(0)} s`}>
-          <div className="mb-3">{teamToggle(netTeam, setNetTeam)}</div>
-          <Pitch>
-            {net.edges.map((e) => {
-              const a = byKey.get(e.a);
-              const b = byKey.get(e.b);
-              if (!a || !b) return null;
-              return (
-                <line key={`${e.a}-${e.b}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={netTeam === "own" ? COLORS.own : COLORS.opp}
-                  strokeWidth={0.4 + (1.6 * e.count) / maxEdge} opacity={0.75} strokeLinecap="round" />
-              );
-            })}
-            {net.nodes.map((n) => (
-              <g key={n.key} transform={`translate(${n.x} ${n.y})`}>
-                <circle r={1.4 + Math.min(1.6, n.touches / 10)} fill={netTeam === "own" ? COLORS.own : COLORS.opp} stroke="var(--color-bg)" strokeWidth={0.4} />
-                <text y={-2.6} textAnchor="middle" fontSize={2.2} fill="var(--color-ink)">
-                  {n.label}
-                </text>
-              </g>
-            ))}
-          </Pitch>
-          <p className="mt-2 text-[11px] text-pretty text-faint">
-            {net.passes === 0
-              ? `Sin pases detectados. Un pase se lee del balón: quién lo tiene (la más cercana a menos de 2 m) y a quién llega del mismo equipo. Hoy el balón está seguido ${net.ballSeconds.toFixed(0)} s; márcalo en la vista Balón de la mesa (o etiqueta eventos con posición) para que haya red.`
-              : `${net.passes} pase(s) leídos del balón${net.unnamed ? `, ${net.unnamed} con alguna jugadora sin nombre (no se dibujan)` : ""}. Cada jugadora en su posición media; el grosor es cuántas veces combinan.`}
           </p>
         </Card>
 

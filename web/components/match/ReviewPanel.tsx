@@ -4,7 +4,7 @@ import { ArrowClockwise, CaretLeft, CaretRight } from "@phosphor-icons/react";
 import { useEffect, useRef } from "react";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
 import { Card, btn, input } from "@/components/Shell";
-import { fmtT } from "@/lib/format";
+import { fmtT, isTyping } from "@/lib/format";
 import { endKind, missingEnd, missingReview, retype } from "@/lib/tagging";
 import {
   DETAIL_KEYS,
@@ -84,7 +84,7 @@ export function ReviewPanel({
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       const el = ev.target as HTMLElement;
-      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
+      const typing = isTyping(el);
       if (ev.key === "Enter") {
         ev.preventDefault();
         (el as HTMLInputElement).blur?.();

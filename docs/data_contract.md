@@ -110,6 +110,26 @@ pasada del etiquetado y casi siempre faltarán. Un tiro libre que es un centro s
 
 `final_third_entry` y `box_entry` no llevan resultado: si acaban en tiro se deduce de los eventos siguientes.
 
+## `passes_<match_id>.csv` (pases etiquetados a mano, exportados desde la app; fuera del repo)
+
+Pasada 4 del etiquetado: con el video corriendo se escribe, en orden, el número de cada jugadora que recibe el balón;
+dos seguidas del mismo equipo son un pase, y «la perdimos» cierra la cadena con un pase incompleto. Es la fuente de la
+red de pases y de los pases por jugadora (no sale del tracking). En la app viven en `State.passes`. Se valida con
+`validate_passes` de `schema.py`. Lleva los nombres de la plantilla, así que `.gitignore` excluye `passes_*.csv`: se guarda en
+`matches/<match_id>/tracking/` (ignorada) o fuera del repo.
+
+| columna | tipo | nulos | descripción |
+|---|---|---|---|
+| pass_id | str | no | único |
+| match_id | str | no | |
+| video_id | str | no | como en eventos |
+| t_video | float | no | segundos dentro de ese video: cuando quien pasa tenía el balón (el momento en que se escribió su número, menos el retraso elegido) |
+| period | int | no | 1 o 2 |
+| team | str | no | `own` u `opp` |
+| from_id | str | no | quien pasa: el nombre de la plantilla en nuestros partidos, o `#<número>` |
+| to_id | str | sí | quien recibe; solo en los completos |
+| outcome | str | no | `complete` (llega a una compañera) o `incomplete` (la perdió el equipo) |
+
 ## Tablas de la app web (`web/lib/types.ts`)
 
 Viven en el navegador y se exportan como un JSON de respaldo. Los eventos usan las columnas de arriba.
@@ -197,6 +217,7 @@ la conversión a metros se hace después con la calibración. Los `track_id` son
 |---|---|
 | schema_version, kind | `1` (solo cajas, de `detect`) o `3` (con posición, equipo, identidad propuesta y calibración, de `process`); `"tracks_px"` |
 | match_id, video_id, fps, image_w, image_h, model, tracker | del video y de la corrida |
+| venue | `{length_m, width_m}`: medida real de la sede con la que se calibró (solo con `process`). La app la copia a `tracks_fixed` para medir distancias en metros reales |
 | start_frame, end_frame, stride | cuadros del video original (final exclusivo); se procesa 1 de cada `stride` |
 | box_columns | nombres de las columnas de cada caja |
 | frames | lista de `{frame, H, boxes}`; cada caja es `[track_id, x1, y1, x2, y2, conf, lab_l, lab_a, lab_b]`. `H` (solo con `process`) es la calibración del cuadro, imagen px -> metros reales, o `null` |
@@ -220,13 +241,15 @@ la conversión a metros se hace después con la calibración. Los `track_id` son
 ## `tracks_fixed_<video_id>_<inicio>_<fin>.json` (tracks corregidos, exportados desde la app)
 
 Resultado de la mesa de corrección sobre una parte (`schema_version` 2): `people` (`{id, team, player_id, tracks}`) y, por cuadro
-procesado, `positions` (`{id, x, y, source, raw?}`) en la cancha normalizada. No incluye a quien quedó fuera de la cancha ni a las
+procesado, `positions` (`{id, x, y, source, raw?}`) en la cancha normalizada. `venue` (`{length_m, width_m}`, desde 2026-10-16;
+`null` si no se conoce) es la medida real de la sede: las distancias (quién tiene el balón, velocidades) se miden en esos metros,
+no en unidades del dibujo de 105 x 68. Los archivos anteriores no lo traen y se toma de `match.yaml`. No incluye a quien quedó fuera de la cancha ni a las
 identidades descartadas. Cada persona tiene como mucho una posición por cuadro: si el detector dio dos cajas sobre la misma jugadora
 (a menos de 2 m una de otra) y en la mesa se unificaron, queda la de más confianza y la otra no se exporta.
 
 `ball` es la lista de posiciones del balón, `{frame, x, y, source}`. **El balón no se detecta**: `source` es `manual` (clic sobre
-el video, llevado a la cancha como si el balón estuviera en el suelo), `event` (posición de un evento etiquetado en ese instante) o
-`interpolated` (recta entre dos de las anteriores separadas por 3 s o menos). Donde no hay ninguna cerca no hay balón. Los eventos
+el video, llevado a la cancha como si el balón estuviera en el suelo), `event` (posición de un evento etiquetado en ese instante; solo donde no hay una marca a mano a menos de 3 s, porque su momento y su lugar son aproximados) o
+`interpolated` (recta entre dos de las anteriores separadas por 3 s o menos, o unidas a mano en la mesa para un pase largo o un balón por alto, sin límite de tiempo). Donde no hay ninguna cerca no hay balón. Los eventos
 se etiquetan con el equipo analizado atacando hacia `x = 105`; al exportar se indica hacia dónde ataca en ese video y, si es hacia
 `x = 0`, se reflejan.
 
@@ -242,7 +265,7 @@ compatibles y sin otra candidata a menos de 1 m de diferencia. El suavizado se a
 |---|---|
 | `auto` | detección del programa (pie de la caja, pasado a la cancha con la calibración del cuadro) |
 | `manual` | pies marcados a mano donde el detector perdió a la persona |
-| `interpolated` | **no es una medición**: posición rellenada en línea recta dentro de un hueco corto |
+| `interpolated` | **no es una medición**: posición rellenada en línea recta dentro de un hueco (por defecto, de cualquier duración: la jugadora fuera de cuadro suele volver a su sitio) |
 
 `smoothing` es `null` si se exportó tal como se midió. Si no, guarda las reglas con que se limpiaron las trayectorias
 (`web/lib/smooth.ts`) y sus totales:
@@ -250,7 +273,7 @@ compatibles y sin otra candidata a menos de 1 m de diferencia. El suavizado se a
 | campo | regla | valor recomendado |
 |---|---|---|
 | `max_speed_ms` | un punto que exigiría más velocidad que esta para llegar **y** para irse es un microsalto y se quita; tampoco se rellena un hueco que la exigiría | 9 m/s |
-| `max_fill_s` | los huecos de hasta esta duración entre dos posiciones conocidas se rellenan con una recta; los más largos se dejan vacíos | 2 s |
+| `max_fill_s` | los huecos de hasta esta duración entre dos posiciones conocidas se rellenan con una recta; los más largos se dejan vacíos. `null` = se rellenan todos (desde 2026-10-17, lo predeterminado en la mesa) | sin límite |
 | `window_s` | promedio centrado (pesos triangulares; una marca a mano pesa el triple) dentro de cada tramo sin huecos | 0.5 s |
 | `outliers`, `filled`, `openGaps` | microsaltos quitados, posiciones rellenadas y huecos dejados vacíos | |
 

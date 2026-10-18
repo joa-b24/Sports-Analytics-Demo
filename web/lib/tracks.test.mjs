@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   applyAbsorb,
+  offCamera,
+  separateRun,
   clash,
   colorDistance,
   dropBoxes,
@@ -365,3 +367,42 @@ test("team by colour, with margin and full lightness (same numbers as tests/test
   assert.equal(teamOfColor(hexToLab(kits.opp_gk), kits), "opp");
   assert.equal(teamOfColor(own, {}), "unk");
 });
+
+test("two boxes of one person: only the stretch of the wrong box goes, the rest of its track stays", () => {
+  const LAB = [100, 128, 160];
+  const bx = (track, x, ident) => [track, x, 0, x + 10, 30, 0.9, ...LAB, null, null, true, "own", ident];
+  // Track 1: her for frames 0-27, lost, then a two-frame stretch at 45-48 that is somebody else (she is track 2
+  // there), lost again, and her again from 66. Track 2 is joined to her (identity 1) at 45-48.
+  const frames = [];
+  for (let f = 0; f <= 75; f += 3) {
+    const boxes = [];
+    if (f <= 27 || f >= 66) boxes.push(bx(1, 100 + f, 1));
+    if (f === 45 || f === 48) boxes.push(bx(1, 300, 1), bx(2, 120 + f, 1));
+    frames.push({ frame: f, H: null, boxes });
+  }
+  const file = { match_id: "m", video_id: "v1", fps: 30, start_frame: 0, end_frame: 78, stride: 3, image_w: 1920, image_h: 1080, frames };
+  const e = emptyEdits(editsKey(file));
+  const r = separateRun(e, file, 1, 45);
+  const id = (track, f) => identityOf(frames.find((x) => x.frame === f).boxes.find((b) => b[0] === track), f, r.edits);
+  assert.equal(id(1, 27), 1);
+  assert.equal(id(1, 45), r.identity);
+  assert.equal(id(1, 48), r.identity);
+  assert.equal(id(1, 66), 1);
+  assert.equal(id(2, 45), 1);
+});
+
+test("a hole is off camera when she leaves or comes back at the edge of the image", () => {
+  const LAB = [100, 128, 160];
+  const bx = (x1, x2) => [1, x1, 400, x2, 500, 0.9, ...LAB, null, null, true, "own", 1];
+  const frames = [
+    { frame: 0, H: null, boxes: [bx(1890, 1915)] }, // at the right edge
+    { frame: 90, H: null, boxes: [bx(900, 940)] },
+    { frame: 120, H: null, boxes: [bx(950, 990)] }, // middle of the image
+    { frame: 210, H: null, boxes: [bx(1000, 1040)] },
+  ];
+  const file = { match_id: "m", video_id: "v1", fps: 30, start_frame: 0, end_frame: 213, stride: 3, image_w: 1920, image_h: 1080, frames };
+  const e = emptyEdits(editsKey(file));
+  assert.equal(offCamera(file, e, 1, [0, 90]), true);
+  assert.equal(offCamera(file, e, 1, [120, 210]), false);
+});
+

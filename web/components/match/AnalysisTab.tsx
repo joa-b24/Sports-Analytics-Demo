@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { BinChart, CompareBars, EventTimeline, PartsDuo, RateDuo, ShotMap, StatTile, ZoneMap, type PartsRow } from "@/components/charts";
+import { PassesCards } from "@/components/match/PassesCards";
 import { PositionsCards } from "@/components/match/PositionsCards";
 import { TeamShapeCard } from "@/components/match/TeamShape";
 import { COLORS } from "@/components/Pitch";
@@ -73,7 +74,10 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             etiquetado»; los de posiciones, abajo, salen de las partes corregidas.
           </p>
         </Card>
-        <Section title="Con posiciones medidas" note="desde el tracking corregido">
+        <Section title="Pases y jugadoras" note="pases etiquetados a mano">
+          <PassesCards match={match} events={[]} />
+        </Section>
+        <Section title="Con posiciones medidas" note="desde el tracking">
           <PositionsCards match={match} videoIds={videoIds} events={[]} />
         </Section>
       </div>
@@ -305,6 +309,10 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             <CompareBars aLabel={A} bLabel={B} rows={EVENT_TYPES.map((t) => ({ label: EVENT_LABELS[t], a: a[t], b: b[t] }))} />
           </Card>
         </div>
+      </Section>
+
+      <Section title="Pases y jugadoras" note="pases etiquetados a mano">
+        <PassesCards match={match} events={videoEvents ?? events} />
       </Section>
 
       <Section title="Con posiciones medidas" note="desde el tracking">

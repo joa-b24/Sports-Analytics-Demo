@@ -4,7 +4,7 @@ import pytest
 from sportsan.mock.generate import generate
 from sportsan.io import load_ball, load_events, load_tracking
 from sportsan.metrics.team_shape import heatmap, team_shape
-from sportsan.schema import SchemaError, validate_events, validate_tracking
+from sportsan.schema import SchemaError, validate_events, validate_passes, validate_tracking
 
 
 @pytest.fixture(scope="module")
@@ -121,3 +121,38 @@ def test_destino_de_centros_fuera_de_lugar(mock_dir):
         validate_events(wrong)
     with pytest.raises(SchemaError, match="pareja"):
         validate_events(ev.drop(columns=["y_end"]))
+
+
+def _passes():
+    return pd.DataFrame([
+        {"pass_id": "a", "match_id": "m", "video_id": "v1", "t_video": 10.0, "period": 1, "team": "own",
+         "from_id": "Ana", "to_id": "Bea", "outcome": "complete"},
+        {"pass_id": "b", "match_id": "m", "video_id": "v1", "t_video": 12.0, "period": 1, "team": "own",
+         "from_id": "Bea", "to_id": None, "outcome": "incomplete"},
+    ])
+
+
+def test_pases_validos():
+    validate_passes(_passes())
+
+
+@pytest.mark.parametrize("change", [
+    {"to_id": [None, None]},          # un completo sin destinataria
+    {"to_id": ["Bea", "Cris"]},       # un incompleto con destinataria
+    {"team": ["own", "ref"]},
+    {"outcome": ["complete", "lost"]},
+    {"pass_id": ["a", "a"]},
+    {"period": [1, 3]},
+    {"video_id": ["v1", ""]},
+    {"from_id": ["Ana", None]},
+    {"match_id": [None, "m"]},
+    {"t_video": [10.0, -1.0]},
+    {"t_video": [10.0, float("nan")]},
+])
+def test_pases_invalidos(change):
+    df = _passes()
+    for k, v in change.items():
+        df[k] = v
+    with pytest.raises(SchemaError):
+        validate_passes(df)
+

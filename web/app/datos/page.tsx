@@ -7,6 +7,7 @@ import { CountUp, Reveal } from "@/components/motion";
 import { Card, PageHeader, Section, btn, btnPrimary, input } from "@/components/Shell";
 import { buildDemo } from "@/lib/demo";
 import { downloadText, parseCsv, toCsv } from "@/lib/format";
+import { PASS_COLUMNS } from "@/lib/passes";
 import { isSensitiveColumn } from "@/lib/load";
 import { EMPTY, mutate, uid, useStore } from "@/lib/store";
 import { DEFAULT_VIDEO, videoOf } from "@/lib/videos";
@@ -247,6 +248,22 @@ export default function Page() {
                 >
                   <DownloadSimple size={15} />
                   Exportar CSV
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!(state.passes ?? []).some((p) => p.match_id === matchId)}
+                  title="Pases etiquetados a mano (pasada 4), para la red de pases"
+                  onClick={() =>
+                    downloadText(
+                      `passes_${matchId}.csv`,
+                      toCsv((state.passes ?? []).filter((p) => p.match_id === matchId) as unknown as Record<string, unknown>[], [...PASS_COLUMNS]),
+                      "text/csv",
+                    )
+                  }
+                >
+                  <DownloadSimple size={15} />
+                  Exportar pases
                 </button>
               </div>
               <DropZone accept=".csv,text/csv" label="Arrastra aquí el CSV de eventos" hint="se añaden al partido elegido arriba" onText={importEvents} />

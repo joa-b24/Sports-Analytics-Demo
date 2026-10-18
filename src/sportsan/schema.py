@@ -69,6 +69,11 @@ EVENT_COLUMNS = [
     "player_id", "x", "y", "outcome", "detail", "note",
 ]
 
+# Pases etiquetados a mano (pasada 4 del etiquetado, 2026-10-16): quién se la pasa a quién, para la red de pases.
+PASS_COLUMNS = ["pass_id", "match_id", "video_id", "t_video", "period", "team", "from_id", "to_id", "outcome"]
+PASS_TEAMS = ("own", "opp")
+PASS_OUTCOMES = ("complete", "incomplete")
+
 
 class SchemaError(ValueError):
     """El DataFrame no cumple el contrato de datos."""
@@ -113,6 +118,29 @@ def validate_ball(df: pd.DataFrame) -> pd.DataFrame:
     if df.duplicated(["segment_id", "frame"]).any():
         raise SchemaError("ball: hay filas duplicadas por (segment_id, frame)")
     _check_in_pitch(df, "ball")
+    return df
+
+
+def validate_passes(df: pd.DataFrame) -> pd.DataFrame:
+    _require(df, PASS_COLUMNS, "passes")
+    if df["pass_id"].duplicated().any():
+        raise SchemaError("passes: pass_id duplicado")
+    for column in ("pass_id", "match_id", "video_id", "from_id"):
+        if df[column].isna().any() or (df[column].astype(str).str.strip() == "").any():
+            raise SchemaError(f"passes: {column} no puede ir vacío")
+    if df["t_video"].isna().any():
+        raise SchemaError("passes: t_video no puede ir vacío")
+    if not df["team"].isin(PASS_TEAMS).all():
+        raise SchemaError(f"passes: team inválido; permitidos {PASS_TEAMS}")
+    if not df["period"].isin(PERIODS).all():
+        raise SchemaError(f"passes: period inválido; permitidos {PERIODS}")
+    if not df["outcome"].isin(PASS_OUTCOMES).all():
+        raise SchemaError(f"passes: outcome inválido; permitidos {PASS_OUTCOMES}")
+    complete = df["outcome"] == "complete"
+    if df.loc[complete, "to_id"].isna().any() or df.loc[~complete, "to_id"].notna().any():
+        raise SchemaError("passes: to_id va solo en los completos (un pase incompleto no llega a nadie del equipo)")
+    if (df["t_video"] < 0).any():
+        raise SchemaError("passes: t_video no puede ser negativo")
     return df
 
 

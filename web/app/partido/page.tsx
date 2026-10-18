@@ -537,7 +537,23 @@ function MatchPage() {
               Enter para guardar. También se cambia en «editar datos». Convención: {FOLDER_RULE}, en minúsculas y sin acentos.
             </p>
           </Card>
-        ) : tab === "calibration" ? (
+        ) : (
+          <>
+            {/* Calibration and tracking work on one video at a time: which one, chosen here. */}
+            {videos.length > 1 && (
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted">Video</span>
+                <div className="seg" role="group" aria-label="Video del partido">
+                  {videos.map((v) => (
+                    <button key={v.video_id} type="button" aria-pressed={v.video_id === video.video_id} onClick={() => pickVideo(v.video_id)} className="seg-opt">
+                      <span className="tc mr-1.5 opacity-70">{v.video_id}</span>
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {tab === "calibration" ? (
           <Calibration
             key={`${match.folder}|${video.video_id}`}
             embedded
@@ -548,6 +564,8 @@ function MatchPage() {
           />
         ) : (
           <Correction key={`${match.folder}|${video.video_id}`} embedded folder={match.folder} video={video.video_id} matchAppId={match.match_id} />
+            )}
+          </>
         ))}
 
       {/* Full width, under both columns: the events table of the tagging tab is drawn here. */}

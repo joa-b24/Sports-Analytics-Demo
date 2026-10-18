@@ -1,14 +1,15 @@
 "use client";
 
-import { Check, Crosshair, DownloadSimple, FastForward, FolderOpen, Info, Minus, Path, Pause, Play, Plus, Rewind, SkipBack, SkipForward, Trash, UsersThree, X } from "@phosphor-icons/react";
-import { IconButton } from "@/components/Modal";
+import { Check, Crosshair, DownloadSimple, FastForward, FolderOpen, GearSix, Info, Minus, Path, Pause, Play, Plus, Rewind, SkipBack, SkipForward, TerminalWindow, Trash, UsersThree, X } from "@phosphor-icons/react";
+import { IconButton, Modal } from "@/components/Modal";
+import { Command } from "@/components/Command";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { COLORS, Pitch } from "@/components/Pitch";
-import { LocalPick } from "@/components/LocalPick";
+import { FilePicker, partLabel } from "@/components/LocalPick";
 import { Card, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
 import { localVideo, readLocal, writeLocal } from "@/lib/local";
 import { SpeedControl } from "@/components/SpeedControl";
-import { downloadText, fmtT } from "@/lib/format";
+import { downloadText, fmtT, isTyping } from "@/lib/format";
 import { parseHms } from "@/lib/segments";
 import { apply, fitHomography, fitQuality, invert, invertFor, orient, type Pt } from "@/lib/homography";
 import { mutate, uid, useHydrated, useStore } from "@/lib/store";
@@ -200,7 +201,7 @@ export function Calibration({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
-      if (el && ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName)) return;
+      if (isTyping(el)) return;
       const v = videoRef.current;
       if (!v) return;
       const dir = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, [number, number]>)[e.key];
@@ -380,6 +381,7 @@ export function Calibration({
         }
       }
       setTrack({ name: f.name, start: d.start_frame, end: d.end_frame, frames, check: Array.isArray(d.check) ? d.check : [], meanDis: n ? sum / n : null, worst });
+      seekFrame(d.start_frame);
       setTrackMsg(
         d.match_id !== matchId || d.video_id !== videoId
           ? `Ojo: el archivo es de ${d.match_id} · ${d.video_id}, y aquí está abierto ${matchId} · ${videoId}.`
@@ -454,10 +456,16 @@ export function Calibration({
     };
   }, [embedded, folder, videoId, fileUrl]);
   const [savedMsg, setSavedMsg] = useState("");
+  const [showCommands, setShowCommands] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  // Anchors go into the match folder, where propagate finds them; a download only if that cannot be written.
   const saveAnchorsFile = (name: string, text: string, mime: string) => {
-    downloadText(name, text, mime);
-    void writeLocal(`matches/${matchId}/tracking/${name}`, text).then((ok) => setSavedMsg(ok ? `Guardado también en matches/${matchId}/tracking/${name}.` : ""));
+    void writeLocal(`matches/${matchId}/tracking/${name}`, text).then((ok) => {
+      if (!ok) downloadText(name, text, mime);
+      setSavedMsg(ok ? `Guardado en matches/${matchId}/tracking/${name}.` : `Descargado: ponlo en matches/${matchId}/tracking/.`);
+    });
   };
+  const propagateCmd = `python -m sportsan.tracking.propagate --anchors matches/${matchId}/tracking/anchors_${matchId}_${videoId}.json`;
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -496,8 +504,9 @@ export function Calibration({
         />
       )}
 
+      <div className="mb-4 flex flex-wrap items-center gap-2">
       {/* Progress through the four steps, read from the real state of the screen. */}
-      <ol className="enter mb-6 flex flex-wrap gap-2" style={{ "--d": "200ms" } as React.CSSProperties}>
+      <ol className="enter mr-auto flex flex-wrap gap-2" style={{ "--d": "200ms" } as React.CSSProperties}>
         {steps.map((st, n) => (
           <li
             key={st.t}
@@ -516,9 +525,69 @@ export function Calibration({
           </li>
         ))}
       </ol>
-
-      <Card className="mb-5">
-        <div className="flex flex-wrap items-end gap-4 text-sm">
+        <button type="button" className={btn} onClick={() => setShowSettings(true)}>
+          <GearSix size={15} />
+          Video y sede
+        </button>
+        <FilePicker
+          dir={`matches/${matchId}/tracking`}
+          pattern={new RegExp(`^(calib|tracks)_${videoId}_\\d+_\\d+\\.json$`)}
+          describe={(n) => `${partLabel(n, fps)} · ${n.startsWith("calib_") ? "calibración" : "parte procesada"}`}
+          label={track ? "Otra calibración" : "Cargar calibración"}
+          icon={<Path size={15} />}
+          title="Un calib_…json (propagación o locate) o un tracks_…json"
+          current={track?.name}
+          onFile={(f) => void onTrackFile(asEvent([f]))}
+        />
+        <FilePicker
+          dir={`matches/${matchId}/tracking`}
+          pattern={new RegExp(`^tracks_${videoId}_\\d+_\\d+\\.json$`)}
+          describe={(n) => partLabel(n, fps)}
+          label={dets ? "Otras detecciones" : "Cargar detecciones"}
+          icon={<UsersThree size={15} />}
+          title="Una parte procesada (tracks_…json): cajas y posiciones"
+          current={dets?.name}
+          onFile={(f) => void onDetsFile(asEvent([f]))}
+        />
+        <button type="button" className={btn} onClick={() => setShowCommands(true)}>
+          <TerminalWindow size={15} />
+          Comandos
+        </button>
+      </div>
+      {(trackMsg || detsMsg) && <p className="mb-3 text-xs text-warn">{trackMsg || detsMsg}</p>}
+      {showCommands && (
+        <Modal title="Comandos de Python" onClose={() => setShowCommands(false)} wide>
+          <div className="space-y-5 text-xs text-pretty text-muted">
+            <p>Desde la carpeta <code>demo</code>, con .venv activado.</p>
+            <section>
+              <h3 className="mb-1 text-sm text-ink">1. Propagar las anclas del barrido</h3>
+              <p>Con dos o más anclas guardadas y exportadas. Escribe <code>calib_…json</code> en <code>tracking/</code>: cárgalo con «Cargar calibración» y recorre el tramo; la rejilla punteada es la propagada.</p>
+              <Command className="mt-2">{propagateCmd}</Command>
+            </section>
+            <section>
+              <h3 className="mb-1 text-sm text-ink">2. Biblioteca del video</h3>
+              <p>Con la calibración del barrido. Sirve de referencia para el resto del video mientras la cámara no cambie de sitio; <code>locate</code> calibra una jugada sin anclas a mano.</p>
+              <Command className="mt-2">{`python -m sportsan.tracking.library build --track matches/${matchId}/tracking/calib_${videoId}_<inicio>_<fin>.json
+python -m sportsan.tracking.library locate --match ${matchId} --video ${videoId} --start 0:33:20 --end 0:33:35`}</Command>
+            </section>
+            <section>
+              <h3 className="mb-1 text-sm text-ink">3. Detección y posiciones</h3>
+              <p>Une la detección con la biblioteca y da la posición en la cancha; reanudable por partes. Cada parte que termina se puede revisar aquí con «Cargar detecciones».</p>
+              <Command className="mt-2">{`python -m sportsan.tracking.process --match ${matchId} --video ${videoId} --benchmark
+python -m sportsan.tracking.process --match ${matchId} --video ${videoId}`}</Command>
+            </section>
+            <section>
+              <h3 className="mb-1 text-sm text-ink">Todo de una vez, de noche</h3>
+              <p>Los tres pasos para todos los videos del partido a los que les falten.</p>
+              <Command className="mt-2">{`python -m sportsan.tracking.overnight --plan --match ${matchId}
+python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
+            </section>
+          </div>
+        </Modal>
+      )}
+      {showSettings && (
+        <Modal title="Video y sede" onClose={() => setShowSettings(false)}>
+          <div className="flex flex-col gap-4 text-sm">
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted">Archivo de video (no sale de esta computadora)</span>
             <span className={`${btn} cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`}>
@@ -561,10 +630,12 @@ export function Calibration({
             </select>
           </label>
         </div>
-      </Card>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <div className="space-y-5">
+        </Modal>
+      )}
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_26rem]">
+        <div className="min-w-0 space-y-4">
           <Card>
             {!fileUrl ? (
               <p className="text-sm text-muted">
@@ -752,6 +823,308 @@ export function Calibration({
             </div>
           )}
 
+          {track && (
+            <Card title="Calibración cargada" note={track.name}>
+            {track && (
+              <div>
+                <div className="flex flex-wrap gap-x-8 gap-y-3">
+                  <div>
+                    <div className="num text-4xl text-ink">{track.end - track.start + 1}</div>
+                    <div className="mt-1 text-[11px] text-muted">
+                      cuadros · {track.start} a {track.end}
+                    </div>
+                  </div>
+                  <div className="border-l border-line-soft pl-4">
+                    <div className={`num text-4xl ${track.meanDis !== null && track.meanDis > WARN_M ? "text-warn" : "text-accent-200"}`}>
+                      {track.meanDis === null ? "–" : track.meanDis.toFixed(2)} <span className="text-lg text-faint">m</span>
+                    </div>
+                    <div className="mt-1 text-[11px] text-muted">discrepancia media adelante / atrás</div>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" className={btn} onClick={() => seekFrame(track.start)}>
+                    Ir al inicio del tramo
+                  </button>
+                  {track.worst && (
+                    <button type="button" className={btn} onClick={() => track.worst && seekFrame(track.worst.frame)}>
+                      Ir al peor cuadro <span className="tc">({track.worst.dis.toFixed(2)} m)</span>
+                    </button>
+                  )}
+                  <button type="button" className="btn btn-ghost" onClick={() => setTrack(null)}>
+                    Quitar
+                  </button>
+                </div>
+                {track.check.length > 0 && (
+                  <table className="table-nocturne mt-4 w-full text-left text-xs">
+                    <thead>
+                      <tr>
+                        <th className="pb-1">Ancla comprobada</th>
+                        <th className="pb-1">Error medio (m)</th>
+                        <th className="pb-1">Máximo (m)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {track.check.map((c) => (
+                        <tr key={c.frame} className={`border-t border-line-soft ${(c.error_max_m ?? 0) > 2 ? "bg-warn-900" : ""}`}>
+                          <td className="py-1">
+                            <button type="button" className="tc rounded-lg px-1.5 py-0.5 text-ink-2 hover:bg-raised hover:text-ink" onClick={() => seekFrame(c.frame)}>
+                              cuadro {c.frame}
+                            </button>
+                          </td>
+                          <td className="tc">{c.error_mean_m === null ? "—" : c.error_mean_m.toFixed(2)}</td>
+                          <td className="tc">{c.error_max_m === null ? "—" : c.error_max_m.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <p className="mt-3 text-xs text-pretty text-faint">
+                  Cómo leerlo: la discrepancia compara lo que dice el ancla anterior con lo que dice la siguiente; si pasa de {WARN_M} m,
+                  falta un ancla cerca de ese cuadro. El ancla de control es la prueba real: se quita un ancla intermedia y se mide a
+                  cuántos metros quedan sus puntos (meta: menos de 2 m). Aparece con tres o más anclas.
+                </p>
+              </div>
+            )}
+            </Card>
+          )}
+          {dets && (
+            <Card title="Detecciones cargadas" note={dets.name}>
+            {dets && (
+              <div>
+                {dets.hasPositions && (
+                  <div className="mb-4">
+                    <Pitch showDirection={false} className="rounded-xl">
+                      {boxes
+                        ?.filter((b) => b[11] && b[9] !== null && b[10] !== null)
+                        .map((b) => (
+                          <g key={b[0]}>
+                            <circle cx={b[9] as number} cy={b[10] as number} r={1.5} fill={TEAM_COLORS[b[12]] ?? trackColor(b[0])} stroke="var(--color-bg)" strokeWidth={0.3} />
+                            <text x={b[9] as number} y={(b[10] as number) - 2.2} textAnchor="middle" fontSize={2.4} fontFamily="var(--font-mono)" fill="var(--color-muted)">
+                              {b[0]}
+                            </text>
+                          </g>
+                        ))}
+                    </Pitch>
+                    <p className="mt-1 text-[11px] text-faint">
+                      Posición de cada caja en la cancha (el pie, pasado por la calibración). Si no hay equipos asignados, el color es el del
+                      track.
+                    </p>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-x-8 gap-y-3">
+                  <div>
+                    <div className="num text-4xl text-ink">{dets.quality.on_pitch_median ?? dets.quality.people_median ?? "–"}</div>
+                    <div className="mt-1 text-[11px] text-muted">{dets.hasPositions ? "personas en la cancha (mediana)" : "personas por cuadro (mediana)"}</div>
+                  </div>
+                  <div className="border-l border-line-soft pl-4">
+                    <div className="num text-4xl text-ink-2">{dets.quality.on_pitch_tracks ?? dets.quality.tracks ?? "–"}</div>
+                    <div className="mt-1 text-[11px] text-muted">
+                      tracks · {dets.quality.on_pitch_tracks_long ?? dets.quality.tracks_long ?? 0} de principio a fin
+                      {dets.quality.on_pitch_tracks_short !== undefined && ` · ${dets.quality.on_pitch_tracks_short} de menos de 1.5 s`}
+                    </div>
+                  </div>
+                  <div className="border-l border-line-soft pl-4">
+                    <div className={`num text-4xl ${(dets.quality.on_pitch_tracks_per_person ?? dets.quality.tracks_per_person ?? 0) > 3 ? "text-warn" : "text-accent-200"}`}>
+                      {dets.quality.on_pitch_tracks_per_person ?? dets.quality.tracks_per_person ?? "–"}
+                    </div>
+                    <div className="mt-1 text-[11px] text-muted">tracks por persona</div>
+                  </div>
+                  {dets.quality.calibrated_share !== undefined && (
+                    <div className="border-l border-line-soft pl-4">
+                      <div className="num text-4xl text-ink-2">{Math.round(dets.quality.calibrated_share * 100)} %</div>
+                      <div className="mt-1 text-[11px] text-muted">cuadros calibrados</div>
+                    </div>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button type="button" className={btn} onClick={() => seekFrame(dets.start)}>
+                    Ir al inicio de la parte
+                  </button>
+                  <span className="tc text-[11px] text-faint">
+                    cuadros {dets.start} a {dets.end} · 1 de cada {dets.stride}
+                  </span>
+                  <button type="button" className="btn btn-ghost ml-auto" onClick={() => setDets(null)}>
+                    Quitar
+                  </button>
+                </div>
+                {(dets.quality.low_visibility?.length ?? 0) > 0 && (
+                  <div className="mt-3 text-xs text-muted">
+                    Subtramos con casi nadie a la vista:{" "}
+                    {dets.quality.low_visibility?.map(([a0, b0]) => (
+                      <button key={a0} type="button" className="tc mr-1 rounded-lg px-1.5 py-0.5 text-ink-2 hover:bg-raised hover:text-ink" onClick={() => seekFrame(a0)}>
+                        {fmtT(a0 / fps)}–{fmtT(b0 / fps)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-3 text-xs text-pretty text-faint">
+                  Cada caja lleva el número de su track, con un color fijo. Si una jugadora cambia de número a mitad de la parte, el
+                  seguimiento se rompió ahí: eso es lo que se arreglará en la mesa de corrección. «Tracks por persona» cerca de 1 es lo
+                  ideal; incluye a la gente de la banca y la grada, que se descarta al pasar a metros.
+                </p>
+              </div>
+            )}
+            </Card>
+          )}
+        </div>
+
+        {/* Everything used while marking, in the order it is used; its own scroll. */}
+        <div className="space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto xl:pr-1">
+          <Card title="Puntos de referencia de la sede" note="banda cercana abajo" delay={140}>
+            <p className="mb-2 text-xs text-muted">
+              {pendingPx
+                ? "Ahora elige aquí a qué punto corresponde el clic amarillo."
+                : pendingLm
+                  ? `Ahora haz clic en el video sobre: ${byId.get(pendingLm)?.label ?? ""}.`
+                  : "Haz clic en el video y luego aquí, o al revés. Vista desde la cámara: la banda cercana queda abajo."}
+            </p>
+            <svg viewBox={`${b.x0} ${b.y0} ${b.x1 - b.x0} ${b.y1 - b.y0}`} className="w-full rounded-2xl bg-pitch select-none">
+              {venue.lines.map((l, i) => (
+                <polyline
+                  key={i}
+                  points={l.pts.map((p) => p.join(",")).join(" ")}
+                  fill="none"
+                  stroke={l.group === "football" ? venue.colors.football : venue.colors.soccer}
+                  strokeWidth={0.25}
+                  opacity={shown[l.group] ? 0.9 : 0.15}
+                />
+              ))}
+              {venue.landmarks
+                .filter((l) => l.group === "football" && l.id.endsWith("_fs") && /^yl-?\d+_fs$/.test(l.id))
+                .map((l) => {
+                  const k = Number(l.id.slice(2, -3));
+                  const yards = 50 - Math.abs(k) * 5;
+                  return k % 2 === 0 && yards > 0 ? (
+                    <text key={l.id} x={l.x} y={venue.width_m / 2 + 1.2} textAnchor="middle" fontSize={3} fill="#94a3b8">
+                      {yards}
+                    </text>
+                  ) : null;
+                })}
+              {venue.landmarks
+                .filter((l) => shown[l.group])
+                .map((l) => {
+                  const used = points.some((p) => p.landmark_id === l.id);
+                  const active = pendingLm === l.id;
+                  return (
+                    <g key={l.id} className="cursor-pointer" onClick={() => onLandmarkClick(l.id)}>
+                      <title>{l.label}</title>
+                      <circle cx={l.x} cy={l.y} r={1.8} fill="transparent" />
+                      <circle
+                        cx={l.x}
+                        cy={l.y}
+                        r={active ? 1.3 : 0.85}
+                        fill={used ? "#f43f5e" : active ? "#fde047" : l.group === "soccer" ? venue.colors.soccer : venue.colors.football}
+                        stroke="var(--color-pitch)"
+                        strokeWidth={0.2}
+                      />
+                    </g>
+                  );
+                })}
+            </svg>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
+              {GROUPS.filter((g) => venue.landmarks.some((l) => l.group === g.id)).map((g) => (
+                <label key={g.id} className="flex items-center gap-1.5">
+                  <input type="checkbox" className="accent-accent" checked={shown[g.id]} onChange={(e) => setShown((s) => ({ ...s, [g.id]: e.target.checked }))} />
+                  {g.label}
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-faint">
+              En la rejilla de americano, el punto es donde la línea de yarda toca el borde interior de la franja blanca de
+              la banda. Sobre el video, la rejilla se dibuja en celeste y las líneas de fútbol en rosa.
+            </p>
+          </Card>
+          <Card title="Lupa y ajuste fino" note={selPoint ? "lupa ×8 centrada en el punto" : undefined}>
+            <div className="flex items-start gap-3">
+              <canvas ref={loupeRef} width={240} height={135} className="rounded-xl bg-bg shadow-[0_0_0_1px_var(--color-line)]" />
+              <div className="tc text-xs text-ink-2">
+                {hover ? (
+                  <>
+                    <div className="tabular-nums">
+                      Imagen: {hover[0].toFixed(0)}, {hover[1].toFixed(0)} px
+                    </div>
+                    {hoverM && hoverN ? (
+                      <>
+                        <div className="mt-1 tabular-nums">
+                          Cancha real: {hoverM[0].toFixed(1)}, {hoverM[1].toFixed(1)} m
+                        </div>
+                        <div className="tabular-nums">
+                          Normalizada (105 x 68): {hoverN[0].toFixed(1)}, {hoverN[1].toFixed(1)}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="mt-1 text-faint">Sin calibración todavía.</div>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-faint">Pasa el cursor sobre el video.</span>
+                )}
+              </div>
+            </div>
+            <div className="mt-4 border-t border-line-soft pt-4">
+            {!selPoint ? (
+              <p className="text-sm text-muted">
+                Marca un punto, o pulsa la mira en la tabla de Ajuste, para moverlo píxel a píxel sin volver a hacer clic.
+              </p>
+            ) : (
+              <>
+                <p className="mb-3 text-sm text-ink-2">{byId.get(selPoint.landmark_id)?.label}</p>
+                <div className="flex flex-wrap items-end gap-4">
+                  {(["px", "py"] as const).map((axis) => (
+                    <label key={axis} className="flex flex-col gap-1 text-[11px] text-faint">
+                      {axis === "px" ? "X (px)" : "Y (px)"}
+                      <span className="flex items-center gap-1">
+                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Restar un paso" onClick={() => nudge(axis === "px" ? -1 : 0, axis === "py" ? -1 : 0)}>
+                          <Minus size={13} />
+                        </button>
+                        <input
+                          className={`${input} tc w-24 text-center`}
+                          type="number"
+                          step={step}
+                          value={Number(selPoint[axis].toFixed(2))}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            if (Number.isFinite(v)) setPoints((ps) => ps.map((q) => (q.landmark_id === sel ? { ...q, [axis]: v } : q)));
+                          }}
+                        />
+                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Sumar un paso" onClick={() => nudge(axis === "px" ? 1 : 0, axis === "py" ? 1 : 0)}>
+                          <Plus size={13} />
+                        </button>
+                      </span>
+                    </label>
+                  ))}
+                  <div className="flex flex-col gap-1 text-[11px] text-faint">
+                    Paso (px)
+                    <div className="seg">
+                      {NUDGE_STEPS.map((v) => (
+                        <button key={v} type="button" aria-pressed={step === v} onClick={() => setStep(v)} className="seg-opt tc !px-3">
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-faint">
+                  {(() => {
+                    const i = fit.pairs.findIndex((x) => x.p.landmark_id === sel);
+                    const r = i >= 0 ? fit.quality?.residuals[i] : undefined;
+                    return r === undefined ? null : (
+                      <span>
+                        Error de este punto <span className={`tc ${r > WARN_M ? "text-warn" : "text-ink-2"}`}>{r.toFixed(2)} m</span>
+                      </span>
+                    );
+                  })()}
+                  <span className="flex items-center gap-1.5">
+                    <kbd className="kbd">Alt + ← ↑ → ↓</kbd> un paso
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <kbd className="kbd">+ ⇧</kbd> diez
+                  </span>
+                </div>
+              </>
+            )}
+            </div>
+          </Card>
           <Card title="Ajuste">
             {trackCheckMean !== null && trackCheckMax !== null && (
               <div className="mb-5 rounded-2xl bg-accent-900/40 p-4 shadow-[inset_0_0_0_1px_rgba(74,114,255,.35)]">
@@ -869,167 +1242,6 @@ export function Calibration({
               </button>
             </div>
           </Card>
-        </div>
-
-        <div className="space-y-5">
-          <Card title="Lupa y posición" delay={90}>
-            <div className="flex items-start gap-3">
-              <canvas ref={loupeRef} width={240} height={135} className="rounded-xl bg-bg shadow-[0_0_0_1px_var(--color-line)]" />
-              <div className="tc text-xs text-ink-2">
-                {hover ? (
-                  <>
-                    <div className="tabular-nums">
-                      Imagen: {hover[0].toFixed(0)}, {hover[1].toFixed(0)} px
-                    </div>
-                    {hoverM && hoverN ? (
-                      <>
-                        <div className="mt-1 tabular-nums">
-                          Cancha real: {hoverM[0].toFixed(1)}, {hoverM[1].toFixed(1)} m
-                        </div>
-                        <div className="tabular-nums">
-                          Normalizada (105 x 68): {hoverN[0].toFixed(1)}, {hoverN[1].toFixed(1)}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="mt-1 text-faint">Sin calibración todavía.</div>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-faint">Pasa el cursor sobre el video.</span>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          <Card title="Ajuste fino" note={selPoint ? "lupa ×8 centrada en el punto" : undefined} delay={110}>
-            {!selPoint ? (
-              <p className="text-sm text-muted">
-                Marca un punto, o pulsa «ajustar» en la tabla de Ajuste, para moverlo píxel a píxel sin volver a hacer clic.
-              </p>
-            ) : (
-              <>
-                <p className="mb-3 text-sm text-ink-2">{byId.get(selPoint.landmark_id)?.label}</p>
-                <div className="flex flex-wrap items-end gap-4">
-                  {(["px", "py"] as const).map((axis) => (
-                    <label key={axis} className="flex flex-col gap-1 text-[11px] text-faint">
-                      {axis === "px" ? "X (px)" : "Y (px)"}
-                      <span className="flex items-center gap-1">
-                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Restar un paso" onClick={() => nudge(axis === "px" ? -1 : 0, axis === "py" ? -1 : 0)}>
-                          <Minus size={13} />
-                        </button>
-                        <input
-                          className={`${input} tc w-24 text-center`}
-                          type="number"
-                          step={step}
-                          value={Number(selPoint[axis].toFixed(2))}
-                          onChange={(e) => {
-                            const v = Number(e.target.value);
-                            if (Number.isFinite(v)) setPoints((ps) => ps.map((q) => (q.landmark_id === sel ? { ...q, [axis]: v } : q)));
-                          }}
-                        />
-                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Sumar un paso" onClick={() => nudge(axis === "px" ? 1 : 0, axis === "py" ? 1 : 0)}>
-                          <Plus size={13} />
-                        </button>
-                      </span>
-                    </label>
-                  ))}
-                  <div className="flex flex-col gap-1 text-[11px] text-faint">
-                    Paso (px)
-                    <div className="seg">
-                      {NUDGE_STEPS.map((v) => (
-                        <button key={v} type="button" aria-pressed={step === v} onClick={() => setStep(v)} className="seg-opt tc !px-3">
-                          {v}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-faint">
-                  {(() => {
-                    const i = fit.pairs.findIndex((x) => x.p.landmark_id === sel);
-                    const r = i >= 0 ? fit.quality?.residuals[i] : undefined;
-                    return r === undefined ? null : (
-                      <span>
-                        Error de este punto <span className={`tc ${r > WARN_M ? "text-warn" : "text-ink-2"}`}>{r.toFixed(2)} m</span>
-                      </span>
-                    );
-                  })()}
-                  <span className="flex items-center gap-1.5">
-                    <kbd className="kbd">Alt + ← ↑ → ↓</kbd> un paso
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <kbd className="kbd">+ ⇧</kbd> diez
-                  </span>
-                </div>
-              </>
-            )}
-          </Card>
-
-          <Card title="Puntos de referencia de la sede" note="banda cercana abajo" delay={140}>
-            <p className="mb-2 text-xs text-muted">
-              {pendingPx
-                ? "Ahora elige aquí a qué punto corresponde el clic amarillo."
-                : pendingLm
-                  ? `Ahora haz clic en el video sobre: ${byId.get(pendingLm)?.label ?? ""}.`
-                  : "Haz clic en el video y luego aquí, o al revés. Vista desde la cámara: la banda cercana queda abajo."}
-            </p>
-            <svg viewBox={`${b.x0} ${b.y0} ${b.x1 - b.x0} ${b.y1 - b.y0}`} className="w-full rounded-2xl bg-pitch select-none">
-              {venue.lines.map((l, i) => (
-                <polyline
-                  key={i}
-                  points={l.pts.map((p) => p.join(",")).join(" ")}
-                  fill="none"
-                  stroke={l.group === "football" ? venue.colors.football : venue.colors.soccer}
-                  strokeWidth={0.25}
-                  opacity={shown[l.group] ? 0.9 : 0.15}
-                />
-              ))}
-              {venue.landmarks
-                .filter((l) => l.group === "football" && l.id.endsWith("_fs") && /^yl-?\d+_fs$/.test(l.id))
-                .map((l) => {
-                  const k = Number(l.id.slice(2, -3));
-                  const yards = 50 - Math.abs(k) * 5;
-                  return k % 2 === 0 && yards > 0 ? (
-                    <text key={l.id} x={l.x} y={venue.width_m / 2 + 1.2} textAnchor="middle" fontSize={3} fill="#94a3b8">
-                      {yards}
-                    </text>
-                  ) : null;
-                })}
-              {venue.landmarks
-                .filter((l) => shown[l.group])
-                .map((l) => {
-                  const used = points.some((p) => p.landmark_id === l.id);
-                  const active = pendingLm === l.id;
-                  return (
-                    <g key={l.id} className="cursor-pointer" onClick={() => onLandmarkClick(l.id)}>
-                      <title>{l.label}</title>
-                      <circle cx={l.x} cy={l.y} r={1.8} fill="transparent" />
-                      <circle
-                        cx={l.x}
-                        cy={l.y}
-                        r={active ? 1.3 : 0.85}
-                        fill={used ? "#f43f5e" : active ? "#fde047" : l.group === "soccer" ? venue.colors.soccer : venue.colors.football}
-                        stroke="var(--color-pitch)"
-                        strokeWidth={0.2}
-                      />
-                    </g>
-                  );
-                })}
-            </svg>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
-              {GROUPS.filter((g) => venue.landmarks.some((l) => l.group === g.id)).map((g) => (
-                <label key={g.id} className="flex items-center gap-1.5">
-                  <input type="checkbox" className="accent-accent" checked={shown[g.id]} onChange={(e) => setShown((s) => ({ ...s, [g.id]: e.target.checked }))} />
-                  {g.label}
-                </label>
-              ))}
-            </div>
-            <p className="mt-2 text-xs text-faint">
-              En la rejilla de americano, el punto es donde la línea de yarda toca el borde interior de la franja blanca de
-              la banda. Sobre el video, la rejilla se dibuja en celeste y las líneas de fútbol en rosa.
-            </p>
-          </Card>
-
           <Card title="Anclas guardadas" note={`${anchors.length} en este partido y video`} delay={190}>
             {anchors.length === 0 ? (
               <p className="text-sm text-muted">Todavía no hay anclas para este partido y video.</p>
@@ -1089,205 +1301,13 @@ export function Calibration({
               }
             >
               <DownloadSimple size={15} />
-              Exportar anclas (JSON)
+              Exportar anclas
             </button>
             {savedMsg && <p className="mt-2 text-xs text-ok">{savedMsg}</p>}
-          </Card>
-
-<Card title="Detección y posiciones" note="pasos A4 y A6 · calculadas en Python" delay={200}>
-            <p className="text-xs text-pretty text-muted">
-              El proceso corre por partes de un minuto y es reanudable. Cada parte que termina se puede revisar aquí mientras siguen las
-              demás:
-            </p>
-            <pre className="tc mt-2 overflow-x-auto rounded-xl bg-bg/70 p-3 text-[11px] text-ink-2">{`python -m sportsan.tracking.process --benchmark
-python -m sportsan.tracking.process --start 0:33:20 --end 0:34:20`}</pre>
-            <p className="mt-2 text-xs text-pretty text-faint">
-              <code>process</code> une la detección con la biblioteca de calibración y da también la posición en la cancha.{" "}
-              <code>detect</code> hace solo las cajas, sin biblioteca.
-            </p>
-            <label className={`${btn} relative mt-3 cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`}>
-              <UsersThree size={15} />
-              {dets ? "Cargar otra parte" : "Cargar detecciones (JSON)"}
-              <input type="file" accept=".json" className="sr-only" onChange={onDetsFile} />
-            </label>
-            <span className="mt-3 ml-2 inline-block">
-              <LocalPick dir={`matches/${matchId}/tracking`} pattern={/^tracks_v\d+_\d+_\d+\.json$/} label="De la carpeta" current={dets?.name} onFile={(f) => void onDetsFile(asEvent([f]))} />
-            </span>
-            {detsMsg && <p className="mt-2 text-xs text-warn">{detsMsg}</p>}
-            {dets && (
-              <div className="mt-4 border-t border-line-soft pt-4">
-                {dets.hasPositions && (
-                  <div className="mb-4">
-                    <Pitch showDirection={false} className="rounded-xl">
-                      {boxes
-                        ?.filter((b) => b[11] && b[9] !== null && b[10] !== null)
-                        .map((b) => (
-                          <g key={b[0]}>
-                            <circle cx={b[9] as number} cy={b[10] as number} r={1.5} fill={TEAM_COLORS[b[12]] ?? trackColor(b[0])} stroke="var(--color-bg)" strokeWidth={0.3} />
-                            <text x={b[9] as number} y={(b[10] as number) - 2.2} textAnchor="middle" fontSize={2.4} fontFamily="var(--font-mono)" fill="var(--color-muted)">
-                              {b[0]}
-                            </text>
-                          </g>
-                        ))}
-                    </Pitch>
-                    <p className="mt-1 text-[11px] text-faint">
-                      Posición de cada caja en la cancha (el pie, pasado por la calibración). Si no hay equipos asignados, el color es el del
-                      track.
-                    </p>
-                  </div>
-                )}
-                <div className="flex flex-wrap gap-x-8 gap-y-3">
-                  <div>
-                    <div className="num text-4xl text-ink">{dets.quality.on_pitch_median ?? dets.quality.people_median ?? "–"}</div>
-                    <div className="mt-1 text-[11px] text-muted">{dets.hasPositions ? "personas en la cancha (mediana)" : "personas por cuadro (mediana)"}</div>
-                  </div>
-                  <div className="border-l border-line-soft pl-4">
-                    <div className="num text-4xl text-ink-2">{dets.quality.on_pitch_tracks ?? dets.quality.tracks ?? "–"}</div>
-                    <div className="mt-1 text-[11px] text-muted">
-                      tracks · {dets.quality.on_pitch_tracks_long ?? dets.quality.tracks_long ?? 0} de principio a fin
-                      {dets.quality.on_pitch_tracks_short !== undefined && ` · ${dets.quality.on_pitch_tracks_short} de menos de 1.5 s`}
-                    </div>
-                  </div>
-                  <div className="border-l border-line-soft pl-4">
-                    <div className={`num text-4xl ${(dets.quality.on_pitch_tracks_per_person ?? dets.quality.tracks_per_person ?? 0) > 3 ? "text-warn" : "text-accent-200"}`}>
-                      {dets.quality.on_pitch_tracks_per_person ?? dets.quality.tracks_per_person ?? "–"}
-                    </div>
-                    <div className="mt-1 text-[11px] text-muted">tracks por persona</div>
-                  </div>
-                  {dets.quality.calibrated_share !== undefined && (
-                    <div className="border-l border-line-soft pl-4">
-                      <div className="num text-4xl text-ink-2">{Math.round(dets.quality.calibrated_share * 100)} %</div>
-                      <div className="mt-1 text-[11px] text-muted">cuadros calibrados</div>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button type="button" className={btn} onClick={() => seekFrame(dets.start)}>
-                    Ir al inicio de la parte
-                  </button>
-                  <span className="tc text-[11px] text-faint">
-                    cuadros {dets.start} a {dets.end} · 1 de cada {dets.stride}
-                  </span>
-                  <button type="button" className="btn btn-ghost ml-auto" onClick={() => setDets(null)}>
-                    Quitar
-                  </button>
-                </div>
-                {(dets.quality.low_visibility?.length ?? 0) > 0 && (
-                  <div className="mt-3 text-xs text-muted">
-                    Subtramos con casi nadie a la vista:{" "}
-                    {dets.quality.low_visibility?.map(([a0, b0]) => (
-                      <button key={a0} type="button" className="tc link mr-2" onClick={() => seekFrame(a0)}>
-                        {fmtT(a0 / fps)}–{fmtT(b0 / fps)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <p className="mt-3 text-xs text-pretty text-faint">
-                  Cada caja lleva el número de su track, con un color fijo. Si una jugadora cambia de número a mitad de la parte, el
-                  seguimiento se rompió ahí: eso es lo que se arreglará en la mesa de corrección. «Tracks por persona» cerca de 1 es lo
-                  ideal; incluye a la gente de la banca y la grada, que se descarta al pasar a metros.
-                </p>
-              </div>
-            )}
-          </Card>
-
-          <Card title="Propagación entre anclas" note="calculada en Python" delay={220}>
-            <ol className="space-y-1.5 text-xs text-pretty text-muted">
-              <li>1. Guarda dos o más anclas dentro de una jugada (una al inicio y otra al final; mejor una tercera en medio).</li>
-              <li>2. Exporta las anclas (botón de arriba) y ejecuta en la carpeta del proyecto:</li>
-            </ol>
-            <pre className="tc mt-2 overflow-x-auto rounded-xl bg-bg/70 p-3 text-[11px] text-ink-2">python -m sportsan.tracking.propagate --anchors anchors_{matchId}_{videoId}.json</pre>
-            <p className="mt-2 text-xs text-pretty text-muted">
-              3. Carga aquí el archivo <code>calib_…json</code> que escribe en <code>tracking/</code> y recorre el tramo: la rejilla
-              punteada es la calibración propagada.
-            </p>
-            <details className="mt-3 text-xs text-pretty text-muted">
-              <summary className="link cursor-pointer">Biblioteca: calibrar una vez y ubicar cualquier jugada</summary>
-              <p className="mt-2">
-                Si el tramo calibrado es un barrido de lado a lado (antes del partido o una jugada que cruza la cancha), sirve de
-                referencia para el resto del video mientras la cámara no cambie de sitio:
-              </p>
-              <pre className="tc mt-2 overflow-x-auto rounded-xl bg-bg/70 p-3 text-[11px] text-ink-2">{`python -m sportsan.tracking.library build --track <calib del barrido>.json
-python -m sportsan.tracking.library locate --match ${matchId} --start 0:33:20 --end 0:33:35`}</pre>
-              <p className="mt-2">
-                <code>locate</code> escribe otro <code>calib_…json</code>, sin anclas a mano: se carga aquí igual. En la tabla, cada fila es
-                un ancla automática comparada con sus vecinas.
-              </p>
-            </details>
-            <label className={`${btn} relative mt-3 cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`}>
-              <Path size={15} />
-              {track ? "Cargar otra calibración" : "Cargar calibración (calib_… o tracks_…)"}
-              <input type="file" accept=".json" className="sr-only" onChange={onTrackFile} />
-            </label>
-            <span className="mt-3 ml-2 inline-block">
-              <LocalPick
-                dir={`matches/${matchId}/tracking`}
-                pattern={/^(calib_v\d+_\d+_\d+|tracks_v\d+_\d+_\d+)\.json$/}
-                label="De la carpeta"
-                current={track?.name}
-                onFile={(f) => void onTrackFile(asEvent([f]))}
-              />
-            </span>
-            {trackMsg && <p className="mt-2 text-xs text-warn">{trackMsg}</p>}
-
-            {track && (
-              <div className="mt-4 border-t border-line-soft pt-4">
-                <div className="flex flex-wrap gap-x-8 gap-y-3">
-                  <div>
-                    <div className="num text-4xl text-ink">{track.end - track.start + 1}</div>
-                    <div className="mt-1 text-[11px] text-muted">
-                      cuadros · {track.start} a {track.end}
-                    </div>
-                  </div>
-                  <div className="border-l border-line-soft pl-4">
-                    <div className={`num text-4xl ${track.meanDis !== null && track.meanDis > WARN_M ? "text-warn" : "text-accent-200"}`}>
-                      {track.meanDis === null ? "–" : track.meanDis.toFixed(2)} <span className="text-lg text-faint">m</span>
-                    </div>
-                    <div className="mt-1 text-[11px] text-muted">discrepancia media adelante / atrás</div>
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className={btn} onClick={() => seekFrame(track.start)}>
-                    Ir al inicio del tramo
-                  </button>
-                  {track.worst && (
-                    <button type="button" className={btn} onClick={() => track.worst && seekFrame(track.worst.frame)}>
-                      Ir al peor cuadro <span className="tc">({track.worst.dis.toFixed(2)} m)</span>
-                    </button>
-                  )}
-                  <button type="button" className="btn btn-ghost" onClick={() => setTrack(null)}>
-                    Quitar
-                  </button>
-                </div>
-                {track.check.length > 0 && (
-                  <table className="table-nocturne mt-4 w-full text-left text-xs">
-                    <thead>
-                      <tr>
-                        <th className="pb-1">Ancla comprobada</th>
-                        <th className="pb-1">Error medio (m)</th>
-                        <th className="pb-1">Máximo (m)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {track.check.map((c) => (
-                        <tr key={c.frame} className={`border-t border-line-soft ${(c.error_max_m ?? 0) > 2 ? "bg-warn-900" : ""}`}>
-                          <td className="py-1">
-                            <button type="button" className="tc link" onClick={() => seekFrame(c.frame)}>
-                              cuadro {c.frame}
-                            </button>
-                          </td>
-                          <td className="tc">{c.error_mean_m === null ? "—" : c.error_mean_m.toFixed(2)}</td>
-                          <td className="tc">{c.error_max_m === null ? "—" : c.error_max_m.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-                <p className="mt-3 text-xs text-pretty text-faint">
-                  Cómo leerlo: la discrepancia compara lo que dice el ancla anterior con lo que dice la siguiente; si pasa de {WARN_M} m,
-                  falta un ancla cerca de ese cuadro. El ancla de control es la prueba real: se quita un ancla intermedia y se mide a
-                  cuántos metros quedan sus puntos (meta: menos de 2 m). Aparece con tres o más anclas.
-                </p>
+            {anchors.length > 0 && (
+              <div className="mt-3 text-xs text-muted">
+                Después, en la terminal (carpeta <code>demo</code>, con .venv activado):
+                <Command className="mt-1.5">{propagateCmd}</Command>
               </div>
             )}
           </Card>

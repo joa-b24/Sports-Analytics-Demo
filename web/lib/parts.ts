@@ -88,11 +88,18 @@ export function manualBall(file: TracksFile, edits: TrackEdits): BallPoint[] {
   return out.sort((a, b) => a.frame - b.frame);
 }
 
-// One ball position per frame (a hand mark wins over an event), with short stretches between known positions
-// joined by a straight line on the processed frames. Longer stretches stay empty.
-export function ballPath(known: BallPoint[], fps: number, stride: number, maxFillS = BALL_FILL_S): BallPoint[] {
+// One ball position per frame, with short stretches between known positions joined by a straight line on the
+// processed frames. Longer stretches stay empty. Hand marks win: a tagged event (whose time and place are only
+// roughly the ball's) is used only where no hand mark is within maxFillS, so it fills what was not marked instead of
+// pulling the ball off its path.
+export function ballPath(known: BallPoint[], fps: number, stride: number, maxFillS = BALL_FILL_S, links: { from: number; to: number }[] = []): BallPoint[] {
+  // Two known positions inside a line drawn by hand are joined whatever the time between them.
+  const linked = (a: number, b: number) => links.some((l) => l.from <= a && b <= l.to);
+  const manual = known.filter((p) => p.source === "manual").map((p) => p.frame);
+  const nearManual = (f: number) => manual.some((m) => Math.abs(m - f) / fps <= maxFillS);
   const byFrame = new Map<number, BallPoint>();
   for (const p of known) {
+    if (p.source === "event" && nearManual(p.frame)) continue;
     const cur = byFrame.get(p.frame);
     if (!cur || (p.source === "manual" && cur.source !== "manual")) byFrame.set(p.frame, p);
   }
@@ -101,7 +108,7 @@ export function ballPath(known: BallPoint[], fps: number, stride: number, maxFil
   pts.forEach((p, i) => {
     out.push(p);
     const next = pts[i + 1];
-    if (!next || (next.frame - p.frame) / fps > maxFillS) return;
+    if (!next || ((next.frame - p.frame) / fps > maxFillS && !linked(p.frame, next.frame))) return;
     for (let f = p.frame + stride; f < next.frame; f += stride) {
       const k = (f - p.frame) / (next.frame - p.frame);
       out.push({ frame: f, x: p.x + (next.x - p.x) * k, y: p.y + (next.y - p.y) * k, source: "interpolated" });
@@ -150,6 +157,8 @@ export interface Joined {
   start_frame: number;
   end_frame: number;
   stride: number;
+  // Real size of the venue (m): positions are normalised to 105 x 68, distances are measured in these meters.
+  venue: { length_m: number; width_m: number } | null;
   parts: { start_frame: number; end_frame: number; corrected: boolean; linked_to_previous: number }[];
   smoothing: null | { max_speed_ms: number; max_fill_s: number; window_s: number; outliers: number; filled: number; openGaps: number };
   people: JoinedPerson[];
@@ -307,6 +316,7 @@ export function joinParts(input: Part[], o: JoinOptions): Joined {
   });
 
   const knownBall = [...(o.ball ?? []), ...parts.flatMap((p) => (p.edits ? manualBall(p.file, p.edits) : []))];
+  const ballLinks = parts.flatMap((p) => p.edits?.ballLinks ?? []);
   const last = parts[parts.length - 1].file;
   return {
     schema_version: 2,
@@ -317,13 +327,77 @@ export function joinParts(input: Part[], o: JoinOptions): Joined {
     start_frame: first.start_frame,
     end_frame: last.end_frame,
     stride: first.stride,
+    venue: first.venue?.length_m && first.venue?.width_m ? { length_m: first.venue.length_m, width_m: first.venue.width_m } : null,
     parts: parts.map((p, k) => ({ start_frame: p.file.start_frame, end_frame: p.file.end_frame, corrected: hasCorrections(p.edits), linked_to_previous: linked[k] })),
     smoothing: o.smooth ? { max_speed_ms: o.smooth.maxSpeedMs, max_fill_s: o.smooth.maxFillS, window_s: o.smooth.windowS, ...totals } : null,
     people: peopleOut,
-    ball: ballPath(knownBall, first.fps, first.stride).map((b) => ({ frame: b.frame, x: r2(b.x), y: r2(b.y), source: b.source })),
+    ball: ballPath(knownBall, first.fps, first.stride, BALL_FILL_S, ballLinks).map((b) => ({ frame: b.frame, x: r2(b.x), y: r2(b.y), source: b.source })),
     // The processed frames of every part, plus the frames filled in the hole between two parts.
     frames: [...new Set([...parts.flatMap((p) => p.file.frames.map((fr) => fr.frame)), ...byFrame.keys()])]
       .sort((a, b) => a - b)
       .map((frame) => ({ frame, positions: byFrame.get(frame) ?? [] })),
   };
+}
+
+// How much of the time in play has a ball, and where it is missing. A mark (by hand or from an event) covers its frame,
+// two marks less than fillS apart cover what lies between them (the straight line drawn there), and `out` are the
+// moments reviewed as "out of play / not in sight", each covering outHalf frames to each side: they are left out of the
+// count. Stretches missing shorter than two processed frames are not reported.
+export function ballCoverage(o: {
+  marks: number[];
+  out: number[];
+  from: number;
+  to: number;
+  fps: number;
+  stride: number;
+  outHalf: number;
+  fillS?: number;
+  links?: { from: number; to: number }[];
+}): { share: number; missing: [number, number][] } {
+  const fill = (o.fillS ?? BALL_FILL_S) * o.fps;
+  const merge = (list: [number, number][]) => {
+    const out: [number, number][] = [];
+    for (const [a, b] of list.sort((x, y) => x[0] - y[0])) {
+      const last = out[out.length - 1];
+      if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+      else out.push([a, b]);
+    }
+    return out;
+  };
+  const clip = ([a, b]: [number, number]): [number, number] | null => {
+    const x = Math.max(o.from, a);
+    const y = Math.min(o.to, b);
+    return y > x ? [x, y] : null;
+  };
+  const marks = [...new Set(o.marks)].sort((a, b) => a - b);
+  const covered = merge(
+    [
+      ...marks.map((m) => [m - o.stride / 2, m + o.stride / 2] as [number, number]),
+      ...marks.slice(1).flatMap((m, i) => (m - marks[i] <= fill ? [[marks[i], m] as [number, number]] : [])),
+      ...(o.links ?? []).map((l) => [l.from, l.to] as [number, number]),
+    ].flatMap((x) => {
+      const c = clip(x);
+      return c ? [c] : [];
+    }),
+  );
+  const outs = merge(
+    o.out
+      .map((f) => [f - o.outHalf, f + o.outHalf] as [number, number])
+      .flatMap((x) => {
+        const c = clip(x);
+        return c ? [c] : [];
+      }),
+  );
+  // In play and without a ball: the stretch minus what is covered minus what is out.
+  const taken = merge([...covered, ...outs]);
+  const missing: [number, number][] = [];
+  let at = o.from;
+  for (const [a, b] of taken) {
+    if (a - at >= 2 * o.stride) missing.push([at, a]);
+    at = Math.max(at, b);
+  }
+  if (o.to - at >= 2 * o.stride) missing.push([at, o.to]);
+  const len = (l: [number, number][]) => l.reduce((n, [a, b]) => n + (b - a), 0);
+  const inPlay = Math.max(1, o.to - o.from - len(outs));
+  return { share: Math.max(0, Math.min(1, 1 - len(missing) / inPlay)), missing };
 }

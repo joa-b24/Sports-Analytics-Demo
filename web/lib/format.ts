@@ -76,3 +76,14 @@ export function downloadText(filename: string, text: string, mime = "text/plain"
   a.click();
   URL.revokeObjectURL(url);
 }
+
+// Whether a key press is text being written in a field (then shortcuts must not act). Sliders, checkboxes, drop-downs
+// and buttons keep the focus after a click, but they are not written in: shortcuts still work over them.
+const TEXT_INPUTS = new Set(["text", "number", "search", "email", "password", "tel", "url", ""]);
+export function isTyping(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  if (el.isContentEditable || el.tagName === "TEXTAREA") return true;
+  if (el.tagName !== "INPUT") return false;
+  return TEXT_INPUTS.has(((el as HTMLInputElement).getAttribute("type") ?? "").toLowerCase());
+}

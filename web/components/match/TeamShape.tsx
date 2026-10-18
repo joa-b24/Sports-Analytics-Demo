@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BinChart } from "@/components/charts";
+import { Command } from "@/components/Command";
 import { Card, input } from "@/components/Shell";
 import { readLocal } from "@/lib/local";
 import type { Match } from "@/lib/types";
@@ -70,7 +71,7 @@ export function TeamShapeCard({ match, videoIds }: { match: Match; videoIds: str
             ? "Todavía no hay métricas de equipo para este partido. Después de procesar el tracking, en la terminal (desde la carpeta del repo):"
             : "Este partido no tiene carpeta: se pone en «editar datos». Después, con el tracking procesado:"}
         </p>
-        <pre className="tc mt-2 overflow-x-auto rounded-xl bg-bg/70 p-3 text-[11px] text-ink-2">{command}</pre>
+        <Command className="mt-2">{command}</Command>
         <p className="mt-2 text-[11px] text-faint">
           --own-attacks dice hacia dónde ataca el equipo analizado en ese video (right = hacia la derecha de la cancha de la calibración). Sin él no
           hay alturas, solo ancho y largo.

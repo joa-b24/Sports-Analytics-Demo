@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyHint, cutHints } from "./cuts.ts";
+import { applyHint, applyTeamCuts, cutHints } from "./cuts.ts";
 import { editsKey, emptyEdits, hexToLab, identityOf, people } from "./tracks.ts";
 
 const BLUE = hexToLab("#2a4fb0");
@@ -56,3 +56,17 @@ test("the team of a person comes from the colours measured in the file, not from
   const p = people(f, emptyEdits(editsKey(f)), { own: "#ff00ff", opp: "#00ff00" }).find((x) => x.id === 1);
   assert.equal(p.team, "own");
 });
+
+test("all changes of shirt at once: one person with two changes ends as three", () => {
+  // Track 1 wears blue, then black from frame 13, then blue again from frame 27.
+  const f = file((i) => [...crowd(), box(1, 30 + 0.1 * i, 30, i < 13 || i >= 27 ? BLUE : BLACK, i < 13 || i >= 27 ? "own" : "opp")]);
+  const e = emptyEdits(editsKey(f));
+  const hints = cutHints(f, e).filter((h) => h.person === 1 && h.kind === "team");
+  assert.equal(hints.length, 2);
+  const r = applyTeamCuts(e, f, hints);
+  assert.equal(r.cuts, 2);
+  const ids = new Set(f.frames.map((fr) => identityOf(fr.boxes[4], fr.frame, r.edits)));
+  assert.equal(ids.size, 3);
+  assert.equal(identityOf(f.frames[0].boxes[4], 0, r.edits), 1);
+});
+

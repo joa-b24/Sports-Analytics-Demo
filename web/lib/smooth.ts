@@ -51,6 +51,19 @@ function speed(a: TrackPoint, b: TrackPoint, o: SmoothOptions): number {
   return Math.hypot((b.x - a.x) * o.metersPerUnit[0], (b.y - a.y) * o.metersPerUnit[1]) / dt;
 }
 
+// The holes of a person that the export will leave empty: longer than maxFillS, or where she reappears too far away
+// to have walked there (the same rule as fillGaps). Without smoothing (o null), every hole stays empty. A hole whose
+// ends have no position on the pitch also counts as open.
+export function openGaps(points: TrackPoint[], gaps: [number, number][], o: SmoothOptions | null): [number, number][] {
+  if (!o) return gaps;
+  const at = new Map(points.map((p) => [p.frame, p]));
+  return gaps.filter(([a, b]) => {
+    const pa = at.get(a);
+    const pb = at.get(b);
+    return !pa || !pb || (b - a) / o.fps > o.maxFillS || speed(pa, pb, o) > o.maxSpeedMs;
+  });
+}
+
 // One point per frame (a hand-marked one wins over a detection), in time order.
 function dedupe(points: TrackPoint[]): TrackPoint[] {
   const byFrame = new Map<number, TrackPoint>();

@@ -133,3 +133,16 @@ def test_track_json_is_serialisable_and_keeps_missing_frames_as_null():
     assert out["kind"] == "calib_track" and out["start_frame"] == 0 and out["end_frame"] == 4
     assert len(out["frames"][0]["H"]) == 9
     assert out["frames"][3]["H"] is None and out["frames"][3]["source"] == "none"
+
+
+def test_anchors_found_by_name_in_the_match_folder(tmp_path, monkeypatch):
+    from sportsan.tracking.propagate import find_anchors
+
+    target = tmp_path / "m1" / "tracking" / "anchors_m1_v2.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert find_anchors("anchors_m1_v2.json", tmp_path) == target
+    with pytest.raises(FileNotFoundError):
+        find_anchors("anchors_m1_v9.json", tmp_path)
+

@@ -1,33 +1,44 @@
 "use client";
 
-import { ArrowClockwise } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+import { ArrowClockwise, CaretDown, Check, FolderOpen } from "@phosphor-icons/react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listLocal, localFile } from "@/lib/local";
 
 const byNumber = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
 
-// Choose a file of a folder of the repository instead of looking for it on disk. Renders nothing when the files are
-// not reachable (the app is not running next to the repository), so the usual file button stays as the only way.
-export function LocalPick({
+// One button to open a file: a menu with the matching files of a folder of the repository (when the app runs next to
+// it) and, last, «Otro archivo…» to take one from anywhere on disk.
+export function FilePicker({
   dir,
   pattern,
   label,
+  icon,
+  accept = ".json",
   onFile,
   current,
   describe,
+  primary = false,
+  title,
 }: {
   // Folder, repository-relative: "matches/<carpeta>/tracking".
   dir: string;
   pattern: RegExp;
   label: string;
+  icon?: React.ReactNode;
+  accept?: string;
   onFile: (f: File) => void;
   // Name of the file already open, to mark it.
   current?: string | null;
   // Text shown for each file instead of its name.
   describe?: (name: string) => string;
+  primary?: boolean;
+  title?: string;
 }) {
   const [names, setNames] = useState<string[] | null>(null);
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   // By its text: a regular expression written inline is a new object on every render.
   const source = pattern.source;
   const refresh = useCallback(async () => {
@@ -36,42 +47,111 @@ export function LocalPick({
     setNames(files ? files.filter((f) => !f.dir && re.test(f.name)).map((f) => f.name).sort(byNumber) : null);
   }, [dir, source]);
   useEffect(() => {
-    let live = true;
-    const re = new RegExp(source);
-    void listLocal(dir).then((files) => live && setNames(files ? files.filter((f) => !f.dir && re.test(f.name)).map((f) => f.name).sort(byNumber) : null));
-    return () => {
-      live = false;
+    if (!open) return;
+    const away = (e: PointerEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
     };
-  }, [dir, source]);
-  if (names === null) return null;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", away);
+    window.addEventListener("keydown", esc, true);
+    return () => {
+      window.removeEventListener("pointerdown", away);
+      window.removeEventListener("keydown", esc, true);
+    };
+  }, [open]);
+  const pick = async (name: string) => {
+    setBusy(true);
+    const f = await localFile(`${dir}/${name}`);
+    setBusy(false);
+    setOpen(false);
+    if (f) onFile(f);
+  };
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <select
-        className="chip-select"
-        aria-label={label}
-        value=""
-        disabled={busy || names.length === 0}
-        onChange={async (e) => {
-          const name = e.target.value;
-          if (!name) return;
-          setBusy(true);
-          const f = await localFile(`${dir}/${name}`);
-          setBusy(false);
-          if (f) onFile(f);
+    <div ref={box} className="relative inline-block">
+      <button
+        type="button"
+        className={`${primary ? "btn btn-primary" : "btn"} gap-2`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={title}
+        onClick={() => {
+          // The folder is read each time the menu opens, so a part that just finished shows up.
+          if (!open) void refresh();
+          setOpen(!open);
         }}
       >
-        <option value="">{busy ? "Cargando…" : names.length === 0 ? `${label}: no hay archivos` : `${label} (${names.length})`}</option>
-        {names.map((n) => (
-          <option key={n} value={n}>
-            {n === current ? "● " : ""}
-            {describe ? describe(n) : n}
-          </option>
-        ))}
-      </select>
-      <button type="button" className="text-faint transition-colors hover:text-ink" title="Volver a leer la carpeta" aria-label="Volver a leer la carpeta" onClick={() => void refresh()}>
-        <ArrowClockwise size={13} />
+        {icon}
+        {busy ? "Cargando…" : label}
+        <CaretDown size={12} className={`opacity-70 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
       </button>
-    </span>
+      <input
+        ref={fileInput}
+        type="file"
+        accept={accept}
+        className="sr-only"
+        tabIndex={-1}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) onFile(f);
+        }}
+      />
+      {open && (
+        <div
+          role="menu"
+          className="enter absolute left-0 z-40 mt-1.5 w-72 overflow-hidden rounded-2xl bg-raised p-1.5 text-sm shadow-[0_0_0_1px_var(--color-line-strong),0_20px_40px_-16px_rgba(0,0,0,.7)]"
+          style={{ "--d": "0ms" } as React.CSSProperties}
+        >
+          {names !== null && (
+            <>
+              <div className="flex items-center justify-between px-2.5 pt-1 pb-1.5 text-[11px] text-faint">
+                <span className="truncate">{dir.split("/").slice(-2).join("/")}</span>
+                <button type="button" className="rounded-md p-0.5 transition-colors hover:text-ink" title="Volver a leer la carpeta" aria-label="Volver a leer la carpeta" onClick={() => void refresh()}>
+                  <ArrowClockwise size={12} />
+                </button>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                {names.length === 0 && <div className="px-2.5 py-2 text-xs text-faint">No hay archivos de este tipo en la carpeta.</div>}
+                {names.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    role="menuitem"
+                    disabled={busy}
+                    title={n}
+                    onClick={() => void pick(n)}
+                    className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left transition-colors hover:bg-accent/15 hover:text-ink ${
+                      n === current ? "text-accent-200" : "text-ink-2"
+                    }`}
+                  >
+                    <span className="grid w-3.5 shrink-0 place-items-center">{n === current && <Check size={12} weight="bold" />}</span>
+                    <span className="tc min-w-0 flex-1 truncate">{describe ? describe(n) : n}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="my-1 h-px bg-line-soft" />
+            </>
+          )}
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-ink-2 transition-colors hover:bg-accent/15 hover:text-ink"
+            onClick={() => {
+              setOpen(false);
+              fileInput.current?.click();
+            }}
+          >
+            <FolderOpen size={14} className="shrink-0" />
+            Otro archivo…
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

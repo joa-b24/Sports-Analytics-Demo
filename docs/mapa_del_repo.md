@@ -46,7 +46,7 @@ npm run dev
 | `python -m yt_dlp ...` | `demo/` | Descarga un video (línea completa en la sección 9) |
 | `python -m sportsan.ingest.cut_segments` | `demo/` | Corta los tramos de juego en clips |
 | `python -m sportsan.ingest.strava_sync auth / sync` | `demo/` | Autoriza Strava / baja sesiones |
-| `python -m sportsan.tracking.propagate --anchors ...` | `demo/` | Calibración entre anclas de un tramo |
+| `python -m sportsan.tracking.propagate --anchors ...` | `demo/` | Calibración entre anclas de un tramo. Acepta la ruta completa o solo el nombre `anchors_<partido>_<video>.json` (lo busca en `matches/*/tracking/`) |
 | `python -m sportsan.tracking.library build / locate` | `demo/` | Biblioteca de calibración |
 | `python -m sportsan.tracking.process` | `demo/` | Detección + calibración de un video |
 | `npm run dev` | `demo/web/` | Abre la app |
@@ -119,7 +119,7 @@ Cada pantalla es un archivo `web/app/<ruta>/page.tsx`. El menú lateral está en
 | Jugadoras | `/jugadoras` | `app/jugadoras/page.tsx` | Plantilla (pegar lista, editar números; `components/RosterCard.tsx`) y lo que se sabe de cada jugadora. El perfil sigue bloqueado |
 | Sesiones | `/entrenamientos` | `app/entrenamientos/page.tsx` | Importa sesiones por CSV; carga, ACWR, cuestionario |
 | Planificación | `/planificacion` | `app/planificacion/page.tsx` | Vista previa bloqueada |
-| (dentro del partido) | pestaña Calibración | `components/workspace/Calibration.tsx` | Anclas a mano sobre el video, comprobación de una calibración, visor de detecciones. Ya no está en el menú; `/calibracion` sigue funcionando |
+| (dentro del partido) | pestaña Calibración | `components/workspace/Calibration.tsx` | Arriba: pasos, «Video y sede» (diálogo), cargar calibración o detecciones y «Comandos» (diálogo con los comandos de Python para copiar). Izquierda: video y lo cargado. Derecha, con scroll propio y en orden de uso: puntos de la sede, lupa y ajuste fino, ajuste y guardar ancla, anclas guardadas (Exportar las escribe en `tracking/` del partido). Ya no está en el menú; `/calibracion` sigue funcionando |
 | (dentro del partido) | pestaña Tracking | `components/workspace/Correction.tsx` | Colores de uniforme, comando de proceso y mesa de corrección (5.4). Ya no está en el menú; `/correccion` sigue funcionando |
 | Carga de datos | `/datos` | `app/datos/page.tsx` | Importar y exportar: respaldo completo, eventos, sesiones |
 | Configuración | `/configuracion` | `app/configuracion/page.tsx` | Sedes: medidas, rejilla, colores, medición sobre imagen satelital |
@@ -133,9 +133,9 @@ Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Track
 | Pestaña | Archivo | Qué hace | Dónde está el cálculo |
 |---|---|---|---|
 | Tramos | `SegmentsTab.tsx` | Marcas de corte → tramos de juego/pausa; exporta e importa `segments.csv` | `lib/segments.ts` |
-| Etiquetado | `TagTab.tsx` | Tres pasadas: 1 identificar (teclas, etiqueta sobre el video, aviso de duplicado, `J` = jugada), 2 revisar uno por uno (`ReviewPanel.tsx`), 3 ejecución: destino de tiros en la portería (`GoalFrame.tsx`) y de centros y córners en la cancha. Bajo el video, línea de tiempo (`VideoTimeline.tsx`) y eventos activos; abajo, la tabla con filtros (`EventsTable.tsx`) | `lib/tagging.ts`; catálogo en `lib/types.ts` |
+| Etiquetado | `TagTab.tsx` | Cuatro pasadas: 1 identificar (teclas, etiqueta sobre el video, aviso de duplicado, `J` = jugada), 2 revisar uno por uno (`ReviewPanel.tsx`), 3 ejecución: destino de tiros en la portería (`GoalFrame.tsx`) y de centros y córners en la cancha; 4 pases (`PassTagger.tsx`): el número de cada jugadora que recibe, en orden, para la red de pases. Bajo el video, línea de tiempo (`VideoTimeline.tsx`) y eventos activos; abajo, la tabla con filtros (`EventsTable.tsx`) | `lib/tagging.ts`; catálogo en `lib/types.ts` |
 | Jugadas | `PlaysTab.tsx` | Jugadas y su animación: posiciones medidas si la jugada cae en una parte corregida (`tracks_fixed_*`), si no keyframes a mano | `lib/positions.ts` (`positionsAt`), `lib/stats.ts` (`interpolate`) |
-| Análisis | `AnalysisTab.tsx` | Respuestas a las preguntas del cuerpo técnico; abajo, con posiciones medidas: forma del bloque (`TeamShape.tsx`) y mapa de calor, red de pases y jugadoras detrás del balón (`PositionsCards.tsx`, de las partes corregidas) | `lib/analysis.ts`, `lib/stats.ts`, `lib/positions.ts`, `lib/fixed.ts` |
+| Análisis | `AnalysisTab.tsx` | Respuestas a las preguntas del cuerpo técnico; «Pases y jugadoras» (`PassesCards.tsx`: red de pases y tabla por jugadora, de los pases etiquetados); con posiciones medidas: forma del bloque (`TeamShape.tsx`), mapa de calor y jugadoras detrás del balón (`PositionsCards.tsx`; partes corregidas y, donde no las hay, las procesadas contadas solo por equipo) | `lib/analysis.ts`, `lib/stats.ts`, `lib/passes.ts`, `lib/positions.ts`, `lib/fixed.ts` |
 | Informe | `ReportTab.tsx` | Informe imprimible | los mismos |
 
 ### 5.3 Piezas compartidas (`web/components/`)
@@ -151,6 +151,9 @@ Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Track
 | `motion.tsx` | Aparición al hacer scroll (`Reveal`) y cifras que cuentan (`CountUp`) |
 | `VenueEditor.tsx` | Editor de sedes |
 | `MatchList.tsx` | Lista de partidos y alta de uno nuevo |
+| `LocalPick.tsx` | `FilePicker`: un botón con menú para abrir un archivo de la carpeta del partido (se relee al abrirlo) o «Otro archivo…» de cualquier sitio; `partLabel` |
+| `BallStrip.tsx` | Barra de dónde hay balón para animar en un tramo (posición conocida o trazada entre marcas, marcas a mano y de eventos); bajo el video de la mesa y bajo la animación de Jugadas |
+| `Command.tsx` | `Command` (comando de terminal con botón de copiar) y `CopyButton` (copia y muestra una palomita) |
 | `Modal.tsx` | `Modal` (diálogo que se cierra con Esc o clic fuera) e `IconButton` (botón de solo icono; el texto va en el título) |
 
 ### 5.4 La mesa de corrección, por zonas
@@ -161,13 +164,15 @@ Todo está en `components/workspace/Correction.tsx` (pestaña Tracking del parti
 |---|---|---|
 | Encabezado | Vista Jugadoras / Balón; botones Uniformes y Exportar… (abren un diálogo) y Guardar | |
 | Guardar | Escribe `tracks_fixed_*.json` y `labels_*.json` en `matches/<id>/tracking/`; solo si no puede, los descarga | `buildLabels` |
-| Video con cajas | Clic en una caja la selecciona; modos unir (`u`), marcar a mano (`p`), marcar balón (`b`). La candidata que se está revisando sale con recuadro amarillo punteado y una barra debajo: Unir (Enter), No (X), otra vez (R), cerrar (Esc) | `identityOf`, `setManual`, `setBall` |
-| Bajo el video: la seleccionada | Su fila (nombre, equipo, completa), herramientas con atajo (`u` unir, `s` partir aquí, `p` marcar a mano, `Supr` no es jugadora, `Esc` soltar), su línea de presencia (arrastrar elige un rango para quitar, separar o partir) y avisos en fichas: candidatas (`n` ver la siguiente; ojo / ✓ / ✗), cambios de camiseta (ojo / tijera), trozos cortos suyos, dos cajas a la vez y huecos (`g` siguiente) | `personTimeline`, `dropRange`, `separateRange`, `merge`, `candidatesFor`, `applyHint`, `splitPerson`, `suggestAbsorb` |
-| Lista de personas (scroll propio) | Nombre (= identidad), equipo, completa, filtros (incluido «solo con cambio de camiseta»); dibuja 80 filas y «Mostrar más» | `people`, `setPerson` |
+| Video con cajas | Clic en una caja la selecciona; modos unir (`u`), marcar a mano (`p`), marcar balón (`b`). Zoom que sigue a la seleccionada (`z`: ×1, ×2, ×3; se recuerda en el navegador). La candidata que se está revisando sale con recuadro amarillo punteado y una barra debajo: Unir (Enter), No (X), otra vez (R), cerrar (Esc) | `identityOf`, `setManual`, `setBall` |
+| Bajo el video: la seleccionada | Su fila (nombre, equipo, completa), herramientas con atajo (`g` hueco por revisar, a 1 s de donde se perdió y 1 s más cada vez; `c` siguiente cambio de camiseta; `d` siguiente cuadro con dos cajas; `v` verificada; `u` unir, `s` partir aquí y seguir con el segundo tramo, `Shift S` partir y quedarse en el primero, `p` marcar a mano, `Supr` no es jugadora, `Esc` soltar), su línea de presencia (arrastrar elige un rango para quitar, separar o partir) y avisos en fichas: candidatas (`n` ver la siguiente; ojo / ✓ / ✗), cambios de camiseta (ojo / tijera), trozos cortos suyos, dos cajas a la vez y huecos por revisar: en medio de la imagen y de más de 2 s o imposibles (`g` siguiente; rojo en la línea, ficha verde cuando no queda ninguno); los de fuera de cuadro, en gris, no cuentan (`offCamera`: estaba en el borde de la imagen al perderla o al encontrarla) | `personTimeline`, `dropRange`, `separateRange`, `merge`, `candidatesFor`, `applyHint`, `splitPerson`, `suggestAbsorb` |
+| Lista de personas (título: verificadas, huecos por revisar y cuántas hay; cada fila con fichas de huecos por revisar y dos cajas que llevan al primero; con el filtro Árbitras o Sin equipo, «Descartar las N que se ven»; `v` verifica y salta a la siguiente con trabajo pendiente, primero las nuestras con nombre; por defecto solo las que tienen nombre; con una seleccionada, arriba sus candidatas y los trozos sin nombre de su equipo vistos en sus huecos; scroll propio; su ancho se arrastra en la línea que la separa del video, doble clic la deja como estaba) | Nombre (= identidad), equipo, completa, filtros (incluido «solo con cambio de camiseta»); dibuja 80 filas y «Mostrar más» | `people`, `setPerson` |
 | Diálogo Limpieza rápida | Trozos de menos de 1 s: añadir a su jugadora o descartar | `duplicatesAmong`, `suggestAbsorb`, `applyAbsorb` |
 | En la cancha | Posiciones del cuadro, rastro de la seleccionada, balón | `measuredPaths`, `ballPath` |
 | Diálogo Uniformes | Colores por equipo y porteras; escribe en `match.yaml` | `teamOfColor`, `kitOfColor` |
-| Vista Balón | Marcas a mano y balón desde eventos | `manualBall`, `eventBall` |
+| Vista Balón | Barra compacta junto al video (revisado %, «No se ve / fuera» con `Enter`, paso 0.5/1/2 s, cajas con `h`, engrane para el balón desde eventos) y «En la cancha» al lado; clic en el balón marca y avanza; `→` un paso, `Alt →` un cuadro, `Tab` dos pasos (`Mayús` + `Tab` atrás), `Supr` quita la marca, `n` va a donde falta, `i` traza una recta a mano desde la última marca hasta el siguiente clic (pases largos, balones por alto). No se seleccionan jugadoras. La barra del balón cuenta el % del tiempo en juego: lo marcado como fuera no falta | `manualBall`, `eventBall`, `setBall`, `BallStrip` |
+| Estado de la parte | En el encabezado y en el menú de partes: «completa» con al menos 10 jugadoras verificadas en la mesa (con nombre y ✓; pueden ser más por los cambios; en verde desde 10) y balón en el 95 % del tiempo en juego. Es la misma medida que la barra del balón (`ballCoverage`: marcas, rectas de hasta 3 s y eventos; lo marcado «fuera / no se ve» no cuenta). En la vista Balón, `n` lleva al siguiente tramo en juego sin balón (rojo en la barra). Los avisos se quitan solos a los 6 s. Al completarse (con la revisión rápida ya aplicada) se descartan las personas sin nombre de nuestro equipo, las rivales de menos de 1 s, árbitras y sin equipo. «Restablecer…»: solo la mesa, o todo | `partStatus`, `leftovers` (`lib/quick.ts`), `ballCoverage` (`lib/parts.ts`) |
+| Vista Revisión rápida | Por jugadora (por defecto): eliges una, la señalas y la app solo se detiene donde pudo cambiarse de persona (tras un cruce con alguien de su equipo o uno largo con una rival, al reaparecer, donde el modelo le pasó el nombre); `Enter` es ella, `X` no, clic en otra caja = es esa, `←` `→` 1 s para buscarla, `Tab` siguiente jugadora. Por muestras: un cuadro cada 3 s: el número de cada caja resaltada (se elige sola la siguiente), `Enter` confirma lo que propone el modelo y pasa a la siguiente muestra, `−` = nadie, `Supr` quita; «Aplicar a la mesa» convierte el resultado en cortes, uniones y nombres (Ctrl+Z lo deshace); si ya hay jugadoras verificadas pregunta: «Agregar lo nuevo» (`applyQuickOnto`: las verificadas no se tocan y se conservan las correcciones) o «Todo desde cero» y rellena huecos de hasta 3 s al guardar | `quickModel`, `applyQuick` |
 | Diálogo Exportar | Suavizado y unir varias partes del mismo video en un archivo | `smoothTrack`, `joinParts` |
 
 El archivo `tracks_*.json` nunca se modifica. Tus correcciones se guardan aparte (en el navegador, por parte) y se aplican encima; por eso todo se puede deshacer.
@@ -195,6 +200,8 @@ Son funciones puras con test al lado (`<nombre>.test.mjs`). Si un número de la 
 | `labels.ts` | Las correcciones de una parte como etiquetas (`labels_*.json`), sin nombres | |
 | `parts.ts` | Trayectorias medidas, balón, unión de varias partes | `BALL_FILL_S` (3), `LINK_EDGE_S` (0.5), `LINK_SLACK_M` (2), `LINK_SPEED_MS` (8) |
 | `smooth.ts` | Limpieza de trayectorias al exportar | `SMOOTH_DEFAULTS` (9 m/s, 2 s, 0.5 s) |
+| `quick.ts` | Revisión rápida: nombres dados en cuadros de muestra (uno cada 3 s) que se extienden a toda la parte; corta en el cruce más probable cuando un track recibe dos nombres o no se confirmó en una muestra, une por nombre y pasa el nombre a trozos que nacen justo donde acabó otro | `SAMPLE_S` (3) |
+| `passes.ts` | Pases etiquetados a mano: cadena de toques → pases, estadística por jugadora, red de pases (posición media de los eventos de cada una) | |
 | `positions.ts` | Sobre las partes corregidas: dirección de ataque deducida, mapa de calor, quién tiene el balón, pases y pérdidas leídos del balón, jugadoras detrás del balón, posiciones de un instante | `POSSESS_M` (2), `PASS_MAX_S` (5), `ATTACK_MIN_DIFF_M` (4) |
 | `fixed.ts` | Carga las `tracks_fixed_*.json` de la carpeta del partido y las orienta (la dirección dicha en la mesa o la deducida); no es pura | |
 | `format.ts` | Tiempos, CSV, descarga de archivos | |
@@ -228,7 +235,7 @@ Consecuencias: otro navegador u otra computadora empiezan vacíos; borrar los da
 | `io.py` | Lee parquets validando | no |
 | `ingest/cut_segments.py` | Corta con ffmpeg los tramos `juego` de `segments.csv` | sí |
 | `ingest/strava_sync.py` | Autoriza Strava y baja sesiones (resumen y esfuerzo relativo de todas, series de las de fútbol) a `data/strava/` | sí |
-| `ingest/download_videos.py` | Baja los videos de `matches/videos.csv` que falten y los añade a su `match.yaml` | sí |
+| `ingest/download_videos.py` | Baja los videos de `matches/videos.csv` que falten (YouTube o cualquier enlace que acepte yt-dlp, como Facebook) y los añade a su `match.yaml` | sí |
 | `ingest/rename_match.py` | Renombra la carpeta de un partido según la convención, y su `match_id` en los archivos | sí |
 | `tracking/propagate.py` | Lleva la calibración de unas anclas a todos los cuadros entre ellas (movimiento de cámara) | sí |
 | `tracking/library.py` | Biblioteca de calibración: de un barrido calibrado, ubica cualquier otro cuadro del video | sí (`build`, `locate`) |

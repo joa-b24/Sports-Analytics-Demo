@@ -56,7 +56,7 @@ export function VideoTimeline({
             onClick={(ev) => {
               ev.stopPropagation();
               if (onPick) onPick(e);
-              else onSeek(Math.max(0, e.t_video - 3));
+              else onSeek(Math.max(0, e.t_video - 1));
             }}
             className={`absolute top-1.5 bottom-1.5 w-[3px] -translate-x-1/2 rounded-full transition-[top,bottom,width] before:absolute before:-inset-x-1.5 before:-inset-y-1 hover:top-0.5 hover:bottom-0.5 hover:w-[5px] ${
               e.event_id === selected ? "top-0.5 bottom-0.5 w-[5px] outline-2 outline-white" : ""

@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { COLORS } from "@/components/Pitch";
 import { Card, btn, input } from "@/components/Shell";
 import type { PlayerHandle } from "@/components/VideoPlayer";
-import { fmtT } from "@/lib/format";
+import { fmtT, isTyping } from "@/lib/format";
 import type { Segment } from "@/lib/segments";
 import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
 import { ACTIVE_S, NO_FILTER, activeAt, duplicatesOf, eventsFor, knownPlayers, missingEnd, missingReview, type EventFilter, type Pass } from "@/lib/tagging";
@@ -24,6 +24,7 @@ import {
   type MatchEvent,
 } from "@/lib/types";
 import { EventsTable } from "./EventsTable";
+import { PassTagger } from "./PassTagger";
 import { ReviewPanel } from "./ReviewPanel";
 import { VideoTimeline } from "./VideoTimeline";
 
@@ -50,6 +51,7 @@ const PASSES: { id: Pass; label: string; help: string }[] = [
   { id: 1, label: "1 · Identificar", help: "Con el video corriendo: qué pasó y de qué equipo. Una tecla por evento." },
   { id: 2, label: "2 · Revisar", help: "Uno por uno: posición, jugadora, resultado, detalle y nota." },
   { id: 3, label: "3 · Ejecución", help: "Tiros, centros, córners, tiros libres y penales: a dónde fueron." },
+  { id: 4, label: "4 · Pases", help: "Quién se la pasa a quién, para la red de pases: el número de cada jugadora que recibe el balón, en orden." },
 ];
 const teamColor = (e: MatchEvent) => (e.team === "own" ? COLORS.own : e.team === "opp" ? COLORS.opp : "var(--color-faint)");
 
@@ -155,7 +157,7 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
       const h = handlers.current;
       if (h.pass !== 1) return;
       const el = e.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)) return;
+      if (isTyping(el)) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         h.undo();
@@ -186,7 +188,7 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
   // Over the video: the events the video is going through, plus the ones just tagged.
   const overlay = [...new Map([...active, ...recent.map((r) => events.find((e) => e.event_id === r.id))].filter((e): e is MatchEvent => !!e).map((e) => [e.event_id, e])).values()];
   const open = (e: MatchEvent) => {
-    if (pass === 1) return playerRef.current?.seek(Math.max(0, e.t_video - 3), true);
+    if (pass === 1) return playerRef.current?.seek(Math.max(0, e.t_video - 1), true);
     if (!eventsFor(pass, events, filter).some((x) => x.event_id === e.event_id)) setFilter(NO_FILTER);
     setCurrent(e.event_id);
   };
@@ -416,7 +418,9 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
         </Card>
       )}
 
-      {pass !== 1 && (
+      {pass === 4 && <PassTagger match={match} videoId={videoId} period={period} time={time} playerRef={playerRef} />}
+
+      {(pass === 2 || pass === 3) && (
         <ReviewPanel
           pass={pass}
           match={match}
@@ -453,6 +457,7 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
             activeIds={activeIds}
           />
         );
+        if (pass === 4) return null;
         return tableSlot ? createPortal(table, tableSlot) : table;
       })()}
     </div>

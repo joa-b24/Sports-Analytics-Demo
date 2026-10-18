@@ -314,7 +314,7 @@ export function merge(edits: TrackEdits, into: number, from: number): TrackEdits
 }
 
 // An identity number that nobody has yet.
-function freshIdentity(edits: TrackEdits, file: TracksFile): number {
+export function freshIdentity(edits: TrackEdits, file: TracksFile): number {
   let max = 0;
   for (const fr of file.frames) for (const b of fr.boxes) max = Math.max(max, b[0], b[13] ?? 0);
   for (const s of edits.splits) max = Math.max(max, s.identity);
@@ -391,6 +391,58 @@ export function separateTrack(edits: TrackEdits, track: number, file: TracksFile
     edits: { ...edits, identity: { ...edits.identity, [String(track)]: identity }, splits: edits.splits.filter((s) => s.track !== track) },
     identity,
   };
+}
+
+// Only the stretch of one raw track that a person has around `frame` (its boxes in a row, with holes of at most
+// `maxGapS`) becomes somebody else; the rest of that track keeps the identity it had. For two boxes of one person in
+// one frame: the wrong one goes, the good stretches before and after it stay, and so do the cuts already made.
+export function separateRun(edits: TrackEdits, file: TracksFile, track: number, frame: number, maxGapS = 0.5): { edits: TrackEdits; identity: number } | null {
+  const person = (() => {
+    const fr = file.frames.find((f) => f.frame === frame);
+    const b = fr?.boxes.find((x) => x[0] === track);
+    return b ? identityOf(b, frame, edits) : null;
+  })();
+  if (person === null) return null;
+  // The frames of this track that belong to that person, in order.
+  const mine: { frame: number; box: DetBox }[] = [];
+  for (const fr of file.frames) {
+    const b = fr.boxes.find((x) => x[0] === track);
+    if (b && identityOf(b, fr.frame, edits) === person) mine.push({ frame: fr.frame, box: b });
+  }
+  const i = mine.findIndex((m) => m.frame === frame);
+  if (i < 0) return null;
+  const gap = maxGapS * file.fps;
+  let a = i;
+  while (a > 0 && mine[a].frame - mine[a - 1].frame <= gap) a--;
+  let b = i;
+  while (b < mine.length - 1 && mine[b + 1].frame - mine[b].frame <= gap) b++;
+  const identity = freshIdentity(edits, file);
+  const splits = [...edits.splits, { track, frame: mine[a].frame, identity }];
+  // After the stretch, the track goes back to what it was there (if it goes on at all).
+  const after = file.frames.find((f) => f.frame > mine[b].frame && f.boxes.some((x) => x[0] === track));
+  if (after) {
+    const box = after.boxes.find((x) => x[0] === track) as DetBox;
+    splits.push({ track, frame: after.frame, identity: identityOf(box, after.frame, edits) });
+  }
+  return { edits: { ...edits, splits }, identity };
+}
+
+// A hole of a person is "off camera" when she was at the edge of the image just before losing her or just after
+// finding her again: she went out of frame (or came back into it), and nothing can be fixed there. The other holes
+// happened in the middle of the image: there she was probably visible, and another piece of hers may be missing.
+export const EDGE_SHARE = 0.03;
+const framesIndex = new WeakMap<TracksFile, Map<number, TracksFile["frames"][number]>>();
+export function offCamera(file: TracksFile, edits: TrackEdits, person: number, gap: [number, number]): boolean {
+  let index = framesIndex.get(file);
+  if (!index) framesIndex.set(file, (index = new Map(file.frames.map((f) => [f.frame, f]))));
+  const m = EDGE_SHARE * (file.image_w || 1920);
+  const W = file.image_w || 1920;
+  const H = file.image_h || 1080;
+  const atEdge = (frame: number) => {
+    const box = index?.get(frame)?.boxes.find((b) => identityOf(b, frame, edits) === person);
+    return box ? box[1] <= m || box[2] <= m || box[3] >= W - m || box[4] >= H - m : false;
+  };
+  return atEdge(gap[0]) || atEdge(gap[1]);
 }
 
 // From `frame` on, this PERSON is somebody else: whatever she has from that frame onwards (the rest of the track she
@@ -591,7 +643,16 @@ export function setBall(edits: TrackEdits, frame: number, px: number, py: number
 }
 
 export function removeBall(edits: TrackEdits, frame: number): TrackEdits {
-  return { ...edits, ball: (edits.ball ?? []).filter((b) => b.frame !== frame) };
+  // A line that ended or started at that mark goes with it.
+  const links = (edits.ballLinks ?? []).filter((l) => l.from !== frame && l.to !== frame);
+  return { ...edits, ball: (edits.ball ?? []).filter((b) => b.frame !== frame), ...(edits.ballLinks ? { ballLinks: links } : {}) };
+}
+
+// The ball goes in a straight line from the mark at `from` to the mark at `to` (a long pass, a ball in the air).
+export function linkBall(edits: TrackEdits, from: number, to: number): TrackEdits {
+  const [a, b] = from < to ? [from, to] : [to, from];
+  const links = (edits.ballLinks ?? []).filter((l) => !(l.from === a && l.to === b));
+  return { ...edits, ballLinks: [...links, { from: a, to: b }] };
 }
 
 export function nearestFrame(file: Pick<TracksFile, "start_frame" | "end_frame" | "stride">, frame: number): number {

@@ -5,7 +5,7 @@ import { IconButton } from "@/components/Modal";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Card, btn } from "@/components/Shell";
 import type { PlayerHandle } from "@/components/VideoPlayer";
-import { downloadText, fmtT, parseCsv } from "@/lib/format";
+import { downloadText, fmtT, isTyping, parseCsv } from "@/lib/format";
 import { marksFromCsvRows, segmentAt, segmentsCsv, segmentsFromMarks, totalSeconds, type Segment } from "@/lib/segments";
 import { writeLocal } from "@/lib/local";
 import { mutate, uid } from "@/lib/store";
@@ -62,7 +62,7 @@ export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, 
     const keys: Record<string, SegmentKind | "fin"> = { g: "juego", p: "pausa", x: "no_medible", e: "fin" };
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTyping(el) || e.ctrlKey || e.metaKey || e.altKey) return;
       const tipo = keys[e.key.toLowerCase()];
       if (tipo) addRef.current(tipo);
     };

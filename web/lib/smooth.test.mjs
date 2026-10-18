@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SMOOTH_DEFAULTS, dropJumps, fillGaps, smoothRuns, smoothTrack } from "./smooth.ts";
+import { SMOOTH_DEFAULTS, dropJumps, fillGaps, openGaps, smoothRuns, smoothTrack } from "./smooth.ts";
 
 // 30 fps video, 1 of every 3 frames processed (10 positions per second), on a 105 x 68 venue (1 unit = 1 m).
 const O = { fps: 30, stride: 3, metersPerUnit: [1, 1], ...SMOOTH_DEFAULTS };
@@ -95,3 +95,12 @@ test("a short excursion of a few points is taken out; a real change of place is 
   assert.equal(dropJumps(away, O).removed, 0);
 });
 
+test("open holes: only those the export cannot fill", () => {
+  const o = { fps: 30, stride: 3, metersPerUnit: [1, 1], ...SMOOTH_DEFAULTS };
+  const p = (frame, x) => ({ frame, x, y: 30, source: "auto" });
+  // 1 s at walking pace (filled), 1 s with a 20 m jump (open), 3 s at walking pace (open: too long).
+  const pts = [p(0, 10), p(30, 12), p(60, 12), p(90, 32), p(120, 32), p(210, 35)];
+  const gaps = [[0, 30], [60, 90], [120, 210]];
+  assert.deepEqual(openGaps(pts, gaps, o), [[60, 90], [120, 210]]);
+  assert.deepEqual(openGaps(pts, gaps, null), gaps);
+});
