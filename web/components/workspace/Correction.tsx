@@ -13,6 +13,7 @@ import { SpeedControl } from "@/components/SpeedControl";
 import { CountUp, Reveal } from "@/components/motion";
 import { downloadText, fmtT, isTyping } from "@/lib/format";
 import { BALL_FILL_S, autoBall, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, metersPerUnit, pitchToPixel, pixelToPitch, type BallAuto, type Part } from "@/lib/parts";
+import { ballAnomalies, playerAnomalies, type Anomaly } from "@/lib/anomalies";
 import { applyHint, applyTeamCuts, cutHints, type CutHint } from "@/lib/cuts";
 import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
 import { buildLabels, labelsName } from "@/lib/labels";
@@ -178,7 +179,7 @@ export function Correction({
   // Quick review: the player all of the current one's names are moved to (fixing a mix-up).
   const [qMoveTo, setQMoveTo] = useState("");
   // Secondary work opens in a dialog: kit colours, quick cleaning of short pieces, export.
-  const [modal, setModal] = useState<null | "kits" | "cleanup" | "export" | "reset" | "ballEvents" | "applyQuick">(null);
+  const [modal, setModal] = useState<null | "kits" | "cleanup" | "export" | "reset" | "ballEvents" | "applyQuick" | "anomalies">(null);
   // A candidate being checked on the video ("does she go on as …?").
   const [peek, setPeek] = useState<Suggestion | null>(null);
   // Rows of the list drawn (the list of a long part has thousands of pieces).
@@ -438,6 +439,23 @@ export function Correction({
     setEdits(next);
     setMsg(`Balón quieto desde la marca anterior hasta ${fmtT(pf / fps)}.`);
   };
+  // Impossible movements of this part (lib/anomalies.ts): a player whose name jumped to someone else, a frame whose
+  // calibration is off (many jump at once) and a ball that would fly faster than any shot (a mark on a ball in the air).
+  const anomalies = useMemo(() => (data ? [...playerAnomalies(data, edits), ...ballAnomalies(ball, data)] : []), [data, edits, ball]);
+  const ballOdd = anomalies.filter((a) => a.kind === "ball").sort((a, b) => a.frame - b.frame);
+  const goAnomaly = (a: Anomaly) => {
+    seekFrame(Math.max(data?.start_frame ?? 0, a.frame - stride));
+    if (a.person !== undefined) setSel(a.person);
+    if (a.kind === "ball" && view !== "ball") {
+      setView("ball");
+      setMode("ball");
+    }
+  };
+  // a (ball view): the next impossible jump of the ball, from the start again after the last.
+  const nextBallAnomaly = () => {
+    if (ballOdd.length === 0) return setMsg("El balón no tiene saltos imposibles en esta parte.");
+    goAnomaly(ballOdd.find((a) => a.frame > frame + stride) ?? ballOdd[0]);
+  };
   // Supr: the hand mark of this frame goes; without one, the tracker's ball of this frame is rejected.
   const removeBallHere = () => {
     if (pf === null) return;
@@ -521,6 +539,7 @@ export function Correction({
       else if (e.key === "n") nextMissingBall();
       else if (e.key === "i") startBallLine();
       else if (e.key === "k") holdHere();
+      else if (e.key === "a") nextBallAnomaly();
       else if ((e.key === "Backspace" || e.key === "Delete") && pf !== null) removeBallHere();
       else if (e.key === "h") setPref("ball:boxes", ballBoxes ? "0" : "1");
       else return;
@@ -1678,10 +1697,18 @@ export function Correction({
           </span>
         </div>
       )}
+      {ballOdd.length > 0 && (
+        <div className="mt-2 text-[11px] text-pretty text-warn">
+          {ballOdd.length} salto(s) imposibles del balón (más de 35 m/s): casi siempre una marca sobre un balón por alto, que llevada al suelo cae
+          lejos. <kbd className="kbd">a</kbd> lleva al siguiente; quita esas marcas y traza una recta (<kbd className="kbd">i</kbd>) de donde sale a
+          donde cae.
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <span>
           Clic en el balón · <kbd className="kbd">→</kbd> paso · <kbd className="kbd">Alt →</kbd> cuadro · <kbd className="kbd">Tab</kbd> dos pasos ·{" "}
           <kbd className="kbd">n</kbd> donde falta · <kbd className="kbd">i</kbd> recta hasta donde cae · <kbd className="kbd">k</kbd> mantener ·
+          <kbd className="kbd">a</kbd> salto imposible ·
           clic en la cancha de la derecha también marca ·{" "}
           <kbd className="kbd">z</kbd> zoom
         </span>
@@ -2316,6 +2343,15 @@ export function Correction({
               </span>
             )}
             <span className="ml-auto flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className={`${btn} ${anomalies.some((a) => a.kind !== "camera") ? "text-warn" : ""}`}
+                onClick={() => setModal("anomalies")}
+                title="Movimientos imposibles: una jugadora que salta (su nombre pasó a otra), un cuadro con la calibración mal (muchas saltan a la vez) o un balón más rápido que cualquier tiro"
+              >
+                <Warning size={15} />
+                Anomalías {anomalies.length}
+              </button>
               <button type="button" className={btn} onClick={() => setModal("reset")} title="Volver a la propuesta del programa en esta parte">
                 <ArrowCounterClockwise size={15} />
                 Restablecer…
@@ -2371,6 +2407,48 @@ export function Correction({
               Se pierden las correcciones hechas en «Jugadoras» después de la revisión (vuelven huecos y dobles cajas). Solo se conservan las palomitas,
               por nombre. Ctrl + Z lo deshace.
             </p>
+          </div>
+        </Modal>
+      )}
+      {modal === "anomalies" && data && (
+        <Modal title="Movimientos imposibles" onClose={() => setModal(null)} wide>
+          <div className="space-y-3 text-sm">
+            <p className="text-[11px] text-pretty text-muted">
+              Jugadoras: más de 9 m/s y más de 3 m entre dos posiciones seguidas; casi siempre su nombre pasó a otra persona (un barrido de cámara en
+              la revisión rápida, alguien que entra al cuadro). Primero las que tienen nombre. Cámara: muchas saltan a la vez, así que falla la
+              calibración de ese cuadro, no las identidades. Balón: más de 35 m/s; una marca sobre un balón por alto o una detección equivocada.
+              Clic para ir.
+            </p>
+            {anomalies.length === 0 ? (
+              <p className="text-ok">Nada imposible en esta parte.</p>
+            ) : (
+              <ul className="max-h-[60vh] space-y-1 overflow-y-auto pr-1">
+                {anomalies.map((a, i) => (
+                  <li key={`${a.kind}_${a.frame}_${a.person ?? i}`}>
+                    <button
+                      type="button"
+                      className="flex w-full items-baseline gap-3 rounded-lg px-2 py-1 text-left text-xs hover:bg-raised"
+                      onClick={() => {
+                        goAnomaly(a);
+                        setModal(null);
+                      }}
+                    >
+                      <span className="tc w-14 shrink-0 text-faint">{fmtT(a.frame / fps)}</span>
+                      <span className={`w-20 shrink-0 ${a.kind === "camera" ? "text-muted" : "text-warn"}`}>
+                        {a.kind === "player" ? "Jugadora" : a.kind === "camera" ? "Cámara" : "Balón"}
+                      </span>
+                      <span className="text-ink-2">
+                        {a.kind === "player"
+                          ? `${a.name ?? `#${a.person}`} salta ${Math.round(a.meters)} m (${Math.round(a.speed)} m/s)`
+                          : a.kind === "camera"
+                            ? `${a.people} personas saltan ${Math.round(a.meters)} m a la vez: revisa la calibración de este cuadro`
+                            : `salta ${Math.round(a.meters)} m (${Math.round(a.speed)} m/s)${a.until !== undefined ? ` y vuelve en ${fmtT(a.until / fps)}` : ""}`}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </Modal>
       )}

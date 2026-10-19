@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test lib/homography.test.mjs lib/segments.test.mjs lib/analysis.test.mjs lib/load.test.mjs lib/videos.test.mjs lib/tracks.test.mjs lib/smooth.test.mjs lib/parts.test.mjs lib/tagging.test.mjs lib/roster.test.mjs lib/steps.test.mjs lib/labels.test.mjs lib/cuts.test.mjs lib/suggestions.test.mjs lib/positions.test.mjs lib/passes.test.mjs lib/quick.test.mjs lib/report.test.mjs lib/overlay.test.mjs lib/annotations.test.mjs lib/boards.test.mjs lib/clips.test.mjs"
+    "test": "node --test lib/homography.test.mjs lib/segments.test.mjs lib/analysis.test.mjs lib/load.test.mjs lib/videos.test.mjs lib/tracks.test.mjs lib/smooth.test.mjs lib/parts.test.mjs lib/tagging.test.mjs lib/roster.test.mjs lib/steps.test.mjs lib/labels.test.mjs lib/cuts.test.mjs lib/suggestions.test.mjs lib/positions.test.mjs lib/passes.test.mjs lib/quick.test.mjs lib/report.test.mjs lib/overlay.test.mjs lib/annotations.test.mjs lib/boards.test.mjs lib/clips.test.mjs lib/anomalies.test.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",

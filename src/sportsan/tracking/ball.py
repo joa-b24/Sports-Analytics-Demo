@@ -59,6 +59,13 @@ SUPPORT_MIN = 2
 # Huecos: se pide una marca cada tantos segundos dentro de un hueco sin balón seguro.
 ASK_EVERY_S = 1.0
 MODEL_NAME = "ball_model.pt"
+# Movimiento imposible (los mismos números que web/lib/anomalies.ts): más de BALL_MAX_MS y BALL_MIN_M entre dos balones
+# seguros; si al poco vuelve a donde podía estar, lo de en medio era un balón por alto (llevado al suelo cae lejos) o un
+# error, y se quita.
+BALL_MAX_MS = 35.0
+BALL_MIN_M = 5.0
+BALL_PAIR_MAX_S = 3.0
+DETOUR_S = 2.0
 
 
 # ------------------------------------------------------------------------------------------------- geometría
@@ -486,6 +493,47 @@ def decide(per_frame: list[tuple[int, np.ndarray, np.ndarray]], k: float = 1.0) 
     return out
 
 
+def drop_detours(found: list[dict], Hs: dict, venue: dict, fps: float) -> list[dict]:
+    """Quita los desvíos imposibles: el balón salta más rápido que cualquier tiro y, antes de DETOUR_S, vuelve a un sitio
+    alcanzable desde donde estaba. Un salto que no vuelve se deja (puede ser un despeje visto tras un hueco)."""
+    L, W = float(venue["length_m"]), float(venue["width_m"])
+
+    def meters(b):
+        H = Hs.get(b["frame"])
+        if H is None:
+            return None
+        q = np.asarray(H, float).reshape(3, 3) @ np.array([b["px"], b["py"], 1.0])
+        return None if abs(q[2]) < 1e-12 else (q[0] / q[2], q[1] / q[2])
+
+    pts = [(b, meters(b)) for b in sorted(found, key=lambda x: x["frame"])]
+    pts = [(b, m) for b, m in pts if m is not None and -5 <= m[0] <= L + 5 and -5 <= m[1] <= W + 5]
+
+    def dt(a, b):
+        return (b[0]["frame"] - a[0]["frame"]) / fps
+
+    def dist(a, b):
+        return math.hypot(b[1][0] - a[1][0], b[1][1] - a[1][1])
+
+    def impossible(a, b):
+        t = dt(a, b)
+        return 0 < t <= BALL_PAIR_MAX_S and dist(a, b) > BALL_MIN_M and dist(a, b) / t > BALL_MAX_MS
+
+    def possible(a, b):
+        return dt(a, b) > 0 and dist(a, b) <= BALL_MAX_MS * dt(a, b) + BALL_MIN_M
+
+    keep = []
+    i = 0
+    while i < len(pts):
+        if keep and impossible(keep[-1], pts[i]):
+            back = next((k for k in range(i + 1, len(pts)) if dt(pts[i], pts[k]) <= DETOUR_S and possible(keep[-1], pts[k])), None)
+            if back is not None:
+                i = back
+                continue
+        keep.append(pts[i])
+        i += 1
+    return [b for b, _ in keep]
+
+
 def ask_frames(found: list[int], frames: list[int], fps: float, segments: list[tuple[int, int]] | None = None) -> list[int]:
     """Dónde hace falta una marca a mano: cuadros de juego sin balón seguro a menos de medio paso (ASK_EVERY_S / 2),
     como mucho uno cada ASK_EVERY_S. Así un hueco corto entre dos detecciones no pide nada.
@@ -534,7 +582,7 @@ def run_part(part: Path, model: BallModel, folder: Path) -> dict:
     search = model.meta.get("search", "pitch")
     for f, pts, P in frame_features(walker, tr["frames"], venue, search=search, k=k):
         per.append((f, pts, model.predict(P)))
-    found = decide(per, k)
+    found = drop_detours(decide(per, k), {fr["frame"]: fr.get("H") for fr in tr["frames"]}, venue, tr["fps"])
     frames = [f for f, _, _ in per]
     asks = ask_frames([b["frame"] for b in found], frames, tr["fps"], play_segments(folder, tr["video_id"], tr["fps"]))
     return {

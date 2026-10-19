@@ -62,3 +62,16 @@ def test_ask_frames_one_per_second_inside_play_only():
     # Un hueco corto entre dos detecciones no pide nada.
     assert b.ask_frames(found=[0, 3, 6, 18, 21], frames=list(range(0, 24, 3)), fps=30) == []
     assert b.ask_frames(found=frames, frames=frames, fps=30) == []
+
+
+def test_drop_detours_removes_out_and_back_but_keeps_a_jump_that_stays():
+    # H of the synthetic camera: 10 px per meter (pixel 50 = 0 m). Ball at 30 m, jumps to 80 m for two processed frames
+    # and comes back: an aerial ball taken to the ground.
+    Hs = {f: H for f in range(0, 60, 3)}
+    px = lambda m: 50 + 10 * m  # noqa: E731
+    found = [{"frame": f, "px": px(x), "py": px(30), "p": 0.95} for f, x in [(0, 30), (3, 31), (6, 80), (9, 79), (12, 33), (15, 34)]]
+    kept = b.drop_detours(found, Hs, VENUE, 30)
+    assert [x["frame"] for x in kept] == [0, 3, 12, 15]
+    # A jump that does not come back stays (a clearance seen after a hole).
+    found2 = [{"frame": f, "px": px(x), "py": px(30), "p": 0.95} for f, x in [(0, 30), (3, 31), (6, 80), (9, 81), (12, 82)]]
+    assert [x["frame"] for x in b.drop_detours(found2, Hs, VENUE, 30)] == [0, 3, 6, 9, 12]

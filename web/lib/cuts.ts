@@ -30,14 +30,15 @@ export interface CutHint {
   to?: TeamCode;
 }
 
-interface Obs {
+export interface Obs {
   frame: number;
   x: number;
   y: number;
   team: TeamCode;
 }
 
-function series(file: TracksFile, edits: TrackEdits): Map<number, Obs[]> {
+// Positions of every person of a part, in real meters of the venue, one per processed frame.
+export function series(file: TracksFile, edits: TrackEdits): Map<number, Obs[]> {
   const sx = (file.venue?.length_m ?? PITCH.length) / PITCH.length;
   const sy = (file.venue?.width_m ?? PITCH.width) / PITCH.width;
   const refs = fileTeamRefs(file);
