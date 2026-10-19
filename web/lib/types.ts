@@ -353,6 +353,8 @@ export interface TrackEdits {
   rejected?: [number, number][];
   // Quick review (lib/quick.ts): names given on sample frames, and the samples already gone through.
   quick?: { labels: { frame: number; track: number; name: string; team?: "own" | "opp" }[]; seen: number[]; done?: string[] };
+  // Frames where the ball found by the tracker (ball_auto_*.json) was wrong and was taken out by hand.
+  ballRejected?: number[];
   // Ball review by samples: every how many seconds, and the sample frames already gone through (ball marked or not seen).
   ballReview?: { every: number; seen: number[] };
 }

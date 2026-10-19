@@ -303,8 +303,8 @@ no en unidades del dibujo de 105 x 68. Los archivos anteriores no lo traen y se 
 identidades descartadas. Cada persona tiene como mucho una posición por cuadro: si el detector dio dos cajas sobre la misma jugadora
 (a menos de 2 m una de otra) y en la mesa se unificaron, queda la de más confianza y la otra no se exporta.
 
-`ball` es la lista de posiciones del balón, `{frame, x, y, source}`. **El balón no se detecta**: `source` es `manual` (clic sobre
-el video, llevado a la cancha como si el balón estuviera en el suelo), `event` (posición de un evento etiquetado en ese instante; solo donde no hay una marca a mano a menos de 3 s, porque su momento y su lugar son aproximados) o
+`ball` es la lista de posiciones del balón, `{frame, x, y, source}`. `source` es `manual` (clic sobre
+el video o sobre el dibujo de la cancha, llevado a la cancha como si el balón estuviera en el suelo), `auto` (lo encontró el tracker de balón, `ball_auto_*.json`, donde estaba muy seguro; una marca a mano en ese cuadro gana, y lo quitado a mano no se exporta), `event` (posición de un evento etiquetado en ese instante; solo donde no hay una marca a mano a menos de 3 s, porque su momento y su lugar son aproximados) o
 `interpolated` (recta entre dos de las anteriores separadas por 3 s o menos, o unidas a mano en la mesa para un pase largo o un balón por alto, sin límite de tiempo). Donde no hay ninguna cerca no hay balón. Los eventos
 se etiquetan con el equipo analizado atacando hacia `x = 105`; al exportar se indica hacia dónde ataca en ese video y, si es hacia
 `x = 0`, se reflejan.
@@ -430,3 +430,23 @@ Versión mínima, hecha con el editor de clips: la fase 4 del plan de reporte pu
 - Los títulos salen del informe sin nombres (como «Sin nombres»), salvo lo que la analista haya escrito en el título de una jugada.
 - En `report_<match_id>.json`, cada momento (`moment`) lleva además `edit`: `{edit_id, app}` con el enlace que abre ese clip en
   modo presentación (`/partido?id=..&edit=..`), o `null`.
+
+## `ball_auto_<video_id>_<inicio>_<fin>.json` (tracker de balón, `matches/<match_id>/tracking/`)
+
+Lo escribe `python -m sportsan.tracking.ball run`, una por parte procesada (`tracks_<video>_<inicio>_<fin>.json`). El modelo se
+entrena con las marcas de balón a mano (`source: manual`) de los `tracks_fixed_*` guardados (`... ball train`) y se guarda en
+`weights/ball_model.pt` (fuera de git).
+
+| campo | descripción |
+|---|---|
+| schema_version, kind | `1`, `"ball_auto"` |
+| match_id, video_id, fps, stride, start_frame, end_frame, image_w, image_h | los de la parte |
+| model | metadatos del modelo (partidos, positivos y negativos, de qué marcas se entrenó, dónde busca) |
+| rules | umbrales con que se decidió (`accept_p`, `support_p`, `support_min`, `max_step_px`, `ask_every_s`) |
+| frames | `{frame, px, py, p}`: cuadros procesados donde el balón es seguro, en **píxeles** del cuadro, y su probabilidad |
+| ask | cuadros procesados donde pide una marca a mano: uno por segundo dentro de cada hueco sin balón seguro, solo en tramos de juego (`segments.csv`; sin él, toda la parte) |
+| quality | `processed`, `found`, `found_share`, `seconds` |
+
+- Solo marca un cuadro si su mejor candidato pasa `accept_p` y lo apoyan al menos `support_min` cuadros procesados vecinos con un
+  candidato probable a una distancia que el balón puede recorrer. Lo demás queda vacío: nunca rellena.
+- La mesa de corrección lo lee y lo usa como balón `auto`. Lo que se quita a mano queda en `TrackEdits.ballRejected` (cuadros).

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ballCoverage, ballPath, eventBall, hasCorrections, joinParts, manualBall, measuredPaths, pixelToPitch } from "./parts.ts";
+import { autoBall, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, pitchToPixel, pixelToPitch } from "./parts.ts";
 import { editsKey, emptyEdits, setBall, setPerson, setRemoved } from "./tracks.ts";
 
 const LAB = [100, 128, 128];
@@ -115,3 +115,49 @@ test("a line drawn by hand joins two marks whatever the time between them, and c
   assert.deepEqual(cov.missing, []);
 });
 
+// A camera looking straight down that moves 100 px to the right between frame 0 and frame 3 (synthetic).
+const pannedFile = () => ({
+  match_id: "m", video_id: "v1", fps: 30, start_frame: 0, end_frame: 300, stride: 3, image_w: 1920, image_h: 1080,
+  venue: { length_m: 105, width_m: 68 },
+  frames: [0, 3, 6, 150].map((frame) => ({ frame, H: [0.1, 0, frame === 0 ? 0 : -10, 0, 0.1, 0, 0, 0, 1], boxes: [] })),
+});
+
+test("clic en la cancha: pitchToPixel es la inversa de pixelToPitch", () => {
+  const f = pannedFile();
+  const H = f.frames[1].H;
+  const px = pitchToPixel(f, H, 52.5, 34);
+  assert.ok(Math.abs(px[0] - 625) < 1e-6 && Math.abs(px[1] - 340) < 1e-6);
+  const back = pixelToPitch(f, H, px[0], px[1]);
+  assert.ok(Math.abs(back[0] - 52.5) < 1e-9 && Math.abs(back[1] - 34) < 1e-9);
+  assert.equal(pitchToPixel(f, null, 52.5, 34), null);
+});
+
+test("mantener el balón: la marca nueva cae en el mismo punto de la cancha aunque la cámara se mueva, unida a la anterior", () => {
+  const f = pannedFile();
+  let e = setBall(emptyEdits("k"), 0, 500, 300);
+  const held = holdBall(f, e, 150);
+  const mark = held.ball.find((b) => b.frame === 150);
+  // Frame 0 has no offset, frame 150 is shifted 10 m: the same spot is 100 px further right.
+  assert.deepEqual([mark.px, mark.py], [600, 300]);
+  assert.deepEqual(held.ballLinks, [{ from: 0, to: 150 }]);
+  // 5 s apart, longer than BALL_FILL_S: the link keeps the ball still the whole time.
+  const path = ballPath(manualBall(f, held), 30, 3, 3, held.ballLinks);
+  const mid = path.find((p) => p.frame === 75);
+  assert.ok(mid && Math.abs(mid.x - 50) < 1e-9 && Math.abs(mid.y - 30) < 1e-9);
+  assert.equal(holdBall(f, emptyEdits("k"), 150), null);
+});
+
+test("balón del tracker: entra donde no hay marca tuya ni lo quitaste, y una marca tuya gana", () => {
+  const f = pannedFile();
+  const auto = { frames: [{ frame: 0, px: 100, py: 100, p: 0.99 }, { frame: 3, px: 200, py: 100, p: 0.98 }, { frame: 6, px: 300, py: 100, p: 0.97 }], ask: [150] };
+  let e = setBall(emptyEdits("k"), 3, 250, 120);
+  e = { ...e, ballRejected: [6] };
+  const pts = autoBall(f, auto, e);
+  assert.deepEqual(pts.map((p) => [p.frame, p.source]), [[0, "auto"]]);
+  const path = ballPath([...autoBall(f, auto, e), ...manualBall(f, e)], 30, 3);
+  assert.deepEqual(path.map((p) => p.source), ["auto", "manual"]);
+  // An event near the tracker's ball is left out, as near a hand mark.
+  const ev = [{ frame: 6, x: 1, y: 1, source: "event" }];
+  assert.ok(!ballPath([...pts, ...ev], 30, 3).some((p) => p.source === "event"));
+  assert.deepEqual(autoBall(f, null, e), []);
+});

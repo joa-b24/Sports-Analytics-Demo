@@ -3,7 +3,7 @@
 import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Palette, Pause, Play, Plus, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
-import { COLORS, Pitch } from "@/components/Pitch";
+import { COLORS, Pitch, toMeters } from "@/components/Pitch";
 import { IconButton, Modal } from "@/components/Modal";
 import { Command } from "@/components/Command";
 import { Card, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
@@ -12,7 +12,7 @@ import { PersonTimeline } from "@/components/workspace/PersonTimeline";
 import { SpeedControl } from "@/components/SpeedControl";
 import { CountUp, Reveal } from "@/components/motion";
 import { downloadText, fmtT, isTyping } from "@/lib/format";
-import { BALL_FILL_S, ballCoverage, ballPath, eventBall, hasCorrections, joinParts, manualBall, measuredPaths, metersPerUnit, pixelToPitch, type Part } from "@/lib/parts";
+import { BALL_FILL_S, autoBall, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, metersPerUnit, pitchToPixel, pixelToPitch, type BallAuto, type Part } from "@/lib/parts";
 import { applyHint, applyTeamCuts, cutHints, type CutHint } from "@/lib/cuts";
 import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
 import { buildLabels, labelsName } from "@/lib/labels";
@@ -397,15 +397,53 @@ export function Correction({
   const attack = usePref(`attack:${mid}:${data?.video_id ?? "v1"}`, "");
   const eventsMatchId = eventMatch || matchAppId || (state.matches.find((m) => m.match_id === mid)?.match_id ?? "");
   const matchEvents = useMemo(() => state.events.filter((e) => e.match_id === eventsMatchId), [state.events, eventsMatchId]);
+  // The ball tracker's work on this part (python -m sportsan.tracking.ball run), if it ran: its sure frames and where
+  // it asks for a hand mark.
+  const [ballAuto, setBallAuto] = useState<BallAuto | null>(null);
+  const autoKey = data ? `matches/${matchIdText}/tracking/ball_auto_${data.video_id}_${data.start_frame}_${data.end_frame}.json` : "";
+  useEffect(() => {
+    if (!autoKey) return;
+    let live = true;
+    void readLocal(autoKey).then((text) => {
+      if (!live) return;
+      try {
+        const d = text ? (JSON.parse(text) as BallAuto & { kind?: string }) : null;
+        setBallAuto(d && d.kind === "ball_auto" && Array.isArray(d.frames) ? { frames: d.frames, ask: d.ask ?? [] } : null);
+      } catch {
+        setBallAuto(null);
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [autoKey]);
   const ballKnown = useMemo(
-    () => (data ? [...(attack ? eventBall(data, matchEvents, attack === "right") : []), ...manualBall(data, edits)] : []),
-    [data, edits, matchEvents, attack],
+    () => (data ? [...(attack ? eventBall(data, matchEvents, attack === "right") : []), ...autoBall(data, ballAuto, edits), ...manualBall(data, edits)] : []),
+    [data, edits, matchEvents, attack, ballAuto],
   );
   const ball = useMemo(() => (data ? ballPath(ballKnown, data.fps, data.stride, BALL_FILL_S, edits.ballLinks ?? []) : []), [data, ballKnown, edits.ballLinks]);
   // A line by hand: the mark where the ball leaves, waiting for the click where it lands.
   const [ballLinkFrom, setBallLinkFrom] = useState<number | null>(null);
-  // Frames where the ball comes from a tagged event: they count for the part as the hand marks do.
-  const eventBallFrames = ball.filter((x) => x.source === "event").map((x) => x.frame);
+  // Frames where the ball comes from a tagged event or from the ball tracker: they count for the part as the hand marks do.
+  const eventBallFrames = ball.filter((x) => x.source === "event" || x.source === "auto").map((x) => x.frame);
+  // The tracker's ball in this frame (when no hand mark replaces it), and the frames where it asks for a hand mark that
+  // are still without ball.
+  const autoHere = pf !== null && !(edits.ball ?? []).some((b) => b.frame === pf) && !(edits.ballRejected ?? []).includes(pf) ? (ballAuto?.frames.find((a) => a.frame === pf) ?? null) : null;
+  const asksLeft = (ballAuto?.ask ?? []).filter((f) => !ball.some((b) => b.frame === f && b.source !== "interpolated"));
+  // k: the ball stays where it was last marked until this frame (a goal kick or a corner while the taker gets ready).
+  const holdHere = () => {
+    if (!data || pf === null) return;
+    const next = holdBall(data, edits, pf);
+    if (!next) return setMsg("Para mantener el balón hace falta una marca tuya antes, y calibración en los dos cuadros.");
+    setEdits(next);
+    setMsg(`Balón quieto desde la marca anterior hasta ${fmtT(pf / fps)}.`);
+  };
+  // Supr: the hand mark of this frame goes; without one, the tracker's ball of this frame is rejected.
+  const removeBallHere = () => {
+    if (pf === null) return;
+    if ((edits.ball ?? []).some((b) => b.frame === pf)) return setEdits(removeBall(edits, pf));
+    if (autoHere) setEdits({ ...edits, ballRejected: [...new Set([...(edits.ballRejected ?? []), pf])] });
+  };
 
   // ---------------------------------------------------------------- ball review by samples
   const bSamples = useMemo(() => (data ? sampleFrames(data, bEvery) : []), [data, bEvery]);
@@ -482,7 +520,8 @@ export function Correction({
       else if (e.key === "Tab") bStep(e.shiftKey ? -2 : 2);
       else if (e.key === "n") nextMissingBall();
       else if (e.key === "i") startBallLine();
-      else if ((e.key === "Backspace" || e.key === "Delete") && pf !== null) setEdits(removeBall(edits, pf));
+      else if (e.key === "k") holdHere();
+      else if ((e.key === "Backspace" || e.key === "Delete") && pf !== null) removeBallHere();
       else if (e.key === "h") setPref("ball:boxes", ballBoxes ? "0" : "1");
       else return;
       e.preventDefault();
@@ -496,26 +535,41 @@ export function Correction({
   }, []);
   const status = data ? partStatus(edits, { start_frame: data.start_frame, end_frame: data.end_frame, fps: data.fps, stride: data.stride }, eventBallFrames) : null;
 
+  // The ball marked at a pixel of this frame (a click on the video, or on the drawing of the pitch taken to the video).
+  const markBallAt = (b: [number, number]) => {
+    if (pf === null) return;
+    videoRef.current?.pause();
+    let marked = setBall(edits, pf, Math.round(b[0] * 10) / 10, Math.round(b[1] * 10) / 10);
+    if (ballLinkFrom !== null && pf !== ballLinkFrom) {
+      marked = linkBall(marked, ballLinkFrom, pf);
+      setBallLinkFrom(null);
+      setMsg("Recta trazada: de donde salió a donde cae, sin marcas en medio.");
+    }
+    // In the ball review the sample counts as gone through and the next one comes.
+    if (view === "ball" && bSamples.includes(pf)) {
+      const r = finishIfComplete({ ...marked, ballReview: { every: bEvery, seen: [...new Set([...bSeen, pf])] } });
+      setEdits(r.edits);
+      if (r.note) setMsg(r.note);
+      return bGo(bIdx + 1);
+    }
+    return setEdits(marked);
+  };
+  // A click on the drawing of the pitch in the ball view: the ball there (on the ground), taken to this frame's pixel.
+  const pitchSvg = useRef<SVGSVGElement>(null);
+  const onPitchClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (view !== "ball" || !data || pf === null || !pitchSvg.current) return;
+    const m = toMeters(pitchSvg.current, e);
+    const px = pitchToPixel(data, row?.H, m.x, m.y);
+    if (!px) return setMsg("Este cuadro no tiene calibración: marca el balón sobre el video.");
+    markBallAt([Math.round(px[0] * 10) / 10, Math.round(px[1] * 10) / 10]);
+  };
+
   const onOverlayClick = (e: React.MouseEvent) => {
     if (pickKit) return sampleKit(e.clientX, e.clientY);
     if (mode === "ball" && pf !== null) {
       const b = toPixels(e);
-      if (!b) return;
-      videoRef.current?.pause();
-      let marked = setBall(edits, pf, Math.round(b[0] * 10) / 10, Math.round(b[1] * 10) / 10);
-      if (ballLinkFrom !== null && pf !== ballLinkFrom) {
-        marked = linkBall(marked, ballLinkFrom, pf);
-        setBallLinkFrom(null);
-        setMsg("Recta trazada: de donde salió a donde cae, sin marcas en medio.");
-      }
-      // In the ball review the sample counts as gone through and the next one comes.
-      if (view === "ball" && bSamples.includes(pf)) {
-        const r = finishIfComplete({ ...marked, ballReview: { every: bEvery, seen: [...new Set([...bSeen, pf])] } });
-        setEdits(r.edits);
-        if (r.note) setMsg(r.note);
-        return bGo(bIdx + 1);
-      }
-      return setEdits(marked);
+      if (b) markBallAt([b[0], b[1]]);
+      return;
     }
     if (mode !== "manual" || sel === null || pf === null) return;
     const p = toPixels(e);
@@ -1603,18 +1657,32 @@ export function Correction({
         </IconButton>
         {/* Always in its place (disabled without a mark here), so the bar beside it does not move. */}
         <IconButton
-          label={ballMarkHere ? "Quitar la marca de este cuadro (Supr)" : "Sin marca en este cuadro"}
+          label={ballMarkHere ? "Quitar la marca de este cuadro (Supr)" : autoHere ? "Quitar el balón del tracker en este cuadro (Supr): estaba mal" : "Sin marca en este cuadro"}
           tone="danger"
-          disabled={!ballMarkHere || pf === null}
-          onClick={() => pf !== null && setEdits(removeBall(edits, pf))}
+          disabled={(!ballMarkHere && !autoHere) || pf === null}
+          onClick={removeBallHere}
         >
           <Eraser size={15} />
         </IconButton>
+        <IconButton label="Mantener el balón quieto desde tu marca anterior hasta aquí (k): saques de meta, de esquina, faltas" onClick={holdHere}>
+          <HandPointing size={15} />
+        </IconButton>
       </div>
+      {ballAuto && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+          <span className="text-ink-2">
+            Tracker de balón: {ballAuto.frames.length} cuadro(s) seguros (anillo naranja discontinuo){edits.ballRejected?.length ? `, ${edits.ballRejected.length} quitado(s) a mano` : ""}.
+          </span>
+          <span className={asksLeft.length ? "text-warn" : "text-ok"}>
+            {asksLeft.length ? `Pide ${asksLeft.length} marca(s) a mano: n lleva a la siguiente.` : "Ya no pide marcas."}
+          </span>
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <span>
           Clic en el balón · <kbd className="kbd">→</kbd> paso · <kbd className="kbd">Alt →</kbd> cuadro · <kbd className="kbd">Tab</kbd> dos pasos ·{" "}
-          <kbd className="kbd">n</kbd> donde falta · <kbd className="kbd">i</kbd> recta hasta donde cae ·{" "}
+          <kbd className="kbd">n</kbd> donde falta · <kbd className="kbd">i</kbd> recta hasta donde cae · <kbd className="kbd">k</kbd> mantener ·
+          clic en la cancha de la derecha también marca ·{" "}
           <kbd className="kbd">z</kbd> zoom
         </span>
         <label className="flex items-center gap-1.5" title="Las cajas de las jugadoras sobre el video (tecla h)">
@@ -2126,7 +2194,7 @@ export function Correction({
                   </button>
                 ))}
               </div>
-              <Pitch showDirection={false}>
+              <Pitch showDirection={false} svgRef={pitchSvg} onClick={onPitchClick} className={view === "ball" && pf !== null && row?.H ? "cursor-crosshair" : ""}>
                 {pitchShow !== "ball" && pieces([...selRaw].sort((u, v) => u.frame - v.frame)).map((piece) => (
                   <polyline key={`r${piece[0].frame}`} points={piece.map((q) => `${q.x},${q.y}`).join(" ")} fill="none" stroke="var(--color-faint)" strokeWidth={0.25} opacity={0.7} />
                 ))}
@@ -2515,6 +2583,9 @@ export function Correction({
                           <circle cx={ballMarkHere.px} cy={ballMarkHere.py} r={dotR * 0.9} fill="none" stroke="#ffffff" strokeWidth={dotR / 3} />
                           <circle cx={ballMarkHere.px} cy={ballMarkHere.py} r={dotR * 1.5} fill="none" stroke="#fb923c" strokeWidth={dotR / 4} />
                         </g>
+                      )}
+                      {autoHere && (
+                        <circle cx={autoHere.px} cy={autoHere.py} r={dotR * 1.5} fill="none" stroke="#fb923c" strokeWidth={dotR / 4} strokeDasharray={`${dotR * 0.8} ${dotR * 0.5}`} pointerEvents="none" />
                       )}
                       {manualHere.map((m) => (
                         <g key={`m${m.identity}`} pointerEvents="none">

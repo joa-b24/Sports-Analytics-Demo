@@ -65,13 +65,14 @@ export function BallStrip({
           con balón {Math.round(100 * cov.share)} % del juego{outRuns.length > 0 ? " (sin contar lo marcado como fuera)" : ""}
           {cov.missing.length > 0 && <span className="text-danger"> · faltan {cov.missing.length} tramo(s)</span>} ·{" "}
           {marks.filter((p) => p.source === "manual").length} marca(s) tuyas
-          {marks.some((p) => p.source !== "manual") && ` · ${marks.filter((p) => p.source !== "manual").length} de eventos`}
+          {marks.some((p) => p.source === "auto") && ` · ${marks.filter((p) => p.source === "auto").length} del tracker`}
+          {marks.some((p) => p.source === "event") && ` · ${marks.filter((p) => p.source === "event").length} de eventos`}
         </span>
       </div>
       <div
         className="relative h-3 cursor-pointer overflow-hidden rounded-full bg-surface"
         role="presentation"
-        title="Dónde hay balón para animar: banda = posición conocida o trazada entre dos marcas; rayas = marcas (clara: a mano, ámbar: de un evento); rojo = en juego sin balón; gris = fuera o no se ve. Clic para ir."
+        title="Dónde hay balón para animar: banda = posición conocida o trazada entre dos marcas; rayas = marcas (clara: a mano, azul: del tracker de balón, ámbar: de un evento); rojo = en juego sin balón; gris = fuera o no se ve. Clic para ir."
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           onSeek(Math.round(from + ((e.clientX - r.left) / r.width) * span));
@@ -87,7 +88,7 @@ export function BallStrip({
           <span key={a} className="absolute inset-y-0.5 rounded-full bg-warn/45" style={{ left: `${pct(a)}%`, width: `max(2px, ${pct(b + stride) - pct(a)}%)` }} />
         ))}
         {marks.map((p) => (
-          <span key={p.frame} className={`absolute inset-y-0 w-px ${p.source === "manual" ? "bg-ink" : "bg-warn"}`} style={{ left: `${pct(p.frame)}%` }} />
+          <span key={p.frame} className={`absolute inset-y-0 w-px ${p.source === "manual" ? "bg-ink" : p.source === "auto" ? "bg-accent-300" : "bg-warn"}`} style={{ left: `${pct(p.frame)}%` }} />
         ))}
         <span className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-accent" style={{ left: `${pct(frame)}%` }} />
       </div>

@@ -243,7 +243,8 @@ export function ballStates(f: FixedFile): BallState[] {
   const team = new Map(f.people.map((p) => [p.id, p.team]));
   const leftover = new Set(unnamedLeftovers(f).map((l) => l.id));
   const byFrame = new Map(f.frames.map((fr) => [fr.frame, fr.positions]));
-  const manual = f.ball.filter((b) => b.source === "manual").map((b) => b.frame).sort((x, y) => x - y);
+  // Followed: a hand mark or the ball tracker (precise), and what lies close to one of them.
+  const manual = f.ball.filter((b) => b.source === "manual" || b.source === "auto").map((b) => b.frame).sort((x, y) => x - y);
   const nearManual = (frame: number) => {
     let lo = 0;
     let hi = manual.length - 1;
@@ -258,7 +259,7 @@ export function ballStates(f: FixedFile): BallState[] {
   };
   const out: BallState[] = [];
   for (const b of [...f.ball].sort((x, y) => x.frame - y.frame)) {
-    const state: BallState = { frame: b.frame, source: b.source, followed: b.source === "manual" || nearManual(b.frame), touch: null, contested: false };
+    const state: BallState = { frame: b.frame, source: b.source, followed: b.source === "manual" || b.source === "auto" || nearManual(b.frame), touch: null, contested: false };
     out.push(state);
     if (b.source === "interpolated") continue;
     const ps = byFrame.get(b.frame);

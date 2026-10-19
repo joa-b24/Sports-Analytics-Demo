@@ -1,4 +1,4 @@
-import { apply, orient } from "./homography.ts";
+import { apply, invert, orient } from "./homography.ts";
 import { smoothTrack, type SmoothOptions, type TrackPoint } from "./smooth.ts";
 import { droppedSet, editsKey, emptyEdits, identityOf, isDropped, nearestFrame, people, type JerseyColors, type TeamCode, type TracksFile } from "./tracks.ts";
 import { PITCH, type MatchEvent, type TrackEdits } from "./types.ts";
@@ -12,6 +12,23 @@ export function pixelToPitch(file: TracksFile, H: number[] | null | undefined, p
   const m = apply(orient(H, [[file.image_w / 2, file.image_h * 0.8]]) ?? H, [px, py]);
   if (!m) return null;
   return [(m[0] * PITCH.length) / (file.venue?.length_m ?? PITCH.length), (m[1] * PITCH.width) / (file.venue?.width_m ?? PITCH.width)];
+}
+
+// Normalised pitch -> pixels of a frame: the inverse of pixelToPitch (a click on the drawing of the pitch, a ball held
+// in place while the camera moves). Null without calibration or behind the camera.
+export function pitchToPixel(file: TracksFile, H: number[] | null | undefined, x: number, y: number): [number, number] | null {
+  if (!H) return null;
+  const o = orient(H, [[file.image_w / 2, file.image_h * 0.8]]) ?? H;
+  const inv = invert(o);
+  if (!inv) return null;
+  const real: [number, number] = [(x * (file.venue?.length_m ?? PITCH.length)) / PITCH.length, (y * (file.venue?.width_m ?? PITCH.width)) / PITCH.width];
+  const w = inv[6] * real[0] + inv[7] * real[1] + inv[8];
+  if (Math.abs(w) < 1e-12) return null;
+  const px = (inv[0] * real[0] + inv[1] * real[1] + inv[2]) / w;
+  const py = (inv[3] * real[0] + inv[4] * real[1] + inv[5]) / w;
+  // The round trip must come back to the point: otherwise it is behind the camera.
+  const back = pixelToPitch(file, H, px, py);
+  return back && Math.hypot(back[0] - x, back[1] - y) < 0.01 ? [px, py] : null;
 }
 
 // Path of every person of a part on the pitch, as measured: detections inside the pitch plus hand marks.
@@ -48,11 +65,14 @@ export const metersPerUnit = (file: TracksFile): [number, number] => [
 
 // ---------------------------------------------------------------- ball
 
-// Where a ball position comes from. None of them is a detection: the program does not track the ball.
-//   manual        clicked on the video (taken to the pitch as if the ball were on the ground)
+// Where a ball position comes from.
+//   manual        clicked on the video or on the drawing of the pitch (taken to the pitch as if on the ground)
+//   auto          found by the ball tracker (sportsan.tracking.ball) where it was very sure; a hand mark wins over it
 //   event         position of a tagged event at that moment
 //   interpolated  straight line between two of the above that are close in time; never a measurement
-export type BallSource = "manual" | "event" | "interpolated";
+export type BallSource = "manual" | "auto" | "event" | "interpolated";
+// Which one wins when two fall on the same frame.
+const BALL_RANK: Record<BallSource, number> = { manual: 3, auto: 2, event: 1, interpolated: 0 };
 export interface BallPoint {
   frame: number;
   x: number;
@@ -88,6 +108,44 @@ export function manualBall(file: TracksFile, edits: TrackEdits): BallPoint[] {
   return out.sort((a, b) => a.frame - b.frame);
 }
 
+// What the ball tracker wrote for a part (ball_auto_<video>_<ini>_<fin>.json): pixels of the frames where it is sure,
+// and the frames where it asks for a hand mark.
+export interface BallAuto {
+  frames: { frame: number; px: number; py: number; p: number }[];
+  ask: number[];
+}
+
+// The tracker's ball on the pitch, without the frames rejected by hand and those with a hand mark (the hand wins).
+export function autoBall(file: TracksFile, auto: BallAuto | null, edits: TrackEdits): BallPoint[] {
+  if (!auto) return [];
+  const H = new Map(file.frames.map((fr) => [fr.frame, fr.H]));
+  const rejected = new Set(edits.ballRejected ?? []);
+  const hand = new Set((edits.ball ?? []).map((b) => b.frame));
+  const out: BallPoint[] = [];
+  for (const a of auto.frames) {
+    if (rejected.has(a.frame) || hand.has(a.frame)) continue;
+    const p = pixelToPitch(file, H.get(a.frame), a.px, a.py);
+    if (p) out.push({ frame: a.frame, x: p[0], y: p[1], source: "auto" });
+  }
+  return out;
+}
+
+// Keeps the ball where it was last marked by hand, up to `frame` (a goal kick or a corner: the ball waits on its spot
+// while the taker gets ready). Adds a mark at `frame` on the same spot of the pitch (at its pixel in this frame, the
+// camera may have moved) and joins both with a line whatever the time between them. Null without a previous mark or
+// without calibration in either frame.
+export function holdBall(file: TracksFile, edits: TrackEdits, frame: number): TrackEdits | null {
+  const H = new Map(file.frames.map((fr) => [fr.frame, fr.H]));
+  const prev = (edits.ball ?? []).filter((b) => b.frame < frame).sort((a, b) => b.frame - a.frame)[0];
+  if (!prev) return null;
+  const spot = pixelToPitch(file, H.get(prev.frame), prev.px, prev.py);
+  const px = spot && pitchToPixel(file, H.get(frame), spot[0], spot[1]);
+  if (!px) return null;
+  const ball = [...(edits.ball ?? []).filter((b) => b.frame !== frame), { frame, px: Math.round(px[0] * 10) / 10, py: Math.round(px[1] * 10) / 10 }].sort((a, b) => a.frame - b.frame);
+  const links = (edits.ballLinks ?? []).filter((l) => !(l.from === prev.frame && l.to === frame));
+  return { ...edits, ball, ballLinks: [...links, { from: prev.frame, to: frame }] };
+}
+
 // One ball position per frame, with short stretches between known positions joined by a straight line on the
 // processed frames. Longer stretches stay empty. Hand marks win: a tagged event (whose time and place are only
 // roughly the ball's) is used only where no hand mark is within maxFillS, so it fills what was not marked instead of
@@ -95,13 +153,14 @@ export function manualBall(file: TracksFile, edits: TrackEdits): BallPoint[] {
 export function ballPath(known: BallPoint[], fps: number, stride: number, maxFillS = BALL_FILL_S, links: { from: number; to: number }[] = []): BallPoint[] {
   // Two known positions inside a line drawn by hand are joined whatever the time between them.
   const linked = (a: number, b: number) => links.some((l) => l.from <= a && b <= l.to);
-  const manual = known.filter((p) => p.source === "manual").map((p) => p.frame);
-  const nearManual = (f: number) => manual.some((m) => Math.abs(m - f) / fps <= maxFillS);
+  // Hand marks and the tracker's ball are precise: an event near either is left out.
+  const precise = known.filter((p) => p.source === "manual" || p.source === "auto").map((p) => p.frame);
+  const nearPrecise = (f: number) => precise.some((m) => Math.abs(m - f) / fps <= maxFillS);
   const byFrame = new Map<number, BallPoint>();
   for (const p of known) {
-    if (p.source === "event" && nearManual(p.frame)) continue;
+    if (p.source === "event" && nearPrecise(p.frame)) continue;
     const cur = byFrame.get(p.frame);
-    if (!cur || (p.source === "manual" && cur.source !== "manual")) byFrame.set(p.frame, p);
+    if (!cur || BALL_RANK[p.source] > BALL_RANK[cur.source]) byFrame.set(p.frame, p);
   }
   const pts = [...byFrame.values()].sort((a, b) => a.frame - b.frame);
   const out: BallPoint[] = [];
