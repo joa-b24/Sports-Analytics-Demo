@@ -75,6 +75,7 @@ npm run dev
 | `python -m sportsan.tracking.propagate --anchors ...` | `demo/` | Calibración entre anclas de un tramo. Acepta la ruta completa o solo el nombre `anchors_<partido>_<video>.json` (lo busca en `matches/*/tracking/`) |
 | `python -m sportsan.tracking.library build / locate` | `demo/` | Biblioteca de calibración |
 | `python -m sportsan.tracking.process` | `demo/` | Detección + calibración de un video |
+| `python -m sportsan.cloud.kaggle login --user <u>` / `run tracking --match <id> [--dry-run]` / `status` / `pull` | `demo/` | El tracking (lo de `overnight`) en una GPU de Kaggle: sube código, datos y videos (privados; cada video una vez), corre, espera y baja solo lo nuevo a `tracking/` sin pisar lo tuyo. Necesita `pip install -e ".[cloud]"` |
 | `python -m sportsan.tracking.ball train` / `run --match <id>` / `eval` | `demo/` | Tracker de balón: entrena con las marcas a mano guardadas (`tracks_fixed_*`) y marca solo lo seguro en cada parte (`ball_auto_*.json`); la vista Balón de la mesa lo usa y pide el resto. `--accept` cambia el umbral (0.90) |
 | `python -m sportsan.metrics.report --match <id> --own-attacks right` | `demo/` | Forma de los equipos para Análisis (`team_metrics_*.json`) |
 | `python -m sportsan.clips.render --edit <edit_*.json> --profile charla\|whatsapp` | `demo/` | Exporta a MP4 un clip con sus dibujos y pausas (en `matches/<id>/clips/`). Con `--board <id>`, una jugada del pizarrón (en `clips/`). Necesita `pip install -e ".[clips]"` y ffmpeg |
@@ -100,6 +101,7 @@ de la laptop y todas van varias veces más lento. Mejor una detrás de otra.
 | `config/project.yaml` | Partido por defecto y medidas de la cancha normalizada (105 x 68) | sí |
 | `config/strava.local.json` | Credenciales de Strava; lo crea `strava_sync auth` | **no** |
 | `config/roster.json` | Plantilla (nombres y números); la lee y escribe la app | **no** |
+| `config/kaggle.local.json` | Tu usuario de Kaggle; lo crea `cloud.kaggle login` | **no** |
 | `data/strava/` | Sesiones bajadas de Strava | **no** |
 | `data/boards/` | Jugadas del pizarrón exportadas para hacerlas video | **no** |
 | `data/mock/` | Datos falsos que genera `python -m sportsan.mock.generate` | no |
@@ -323,6 +325,8 @@ entran al respaldo.
 | `tracking/geometry.py`, `models.py`, `pipeline.py`, `run_tracking.py` | Pipeline antiguo (Colab, homografía automática). No se usa | no |
 | `metrics/team_shape.py`, `metrics/team_blocks.py` | Forma de cada equipo (ancho, largo, altura de línea y bloque) | no |
 | `metrics/report.py` | Escribe `team_metrics_<video>.json` para la pestaña Análisis | sí |
+| `cloud/kaggle.py` | Procesar en Kaggle desde la laptop: qué videos faltan (el plan de `overnight`), empaquetar, subir, lanzar, esperar y bajar | sí |
+| `cloud/kaggle_job.py` | Lo que corre dentro de Kaggle: arma el repositorio, cambia el detector OpenVINO por su `.pt` (GPU), corre `overnight` con tope de tiempo y deja lo nuevo para bajar | no (lo sube `kaggle.py`) |
 | `clips/geometry.py` | Dibujos de un clip igual que en la app: anclas, pausas (`frame_plan`), proyección, regla de 1 s, rótulos | no |
 | `clips/render.py` | Exporta a MP4 un clip editado o una jugada del pizarrón (OpenCV + Pillow + ffmpeg), perfiles `charla` y `whatsapp` | sí |
 | `clips/cut_clips.py` | Clips del informe: renderiza los que tienen edición y corta los demás | sí |
