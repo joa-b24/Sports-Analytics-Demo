@@ -153,13 +153,46 @@ class Progress:
         self.out.flush()
 
 
-def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: float, tracker: str, progress=None):
+# Franja de la cancha en la imagen, desde la calibración: lo que cae fuera (cielo, gradas) no se le da al detector.
+# Arriba se deja margen para la cabeza de quien está en la banda lejana; los lados no se recortan.
+BAND_TOP_PX = 120
+BAND_BOTTOM_PX = 20
+BAND_MARGIN_M = 3.0
+
+
+def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h: int) -> tuple[int, int] | None:
+    """(y0, y1) en píxeles donde cae la cancha (con BAND_MARGIN_M alrededor) según la calibración H (píxel -> metros).
+    None si no hay calibración o si la cancha no cae en la imagen."""
+    if H is None:
+        return None
+    try:
+        inv = np.linalg.inv(np.asarray(H, dtype=float).reshape(3, 3))
+    except np.linalg.LinAlgError:
+        return None
+    m = BAND_MARGIN_M
+    # Las cuatro esquinas y puntos de las bandas: una banda curvada por la perspectiva queda bien cubierta.
+    pts = [(x, y) for x in np.linspace(-m, length_m + m, 9) for y in (-m, width_m + m)]
+    ys = []
+    for x, y in pts:
+        p = inv @ np.array([x, y, 1.0])
+        # A homography is the same times any number, also a negative one: only a zero scale is out.
+        if abs(p[2]) > 1e-12:
+            ys.append(p[1] / p[2])
+    if not ys:
+        return None
+    y0 = int(max(0, min(ys) - BAND_TOP_PX))
+    y1 = int(min(h, max(ys) + BAND_BOTTOM_PX))
+    return (y0, y1) if y1 - y0 > 40 else None
+
+
+def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: float, tracker: str, progress=None, tiles: int = 1, band: tuple[int, int] | str | None = None):
     """Una pasada por la parte: movimiento de cámara, detección y seguimiento, y ubicación con la biblioteca cada `every` cuadros procesados."""
     import cv2
 
     from .library import features, localize
 
-    ft = FrameTracker(model, tracker, conf)  # seguidor nuevo: los identificadores son locales a la parte
+    auto_band = band == "auto"
+    ft = FrameTracker(model, tracker, conf, tiles=tiles, band=None if auto_band else band)  # seguidor nuevo: identificadores locales a la parte
     w, h = lib.meta["image_w"], lib.meta["image_h"]
     scale = min(1.0, lib.meta["work_width"] / w)
     cap.set(cv2.CAP_PROP_POS_FRAMES, chunk.start)
@@ -187,6 +220,9 @@ def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: floa
             if loc.H is not None:
                 anchors[i] = loc.H
                 hint = loc.ref
+                if auto_band:
+                    venue = lib.meta.get("venue") or {}
+                    ft.band = pitch_band(loc.H, float(venue.get("length_m", PITCH_LENGTH_M)), float(venue.get("width_m", PITCH_WIDTH_M)), w, h)
         row: list[dict] = []
         for tid, x1, y1, x2, y2, c in ft.step(img):
             row.append({
@@ -403,7 +439,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--chunk", type=float, default=0.0, help="segundos por parte; 0 (por defecto) = una parte por tramo de juego")
     ap.add_argument("--stride", type=int, help="procesa 1 de cada N cuadros (por defecto, analysis_stride de match.yaml)")
     ap.add_argument("--every", type=float, default=1.0, help="segundos entre ubicaciones con la biblioteca")
-    ap.add_argument("--model")
+    ap.add_argument("--model", help="modelo (carpeta OpenVINO o .pt); por defecto, `detector.model` de match.yaml o el de siempre")
+    ap.add_argument("--tiles", type=int, help="trozos a lo ancho para detectar (cámara amplia); por defecto, `detector.tiles` de match.yaml o 1")
+    ap.add_argument("--band", help="franja de la cancha en la imagen: «auto» (desde la calibración) o «y0,y1» en píxeles; por defecto, `detector.band` de match.yaml o todo el alto")
     ap.add_argument("--library")
     ap.add_argument("--conf", type=float, default=0.2)
     ap.add_argument("--tracker", default=str(DEFAULT_TRACKER))
@@ -441,7 +479,12 @@ def main(argv: list[str] | None = None) -> None:
     total_frames = sum(c.end - c.start for c in chunks)
 
     refs = {k: hex_to_lab(v) for k, v in (cfg.get("jersey_colors") or {}).items() if k in JERSEY_KEYS and v}
-    model_path = Path(args.model) if args.model else default_model(root)
+    det_cfg = cfg.get("detector") or {}
+    model_arg = args.model or det_cfg.get("model")
+    model_path = (Path(model_arg) if Path(model_arg).is_absolute() or Path(model_arg).exists() else root / "weights" / model_arg) if model_arg else default_model(root)
+    tiles = int(args.tiles or det_cfg.get("tiles") or 1)
+    band_raw = args.band or det_cfg.get("band")
+    band = "auto" if band_raw == "auto" else (tuple(int(v) for v in (band_raw.split(",") if isinstance(band_raw, str) else band_raw)) if band_raw else None)
     if not model_path.exists():
         raise SystemExit(f"No encuentro el modelo en {model_path}.")
     model = load_model(model_path)
@@ -450,9 +493,10 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(f"No se pudo abrir el video: {root / cfg['paths']['raw_video']}")
     meta = {
         "match_id": cfg["match_id"], "video_id": cfg["video_id"], "fps": fps, "image_w": lib.meta["image_w"], "image_h": lib.meta["image_h"],
-        "model": model_path.name, "tracker": Path(args.tracker).name, "venue": lib.meta.get("venue") or {},
+        "model": model_path.name, "tracker": Path(args.tracker).name, "tiles": tiles, "band": band if band in (None, "auto") else list(band), "venue": lib.meta.get("venue") or {},
     }
     print(f"{cfg['match_id']} {cfg['video_id']}: {origin}, {total_frames / fps / 60:.1f} min de video en {len(chunks)} parte(s); 1 de cada {stride} cuadros")
+    print(f"  detector: {model_path.name}" + (f", {tiles} trozo(s) a lo ancho" if tiles > 1 else "") + (", franja de la cancha desde la calibración" if band == "auto" else f", franja y {band[0]}-{band[1]} px" if band else ""))
     lengths = [(c.end - c.start) / fps for c in chunks]
     print(f"  duración de las partes: media {fmt_duration(sum(lengths) / len(lengths))}, la más larga {fmt_duration(max(lengths))}")
     print(f"  equipos por color: {', '.join(refs) if refs else 'sin jersey_colors en match.yaml (todo queda en unk)'}")
@@ -460,7 +504,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.benchmark:
         probe = Chunk(chunks[0].start, min(chunks[0].end, chunks[0].start + round(20 * fps)))
         t0 = time.time()
-        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, args.conf, args.tracker)
+        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, args.conf, args.tracker, tiles=tiles, band=band)
         result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
         per = (time.time() - t0) / max(1, len(frames))
         q = result["quality"]
@@ -489,7 +533,7 @@ def main(argv: list[str] | None = None) -> None:
             t0 = time.time()
             after = sum(c.end - c.start for c in pending[n:]) // stride
             bar = Progress(f"[{n}/{len(pending)}]", (chunk.end - chunk.start) // stride + 1, fps, stride, after_s=after)
-            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, args.conf, args.tracker, progress=bar)
+            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, args.conf, args.tracker, progress=bar, tiles=tiles, band=band)
             bar.end()
             if not frames:
                 print(f"  parte {chunk.name}: sin cuadros (¿fin del video?)")

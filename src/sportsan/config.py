@@ -75,6 +75,8 @@ def load_config(path: str | Path | None = None, match: str | None = None, video:
     # Si el video no trae los suyos, los del partido o, si no, los de otro video del mismo partido (mismo día, mismos
     # uniformes).
     cfg["jersey_colors"] = v.get("jersey_colors") or m.get("jersey_colors") or next((o["jersey_colors"] for o in videos if o.get("jersey_colors")), {})
+    # Cómo se detecta en este video (modelo, franja de la cancha y trozos); si no, lo del partido; si no, lo de siempre.
+    cfg["detector"] = v.get("detector") or m.get("detector") or {}
     cfg["paths"] = {
         "match_dir": rel.as_posix(),
         "raw_video": (rel / v["file"]).as_posix(),

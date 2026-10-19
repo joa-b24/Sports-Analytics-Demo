@@ -1,0 +1,17 @@
+match_id: partido_ucg_vs_u_inter
+kind: rival                       # own = partido nuestro; rival = scouting; reference = referencia
+date: "2026-09-25"
+own_team_name: "Universidad Cuauhtémoc"
+other_team_name: "U. Interamericana"
+analysis_stride: 3
+
+venue:
+  name: "REEMPLAZAR"
+
+# Un partido puede venir en varios videos. t_video es el tiempo dentro de cada video.
+videos:
+  - video_id: v1
+    label: "Partido completo"
+    youtube_id: "ILZOxsD5B5I"
+    file: video/v1.mp4
+    fps: 30

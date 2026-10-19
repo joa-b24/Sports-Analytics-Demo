@@ -115,6 +115,14 @@ test("a line drawn by hand joins two marks whatever the time between them, and c
   assert.deepEqual(cov.missing, []);
 });
 
+test("ball coverage: «out» samples next to marks leave no slivers", () => {
+  // Samples every 0.5 s (15 frames): out at 0 and 15, marks from 30 on; nothing should be missing.
+  const marks = [30, 45, 60, 75, 90];
+  const r = ballCoverage({ marks, out: [0, 15], from: 0, to: 97, fps: 30, stride: 3, outHalf: 7.5 });
+  assert.deepEqual(r.missing, []);
+  assert.equal(r.share, 1);
+});
+
 // A camera looking straight down that moves 100 px to the right between frame 0 and frame 3 (synthetic).
 const pannedFile = () => ({
   match_id: "m", video_id: "v1", fps: 30, start_frame: 0, end_frame: 300, stride: 3, image_w: 1920, image_h: 1080,

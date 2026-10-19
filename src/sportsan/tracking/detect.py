@@ -198,6 +198,61 @@ def make_tracker(path: str | Path):
     return (BOTSORT if cfg.tracker_type == "botsort" else BYTETracker)(args=cfg)
 
 
+# ---------------------------------------------------------------- detección por trozos
+
+# Con una cámara amplia las jugadoras miden 15-40 px y el detector a 1280 se pierde la mitad. Partiendo la franja de
+# la cancha en trozos, cada trozo se le da al detector a 1280: las jugadoras se ven 2-3 veces más grandes. Medido en
+# el partido contra UP (6 cuadros): 12 personas en la cancha por cuadro con el cuadro entero, 22-23.5 por trozos.
+TILE_OVERLAP = 0.15
+
+
+# Forma de la entrada del detector (1280 x 736): un trozo así se aprovecha entero, sin achicarlo.
+DETECT_ASPECT = 1280 / 736
+
+
+def tile_windows(w: int, h: int, tiles: int = 1, band: tuple[int, int] | None = None, overlap: float = TILE_OVERLAP) -> list[tuple[int, int, int, int]]:
+    """Recortes (x0, y0, x1, y1) del cuadro: la franja `band` (y0, y1; todo el alto si no hay) en `tiles` trozos a lo
+    ancho, y en tantas filas como hagan falta para que cada trozo tenga la forma de la entrada del detector (una franja
+    baja, una fila; la cancha entera, dos). Se solapan un `overlap` para que nadie quede partido en dos."""
+    y0, y1 = band if band else (0, h)
+    y0, y1 = max(0, int(y0)), min(h, int(y1))
+    if tiles <= 1:
+        return [(0, y0, w, y1)]
+    tw = min(w, int(w / tiles * (1 + overlap)))
+    bh = y1 - y0
+    rows = max(1, round(bh / (tw / DETECT_ASPECT)))
+    th = bh if rows == 1 else min(bh, int(bh / rows * (1 + overlap)))
+    out = []
+    for j in range(rows):
+        ty = y0 if rows == 1 else max(y0, min(y1 - th, int(y0 + j * bh / rows - (th - bh / rows) / 2)))
+        for i in range(tiles):
+            x0 = max(0, min(w - tw, int(i * w / tiles - (tw - w / tiles) / 2)))
+            out.append((x0, ty, x0 + tw, ty + th))
+    return out
+
+
+def merge_tile_boxes(boxes: list[list[float]], iou: float = 0.5, inside: float = 0.6) -> list[list[float]]:
+    """Une las cajas de varios trozos: de dos que se solapan (IoU) o donde una cae casi entera dentro de la otra (la
+    misma persona cortada por el borde de un trozo) queda la de más confianza. Cajas [x1, y1, x2, y2, conf]."""
+    kept: list[list[float]] = []
+    for b in sorted(boxes, key=lambda x: -x[4]):
+        area_b = max(1e-9, (b[2] - b[0]) * (b[3] - b[1]))
+        dup = False
+        for k in kept:
+            iw = min(b[2], k[2]) - max(b[0], k[0])
+            ih = min(b[3], k[3]) - max(b[1], k[1])
+            if iw <= 0 or ih <= 0:
+                continue
+            inter = iw * ih
+            area_k = (k[2] - k[0]) * (k[3] - k[1])
+            if inter / (area_b + area_k - inter) >= iou or inter / min(area_b, area_k) >= inside:
+                dup = True
+                break
+        if not dup:
+            kept.append(b)
+    return kept
+
+
 class FrameTracker:
     """Detecta y sigue cuadro a cuadro sin perder nada de lo que el detector ve.
 
@@ -206,15 +261,30 @@ class FrameTracker:
     un identificador suelto, cada detección que el seguidor no dejó pasar.
     """
 
-    def __init__(self, model, tracker_path: str | Path, conf: float, loose_conf: float = 0.3):
+    def __init__(self, model, tracker_path: str | Path, conf: float, loose_conf: float = 0.3, tiles: int = 1, band: tuple[int, int] | None = None):
         self.model, self.conf, self.loose_conf = model, conf, loose_conf
+        self.tiles, self.band = tiles, band
         self.tracker = make_tracker(tracker_path)
         self.loose = 0
 
+    def detect(self, img):
+        """Detecciones del cuadro (Boxes de ultralytics): del cuadro entero o, con trozos o franja, de cada recorte."""
+        if self.tiles <= 1 and not self.band:
+            return self.model.predict(img, imgsz=[736, 1280], classes=[0], conf=self.conf, verbose=False)[0].boxes.cpu().numpy()
+        from ultralytics.engine.results import Boxes
+
+        h, w = img.shape[:2]
+        found: list[list[float]] = []
+        for x0, y0, x1, y1 in tile_windows(w, h, self.tiles, self.band):
+            r = self.model.predict(img[y0:y1, x0:x1], imgsz=[736, 1280], classes=[0], conf=self.conf, verbose=False)[0]
+            for (bx1, by1, bx2, by2), c in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.conf.cpu().numpy()):
+                found.append([float(bx1) + x0, float(by1) + y0, float(bx2) + x0, float(by2) + y0, float(c)])
+        data = np.array([[*b, 0.0] for b in merge_tile_boxes(found)], dtype=np.float32).reshape(-1, 6)
+        return Boxes(data, (h, w))
+
     def step(self, img) -> list[list[float]]:
         """Cajas del cuadro como [track_id, x1, y1, x2, y2, conf]."""
-        r = self.model.predict(img, imgsz=[736, 1280], classes=[0], conf=self.conf, verbose=False)[0]
-        det = r.boxes.cpu().numpy()
+        det = self.detect(img)
         out = self.tracker.update(det, img)
         rows = [[int(t[4]), float(t[0]), float(t[1]), float(t[2]), float(t[3]), float(t[5])] for t in out]
         # La última columna de cada track es el índice de la detección que lo alimentó en este cuadro: esas ya

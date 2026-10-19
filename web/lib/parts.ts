@@ -398,7 +398,8 @@ export function joinParts(input: Part[], o: JoinOptions): Joined {
   };
 }
 
-// How much of the time in play has a ball, and where it is missing. A mark (by hand or from an event) covers its frame,
+// How much of the time in play has a ball, and where it is missing. A mark (by hand or from an event) covers its sample
+// (outHalf to each side, at least its own frame),
 // two marks less than fillS apart cover what lies between them (the straight line drawn there), and `out` are the
 // moments reviewed as "out of play / not in sight", each covering outHalf frames to each side: they are left out of the
 // count. Stretches missing shorter than two processed frames are not reported.
@@ -431,7 +432,9 @@ export function ballCoverage(o: {
   const marks = [...new Set(o.marks)].sort((a, b) => a - b);
   const covered = merge(
     [
-      ...marks.map((m) => [m - o.stride / 2, m + o.stride / 2] as [number, number]),
+      // A mark covers its sample as a reviewed "out" does: half a step to each side (at least its own frame). Otherwise a
+      // sliver is left between an "out" and the next mark.
+      ...marks.map((m) => [m - Math.max(o.stride / 2, o.outHalf), m + Math.max(o.stride / 2, o.outHalf)] as [number, number]),
       ...marks.slice(1).flatMap((m, i) => (m - marks[i] <= fill ? [[marks[i], m] as [number, number]] : [])),
       ...(o.links ?? []).map((l) => [l.from, l.to] as [number, number]),
     ].flatMap((x) => {

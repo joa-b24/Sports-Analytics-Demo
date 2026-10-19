@@ -107,3 +107,38 @@ def test_linea_de_progreso():
     text = p.line(50, 61.0)
     assert "[############------------]" in text and "50 %" in text and "video 1:01" in text and "5.0 c/s" in text
     assert text.isascii()
+
+
+def test_trozos_de_la_franja_y_union_de_cajas():
+    from sportsan.tracking.detect import merge_tile_boxes, tile_windows
+
+    wins = tile_windows(1920, 1080, tiles=2, band=(600, 1080))
+    assert len(wins) == 2 and all(y0 == 600 and y1 == 1080 for _, y0, _, y1 in wins)
+    assert wins[0][0] == 0 and wins[1][2] == 1920 and wins[0][2] > wins[1][0]  # se solapan
+    assert tile_windows(1920, 1080) == [(0, 0, 1920, 1080)]
+    # La misma persona vista en dos trozos (una caja entera y otra cortada por el borde) queda una vez.
+    boxes = [[100, 600, 120, 650, 0.9], [100, 600, 112, 650, 0.5], [300, 600, 320, 650, 0.8]]
+    assert merge_tile_boxes(boxes) == [[100, 600, 120, 650, 0.9], [300, 600, 320, 650, 0.8]]
+
+
+def test_trozos_en_filas_cuando_la_cancha_llena_el_cuadro():
+    from sportsan.tracking.detect import tile_windows
+
+    assert len(tile_windows(1920, 1080, tiles=2, band=(600, 1080))) == 2  # franja baja: una fila
+    full = tile_windows(1920, 1080, tiles=2)
+    assert len(full) == 4 and {w[1] for w in full} != {0}  # cancha entera: dos filas
+
+
+def test_franja_de_la_cancha_desde_la_calibracion():
+    import numpy as np
+
+    from sportsan.tracking.process import BAND_TOP_PX, pitch_band
+
+    # Calibración trivial: 10 px = 1 m, y la cancha (100 x 60 m) empieza 500 px abajo.
+    to_px = np.array([[10.0, 0, 0], [0, 10.0, 500], [0, 0, 1]])
+    H = np.linalg.inv(to_px)  # píxel -> metros
+    y0, y1 = pitch_band(H, 100, 60, 1920, 2000)
+    assert y0 == 500 - 30 - BAND_TOP_PX and y1 == 500 + 630 + 20
+    assert pitch_band(-3 * H, 100, 60, 1920, 2000) == (y0, y1)  # la misma calibración con otro signo
+    assert pitch_band(None, 100, 60, 1920, 1080) is None
+

@@ -542,3 +542,25 @@ imposibles) y «fuera de cuadro» (en el borde de la imagen al perderla o al enc
 rellenan todos los huecos con una recta, por largos que sean, para poder medir la distancia total; y elegir la caja
 correcta entre dos de la misma persona separa solo el tramo continuo de la otra (`separateRun`), no su track entero.
 Medido por la analista: la parte de 10 min llevó ~2 h de revisión rápida y verificación, sin el balón.
+
+## Cámara amplia: detectar por trozos (2026-10-18)
+
+En el partido contra UP (cámara amplia, casi fija) la primera parte procesada salió casi sin jugadoras: mediana de 9
+personas en la cancha por cuadro, 6,376 tracks en 7 min y ninguno largo. Las jugadoras miden 15-40 px (mediana 39) y
+el detector a 1280 se pierde la mitad. Medido en 6 cuadros de `v1` (personas en la cancha por cuadro / s por cuadro):
+
+| Variante | Personas | s |
+|---|---|---|
+| yolo11n, cuadro entero (lo de siempre) | 12.2 | 0.33 |
+| ídem con más contraste (CLAHE) | 13.0 | 0.19 |
+| yolo11s, cuadro entero | 17.8 | 0.36 |
+| yolo11n en 4 trozos | 18.3 | 0.47 |
+| yolo11s en 4 trozos | 22.0 | 1.07 |
+| yolo11n, franja de la cancha en 3 trozos | 21.7 | 0.39 |
+| yolo11s, franja en 2 trozos | 23.5 | 0.58 |
+
+No es nitidez ni exposición: es el tamaño. Se adopta para este partido `detector: {model: yolo11s_1280_openvino_model,
+tiles: 2, band: auto}` en `match.yaml`: la franja sale de la calibración de cada cuadro (el encuadre cambia entre
+videos: en `v3` la cancha llena el cuadro y se parte en 2 x 2). En el proceso completo: 25 personas por cuadro, 445
+tracks y 90 identidades en 20 s (antes 9 personas), ~0.86 s por cuadro procesado. Los demás partidos no cambian.
+

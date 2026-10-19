@@ -1,8 +1,9 @@
 match_id,kind,date,own_team,other_team,video_id,period,label,url,note
 partido_2026_09_25,own,2026-09-25,Tec CCM,Anáhuac,v1,1,1.er tiempo,https://www.youtube.com/watch?v=_-utAbJNqhI,jornada 1
-partido_2026_09_25,own,2026-09-25,Tec CCM,Anáhuac,v2,2,2.do tiempo (parte 1),https://www.youtube.com/watch?v=mqG87vxhqBc&t=15s,jornada 1
-partido_2026_09_25,own,2026-09-25,Tec CCM,Anáhuac,v3,2,2.do tiempo (parte 2),https://www.youtube.com/watch?v=3RkiPUQb-lM&t=249s,jornada 1
+partido_2026_09_25,own,2026-09-25,Tec CCM,Anáhuac,v2,2,2.do tiempo (parte 1),https://www.youtube.com/watch?v= vjke4rmqG87vxhqBc&t=15s,jornada 1
+partido_2026_09_25,own,2026-09-25,Tec CCM,Anáhuac,v3,2,2.aqWM Mdo tiempo (parte 2),https://www.youtube.com/watch?v=3RkiPUQb-lM&t=249s,jornada 1
 partido_ccm_vs_up,own,,Tec CCM,UP,v1,1,1.er tiempo (parte 1),https://www.youtube.com/watch?v=OIvhk-vNs5c,jornada 2
 partido_ccm_vs_up,own,,Tec CCM,UP,v2,1,1.er tiempo (parte 2),https://www.youtube.com/watch?v=C-8Iwurx4xE&t=3s,jornada 2
 partido_ccm_vs_up,own,,Tec CCM,UP,v3,2,2.do tiempo,https://www.youtube.com/watch?v=xPfZ4sZzJ5w,jornada 2
 partido_up_vs_u_modelo,rival,,UP,U. Modelo,v1,,Partido completo,https://www.youtube.com/live/kjPIltXBMPs,
+partido_ucg_vs_u_inter,rival,2026-09-25, Universidad Cuauhtémoc, U. Interamericana,v1,,Partido completo,https://www.youtube.com/watch?v=ILZOxsD5B5I,jornada 1

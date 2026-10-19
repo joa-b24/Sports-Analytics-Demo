@@ -273,6 +273,7 @@ la conversión a metros se hace después con la calibración. Los `track_id` son
 |---|---|
 | schema_version, kind | `1` (solo cajas, de `detect`) o `3` (con posición, equipo, identidad propuesta y calibración, de `process`); `"tracks_px"` |
 | match_id, video_id, fps, image_w, image_h, model, tracker | del video y de la corrida |
+| tiles, band | cómo se detectó (solo con `process`): trozos a lo ancho y franja de la cancha (`"auto"` = sacada de la calibración de cada cuadro, `[y0, y1]` en píxeles, o `null` = el cuadro entero) |
 | venue | `{length_m, width_m}`: medida real de la sede con la que se calibró (solo con `process`). La app la copia a `tracks_fixed` para medir distancias en metros reales |
 | start_frame, end_frame, stride | cuadros del video original (final exclusivo); se procesa 1 de cada `stride` |
 | box_columns | nombres de las columnas de cada caja |

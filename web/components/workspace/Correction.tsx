@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Palette, Pause, Play, Plus, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Palette, Pause, Play, Plus, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
@@ -153,6 +153,18 @@ export function Correction({
   const [blocked, setBlocked] = useState<{ into: number; from: number; frames: number[]; same: number } | null>(null);
   // Players or ball: two views of the same part.
   const [view, setView] = useState<"players" | "ball" | "quick">("players");
+  // Full screen: the video with its boxes, and one line on top with what matters in each view.
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [isFull, setIsFull] = useState(false);
+  useEffect(() => {
+    const on = () => setIsFull(document.fullscreenElement !== null && document.fullscreenElement === stageRef.current);
+    document.addEventListener("fullscreenchange", on);
+    return () => document.removeEventListener("fullscreenchange", on);
+  }, []);
+  const toggleFull = useCallback(() => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    else void stageRef.current?.requestFullscreen().catch(() => undefined);
+  }, []);
   // The view as the keyboard handler (set up once) sees it.
   const viewRef = useRef(view);
   useEffect(() => {
@@ -287,10 +299,11 @@ export function Correction({
       else if (e.key === "p" && viewRef.current === "players") setMode((m) => (m === "manual" ? null : "manual"));
       else if (e.key === "b" && viewRef.current === "players") setMode((m) => (m === "ball" ? null : "ball"));
       else if (e.key === "z") setPref("correction:zoom", String((Number(getPref("correction:zoom", "2")) % 3) + 1));
+      else if (e.key === "f") toggleFull();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fps, stride, seekFrame, togglePlay]);
+  }, [fps, stride, seekFrame, togglePlay, toggleFull]);
 
   // Inside a match, its video is opened from its folder without asking.
   useEffect(() => {
@@ -1060,7 +1073,7 @@ export function Correction({
     );
   };
   // Keys for the selected person: s split here, n next candidate, g next hole, c next change of shirt, d next frame
-  // with two boxes, v verified, Supr not a player.
+  // with two boxes, v verified, m keep one box where her two sit in the same place, Supr not a player.
   const selKeys = useRef<(e: KeyboardEvent) => void>(() => undefined);
   useEffect(() => {
     selKeys.current = (e: KeyboardEvent) => {
@@ -1077,6 +1090,8 @@ export function Correction({
       else if (k === "c") nextOf((hintsByPerson.get(selected.id) ?? []).map((h) => Math.max(data?.start_frame ?? 0, h.frame - Math.round(fps))));
       else if (k === "d") nextOf(selected.conflicts);
       else if (k === "v") toggleChecked();
+      // m: where her two boxes sit in the same place, keep one (the more confident).
+      else if (k === "m") unifySelf();
       else if (e.key === "Delete") removeSelected();
       else return;
       e.preventDefault();
@@ -1993,10 +2008,12 @@ export function Correction({
   // Fixing names given by mistake: one by one, all of a player, or all of them over to another player.
   const qMine = qPlayer ? qLabels.filter((l) => l.name === qPlayer).sort((a, b) => a.frame - b.frame) : [];
   const qRemoveLabel = (l: QuickLabel) => qSetLabels(qLabels.filter((x) => x !== l));
+  // Starts a player again: none of her names, not done, back to the start of the part (Ctrl + Z undoes it).
   const qRemoveAll = (name: string) => {
-    qSetLabels(qLabels.filter((l) => l.name !== name));
+    setEdits({ ...edits, quick: { labels: qLabels.filter((l) => l.name !== name), seen: qSeen, done: (edits.quick?.done ?? []).filter((n) => n !== name) } });
     setQAfter((data?.start_frame ?? 0) - 1);
-    setMsg(`Quitados todos los nombres de ${name}. Ctrl + Z los recupera.`);
+    if (data) seekFrame(data.start_frame);
+    setMsg(`${name} desde cero: sin nombres ni «hecha». Búscala con ← → y haz clic sobre ella. Ctrl + Z lo deshace.`);
   };
   const qRename = (from: string, to: string) => {
     if (!to || to === from) return;
@@ -2065,6 +2082,20 @@ export function Correction({
       )}
       {qPlayer && (
         <div className="mt-3 rounded-2xl bg-bg/60 p-3 text-sm">
+          <div className="-mt-1 -mr-1 mb-1 flex items-center justify-between gap-2">
+            <span className="text-xs text-ink-2">
+              {qNumber.get(qPlayer) ?? ""} {qPlayer}
+              {qDone.includes(qPlayer) && <span className="ml-2 text-ok">· hecha</span>}
+            </span>
+            <IconButton
+              label={`Reiniciar a ${qPlayer}: quitarle todos sus nombres de la revisión rápida y la marca de hecha (Ctrl + Z lo deshace)`}
+              tone="danger"
+              disabled={qPlayerCount(qPlayer) === 0 && !qDone.includes(qPlayer)}
+              onClick={() => qRemoveAll(qPlayer)}
+            >
+              <ArrowCounterClockwise size={15} />
+            </IconButton>
+          </div>
           {qCp ? (
             <>
               <div className="text-ink-2">{CP_TEXT[qCp.kind]}</div>
@@ -2282,6 +2313,44 @@ export function Correction({
               </p>
             </Card>
   );
+  // What the full screen shows on top: in the quick review, who is being named; in the ball view, how much has a ball;
+  // in the players view, the warnings of the selected player at this moment, or her tick.
+  const fullHud = (() => {
+    const pill = (text: string, tone: "plain" | "ok" | "warn" | "danger" = "plain", key?: string) => (
+      <span
+        key={key ?? text}
+        className={`enter rounded-full px-3 py-1 text-sm font-medium shadow-lg backdrop-blur ${
+          tone === "ok" ? "bg-ok/25 text-ok" : tone === "warn" ? "bg-warn-900/80 text-warn" : tone === "danger" ? "bg-danger/30 text-danger" : "bg-black/60 text-white"
+        }`}
+      >
+        {text}
+      </span>
+    );
+    const items: React.ReactNode[] = [];
+    if (view === "quick") {
+      if (qMode === "player" && qPlayer) {
+        items.push(pill(`${qNumber.get(qPlayer) ?? ""} ${qPlayer}`.trim(), "plain", "who"));
+        if (qCp) items.push(pill(CP_TEXT[qCp.kind].split(":")[0].split(".")[0], qCp.kind === "lost" ? "warn" : "plain", "cp"));
+      } else if (qMode === "samples") items.push(pill(`Muestra ${Math.min(qIdx + 1, qSamples.length)} de ${qSamples.length}`, "plain", "who"));
+      else items.push(pill("Elige una jugadora", "warn", "who"));
+    } else if (view === "ball") {
+      items.push(pill(`Balón ${Math.round(100 * ballShare)} % del juego`, ballShare >= 0.95 ? "ok" : "plain", "ball"));
+    } else if (selected) {
+      items.push(pill(label(selected, selected.id), "plain", "who"));
+      if (selected.done) items.push(pill("✓ Verificada", "ok", "done"));
+      else {
+        if (selTwiceHere) items.push(pill("Dos cajas aquí", "warn", "twice"));
+        if (selGaps.some(([a, b]) => frame > a && frame < b)) items.push(pill("Hueco por revisar", "danger", "gap"));
+        if ((hintsByPerson.get(selected.id) ?? []).some((h) => Math.abs(h.frame - frame) <= 1.5 * fps)) items.push(pill("Cambio de camiseta", "warn", "shirt"));
+      }
+    }
+    return (
+      <div className="pointer-events-none absolute inset-x-0 top-3 flex flex-col items-center gap-2">
+        <div className="flex flex-wrap justify-center gap-2">{items}</div>
+        {msg && <div className="enter max-w-[70%] rounded-2xl bg-accent-900/85 px-4 py-2 text-center text-sm text-accent-100 shadow-lg">{msg}</div>}
+      </div>
+    );
+  })();
   return (
     <>
       <Head embedded={embedded}>
@@ -2599,7 +2668,15 @@ export function Correction({
           <div ref={layoutRef} className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_0.5rem_var(--list-w)] xl:gap-2" style={{ "--list-w": `${listW}px` } as React.CSSProperties}>
             <div className="min-w-0">
               <div className="space-y-3 xl:sticky xl:top-4">
-                <div className={`relative mx-auto w-full overflow-hidden rounded-2xl bg-black ${selected ? "xl:max-w-[calc((100vh-19rem)*16/9)]" : "xl:max-w-[calc((100vh-11rem)*16/9)]"}`}>
+                <div
+                  ref={stageRef}
+                  className={
+                    isFull
+                      ? "relative flex h-full w-full items-center justify-center overflow-hidden bg-black"
+                      : `relative mx-auto w-full overflow-hidden rounded-2xl bg-black ${selected ? "xl:max-w-[calc((100vh-19rem)*16/9)]" : "xl:max-w-[calc((100vh-11rem)*16/9)]"}`
+                  }
+                >
+                  <div className={isFull ? "relative overflow-hidden" : "contents"} style={isFull && dims ? { width: `min(100vw, calc(100vh * ${dims.w / dims.h}))` } : undefined}>
                   <div
                     className="relative origin-top-left transition-transform duration-300 ease-out will-change-transform"
                     style={{ transform: zoomTransform }}
@@ -2679,6 +2756,8 @@ export function Correction({
                   {zoomTransform && (
                     <span className="tc pointer-events-none absolute top-2 right-2 rounded-lg bg-black/60 px-1.5 py-0.5 text-[10px] text-white/80">×{zoom}</span>
                   )}
+                  </div>
+                  {isFull && fullHud}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-bg/85 py-1 backdrop-blur-sm">
@@ -2736,6 +2815,9 @@ export function Correction({
                     <MagnifyingGlassPlus size={15} />
                     <span className="tc text-xs">×{zoom}</span>
                   </button>
+                  <IconButton label="Pantalla completa (f)" onClick={toggleFull}>
+                    <ArrowsOut size={16} />
+                  </IconButton>
                 </div>
                 {/* Whole part on one bar: click to jump. */}
                 <div
@@ -2766,7 +2848,7 @@ export function Correction({
                     Haz clic en una caja del video o en una fila de la lista para corregirla. Atajos: <kbd className="kbd">u</kbd> unir,{" "}
                     <kbd className="kbd">s</kbd> partir aquí (<kbd className="kbd">Shift S</kbd> se queda en el primer tramo), <kbd className="kbd">p</kbd> marcar a mano, <kbd className="kbd">n</kbd> ver la
                     siguiente candidata, <kbd className="kbd">g</kbd> hueco (1 s más cada vez), <kbd className="kbd">c</kbd> cambio de camiseta, <kbd className="kbd">d</kbd> dos cajas,{" "}
-                    <kbd className="kbd">v</kbd> verificada (y pasa a la siguiente por revisar), <kbd className="kbd">Supr</kbd> no es jugadora.
+                    <kbd className="kbd">v</kbd> verificada (y pasa a la siguiente por revisar), <kbd className="kbd">m</kbd> una caja donde hay dos en el mismo sitio, <kbd className="kbd">Supr</kbd> no es jugadora.
                   </p>
                 )}
                 {selected && (
@@ -2883,7 +2965,7 @@ export function Correction({
                           <IconButton label="Ir al primero" onClick={() => seekFrame(selected.conflicts[0])}>
                             <Eye size={13} />
                           </IconButton>
-                          <IconButton label="Dejar una donde están en el mismo sitio" tone="accent" onClick={unifySelf}>
+                          <IconButton label="Dejar una donde están en el mismo sitio (m)" tone="accent" onClick={unifySelf}>
                             <MagicWand size={13} />
                           </IconButton>
                         </span>

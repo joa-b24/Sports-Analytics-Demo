@@ -29,3 +29,11 @@ videos:
     file: video/v3.mp4
     fps: 30
     # jersey_colors: elegir en la app (Corrección de tracks → Uniformes) y escribir aquí
+
+# Cámara amplia: las jugadoras miden 15-40 px y el detector de siempre ve menos de la mitad. Se detecta con el modelo
+# mediano, solo en la franja de la cancha (sacada de la calibración de cada cuadro) y partida en 2 trozos a lo ancho.
+# Medido en v1: 25 personas en la cancha por cuadro (antes 9), ~0.86 s por cuadro procesado.
+detector: {model: yolo11s_1280_openvino_model, tiles: 2, band: auto}
+
+# Colores de camiseta para asignar equipos en el tracking (elegidos en la app)
+jersey_colors: {own: "#080a04", own_gk: "#a3b978", opp: "#622a39", opp_gk: "#a0ca74", ref: "#27233d"}
