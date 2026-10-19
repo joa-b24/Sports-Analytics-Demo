@@ -21,17 +21,40 @@ from pathlib import Path
 JOB: dict = globals().get("JOB") or {}
 
 
-def find_in_input(input_dir: Path, slug: str, name: str) -> Path | None:
-    """Un archivo de un conjunto de datos: tal cual, o ya descomprimido por Kaggle en una carpeta con su nombre. Solo
-    se busca dentro de la carpeta de ese conjunto (varios tienen un v1.mp4)."""
-    bases = [input_dir / slug] + [p for p in input_dir.rglob(slug) if p.is_dir()]
+def find_in_input(input_dir: Path, slug: str, name: str, marker: str | None = None) -> Path | None:
+    """Un archivo de un conjunto de datos: tal cual, ya descomprimido por Kaggle en una carpeta con su nombre, o
+    descomprimido directamente en la raíz del conjunto (entonces se reconoce por `marker`, algo que debe contener).
+    Solo se busca dentro de la carpeta de ese conjunto (varios tienen un v1.mp4); se siguen los enlaces de Kaggle."""
+    bases = [input_dir / slug]
+    for dirpath, dirnames, _ in os.walk(input_dir, followlinks=True):
+        if Path(dirpath).name == slug:
+            bases.append(Path(dirpath))
+        if dirpath.count(os.sep) - str(input_dir).count(os.sep) >= 4:
+            dirnames[:] = []
     for base in bases:
         if not base.is_dir():
             continue
-        for c in [base / name, base / Path(name).stem, *base.rglob(name)]:
+        for c in [base / name, base / Path(name).stem]:
             if c.exists():
                 return c
+        for dirpath, _, files in os.walk(base, followlinks=True):
+            if name in files:
+                return Path(dirpath) / name
+        if marker:
+            for dirpath, dirnames, files in os.walk(base, followlinks=True):
+                if marker in dirnames or marker in files:
+                    return Path(dirpath)
     return None
+
+
+def show_input(input_dir: Path, depth: int = 3) -> None:
+    """Qué montó Kaggle (para entender un fallo sin adivinar)."""
+    base_depth = str(input_dir).count(os.sep)
+    for dirpath, dirnames, files in os.walk(input_dir, followlinks=True):
+        level = dirpath.count(os.sep) - base_depth
+        print(f"[kaggle] {'  ' * level}{Path(dirpath).name}/ {', '.join(sorted(files)[:6])}", flush=True)
+        if level >= depth:
+            dirnames[:] = []
 
 
 def unpack(src: Path, dest: Path) -> None:
@@ -101,9 +124,14 @@ def main(job: dict) -> int:
     match = job["match_id"]
     t0 = time.time()
 
+    show_input(input_dir)
     print(f"[kaggle] armando el repositorio en {root}", flush=True)
-    unpack(find_in_input(input_dir, job["code_slug"], "code.zip") or Path("?"), root)
-    unpack(find_in_input(input_dir, job["data_slug"], "data.zip") or Path("?"), root)
+    code = find_in_input(input_dir, job["code_slug"], "code.zip", marker="pyproject.toml")
+    data = find_in_input(input_dir, job["data_slug"], "data.zip", marker="matches")
+    if code is None or data is None:
+        raise SystemExit(f"No encuentro {'el código' if code is None else 'los datos del partido'} en {input_dir}")
+    unpack(code, root)
+    unpack(data, root)
     mdir = root / "matches" / match
     (mdir / "video").mkdir(parents=True, exist_ok=True)
     for vid, slug in job["videos"].items():

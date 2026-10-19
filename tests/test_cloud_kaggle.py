@@ -77,7 +77,7 @@ def test_data_zip_carries_only_this_match_and_its_videos(tmp_path):
         assert "matches/m1/match.yaml" in f.namelist()
 
 
-@pytest.mark.parametrize("extracted", [False, True])
+@pytest.mark.parametrize("extracted", [False, True, "root"])
 def test_kaggle_side_builds_the_repo_and_patches_the_detector(tmp_path, extracted):
     repo = tmp_path / "repo"
     fake_repo(repo)
@@ -89,7 +89,10 @@ def test_kaggle_side_builds_the_repo_and_patches_the_detector(tmp_path, extracte
     for slug, z in (("sportsan-code", "code.zip"), ("sportsan-m1-datos", "data.zip")):
         d = inp / slug
         d.mkdir(parents=True)
-        if extracted:  # Kaggle ya lo descomprimió en una carpeta con su nombre
+        if extracted == "root":  # Kaggle lo descomprimió directamente en la raíz del conjunto
+            with zipfile.ZipFile(stage / z) as f:
+                f.extractall(d)
+        elif extracted:  # Kaggle ya lo descomprimió en una carpeta con su nombre
             with zipfile.ZipFile(stage / z) as f:
                 f.extractall(d / Path(z).stem)
         else:
