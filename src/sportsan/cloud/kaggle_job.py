@@ -92,8 +92,10 @@ def run_with_budget(cmd: list[str], cwd: Path, hours: float, log: Path) -> tuple
     """Corre `cmd` mostrando y guardando su salida; si pasa del tope, lo corta (a él y a sus hijos)."""
     deadline = time.time() + hours * 3600
     with open(log, "w", encoding="utf-8") as f:
+        # Barras de progreso de tqdm a lo más cada 60 s: si no, llenan el registro y Kaggle lo recorta.
+        env = {**os.environ, "TQDM_MININTERVAL": "60"}
         proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                                start_new_session=True)
+                                start_new_session=True, env=env)
         assert proc.stdout is not None
         os.set_blocking(proc.stdout.fileno(), False)
         while True:

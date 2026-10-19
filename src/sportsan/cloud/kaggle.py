@@ -402,17 +402,24 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--force", action="store_true", help="vuelve a subir los videos aunque ya estén")
     lg = sub.add_parser("login", help="una vez: inicia sesión en Kaggle y guarda tu usuario")
     lg.add_argument("--user", required=True, help="tu usuario de Kaggle (el de la dirección de tu perfil)")
-    for name in ("status", "pull"):
+    for name in ("status", "pull", "logs"):
         s = sub.add_parser(name)
         s.add_argument("--match", required=True)
         s.add_argument("--force", action="store_true", help="(pull) reemplaza archivos tuyos distintos")
+        s.add_argument("--follow", action="store_true", help="(logs) sigue el registro en vivo, como tail -f")
     a = ap.parse_args(argv)
     if a.cmd == "login":
         login(a.user)
     elif a.cmd == "run":
         run_tracking(a.match, a.videos.split(",") if a.videos else None, a.dry_run, not a.no_wait, a.hours, a.gpu, a.force)
     elif a.cmd == "status":
-        print(kernel_status(f"{username()}/{kernel_slug(a.match)}"))
+        st = kernel_status(f"{username()}/{kernel_slug(a.match)}")
+        print(st)
+        if st == "sin respuesta":
+            print(f"Kaggle no respondió: sin red o la sesión venció (python -m sportsan.cloud.kaggle login --user {username()}).")
+    elif a.cmd == "logs":
+        # El registro completo, sin el recorte de la página de Kaggle; con --follow, en vivo.
+        subprocess.run([*kaggle_exe(), "kernels", "logs", *(["-f"] if a.follow else []), f"{username()}/{kernel_slug(a.match)}"])
     else:
         pull(a.match, a.force)
 
