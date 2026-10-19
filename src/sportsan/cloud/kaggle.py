@@ -27,6 +27,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -211,8 +212,13 @@ def login(user: str) -> None:
     print(f"Sesión iniciada; usuario {user} guardado en {LOCAL_CONFIG}.")
 
 
+# The CLI writes in UTF-8 whatever the console is: on Windows a captured output is cp1252 by default and the CLI dies
+# printing an accent or a log line (the files were already downloaded, but the call failed).
+UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
+
 def kaggle(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    r = subprocess.run([*kaggle_exe(), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    r = subprocess.run([*kaggle_exe(), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", env=UTF8_ENV)
     if check and r.returncode != 0:
         raise SystemExit(f"kaggle {' '.join(args[:2])} falló:\n{r.stdout}\n{r.stderr}")
     return r
@@ -419,7 +425,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"Kaggle no respondió: sin red o la sesión venció (python -m sportsan.cloud.kaggle login --user {username()}).")
     elif a.cmd == "logs":
         # El registro completo, sin el recorte de la página de Kaggle; con --follow, en vivo.
-        subprocess.run([*kaggle_exe(), "kernels", "logs", *(["-f"] if a.follow else []), f"{username()}/{kernel_slug(a.match)}"])
+        subprocess.run([*kaggle_exe(), "kernels", "logs", *(["-f"] if a.follow else []), f"{username()}/{kernel_slug(a.match)}"], env=UTF8_ENV)
     else:
         pull(a.match, a.force)
 
