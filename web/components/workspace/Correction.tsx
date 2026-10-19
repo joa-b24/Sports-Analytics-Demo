@@ -4,6 +4,7 @@ import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom,
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
+import { LABEL_STYLES, PlayerMark, type LabelStyle } from "@/components/PlayerMark";
 import { IconButton, Modal } from "@/components/Modal";
 import { Command } from "@/components/Command";
 import { Card, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
@@ -187,6 +188,8 @@ export function Correction({
   const bEvery = Number(usePref("ball:every", "1")) || 1;
   // Boxes over the video in the ball view (they get in the way of clicking the ball), and what the pitch below shows.
   const ballBoxes = usePref("ball:boxes", "0") === "1";
+  // How people are marked over the video (box, oval at the feet, arrow over the head); b / o / v switch it.
+  const labelStyle = usePref("labelStyle", "oval") as LabelStyle;
   const pitchShow = usePref("correction:pitchShow", "all") as "all" | "named" | "ball";
   // Quick review: the player all of the current one's names are moved to (fixing a mix-up).
   const [qMoveTo, setQMoveTo] = useState("");
@@ -539,6 +542,16 @@ export function Correction({
     if (r.note) setMsg(r.note);
     bGo(bIdx + 1);
   };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "L" || !e.shiftKey || isTyping(e.target) || e.ctrlKey || e.metaKey) return;
+      const i = LABEL_STYLES.findIndex((o) => o.id === labelStyle);
+      setPref("labelStyle", LABEL_STYLES[(i + 1) % LABEL_STYLES.length].id);
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [labelStyle]);
   const bKeys = useRef<(e: KeyboardEvent) => void>(() => undefined);
   useEffect(() => {
     bKeys.current = (e: KeyboardEvent) => {
@@ -1932,25 +1945,6 @@ export function Correction({
   );
 
 
-  // A ring at her feet and the name under it (a frame around the box covers the head, which is what tells players
-  // apart). The box itself stays, invisible, to be clicked.
-  const footRing = (b: (typeof qBoxes)[number], color: string, strong: boolean, dashed: boolean) => {
-    const w = b[3] - b[1];
-    const rx = Math.max(dotR * 1.5, w * 0.7);
-    return (
-      <ellipse cx={(b[1] + b[3]) / 2} cy={b[4]} rx={rx} ry={rx * 0.32} fill={strong ? "rgba(253,224,71,.18)" : "none"} stroke={color}
-        strokeWidth={strong ? dotR / 1.7 : dotR / 4.5} strokeDasharray={dashed ? `${dotR} ${dotR / 2}` : undefined} pointerEvents="none" />
-    );
-  };
-  const nameUnder = (b: (typeof qBoxes)[number], text: string, color: string, size: number, bold: boolean) => {
-    const rx = Math.max(dotR * 1.5, (b[3] - b[1]) * 0.7);
-    return (
-      <text x={(b[1] + b[3]) / 2} y={b[4] + rx * 0.32 + size} textAnchor="middle" fontSize={size} fontFamily="var(--font-mono)" fontWeight={bold ? 700 : 400}
-        fill={color} stroke="#000" strokeWidth={dotR / 10} paintOrder="stroke" pointerEvents="none">
-        {text}
-      </text>
-    );
-  };
   const quickOverlay = qf === null ? null : (
     <g>
       {qBoxes.map((b) => {
@@ -1963,9 +1957,15 @@ export function Correction({
           return (
             <g key={b[0]} className="cursor-pointer" opacity={b[11] ? 1 : 0.3} onClick={(e) => (e.stopPropagation(), qf !== null && qLabelPlayer(qf, b[0]))}>
               <rect x={b[1]} y={b[2]} width={b[3] - b[1]} height={b[4] - b[2]} fill="transparent" stroke="none" />
-              {footRing(b, c, hers, !hers && !lab)}
-              {(hers || name) &&
-                nameUnder(b, name === NOBODY ? "—" : `${name ? `${qNumber.get(name) ?? ""} ${name}` : ""}${hers && !lab ? "?" : ""}`, c, dotR * (hers ? 2.6 : 2), hers)}
+              <PlayerMark
+                box={[b[1], b[2], b[3], b[4]]}
+                color={c}
+                label={hers || name ? (name === NOBODY ? "—" : `${name ? `${qNumber.get(name) ?? ""} ${name}` : ""}${hers && !lab ? "?" : ""}`) : undefined}
+                style={labelStyle}
+                unit={dotR}
+                strong={hers}
+                dashed={!hers && !lab}
+              />
             </g>
           );
         }
@@ -1976,8 +1976,15 @@ export function Correction({
         return (
           <g key={b[0]} className="cursor-pointer" opacity={b[11] ? 1 : 0.3} onClick={(e) => (e.stopPropagation(), setQPicked(b[0]))}>
             <rect x={b[1]} y={b[2]} width={b[3] - b[1]} height={b[4] - b[2]} fill="transparent" stroke="none" />
-            {footRing(b, c, isSel, !lab)}
-            {nameUnder(b, isSel && qTyped ? `${qTyped}…` : `${shownName}${!lab && name ? "?" : ""}`, c, dotR * 2.4, Boolean(lab) || isSel)}
+            <PlayerMark
+              box={[b[1], b[2], b[3], b[4]]}
+              color={c}
+              label={isSel && qTyped ? `${qTyped}…` : `${shownName}${!lab && name ? "?" : ""}`}
+              style={labelStyle}
+              unit={dotR}
+              strong={isSel}
+              dashed={!lab}
+            />
           </g>
         );
       })}
@@ -2710,19 +2717,16 @@ export function Correction({
                         const c = twice ? "#fb7185" : isSel ? "#ffffff" : TEAM_COLORS[p?.team ?? "unk"];
                         return (
                           <g key={b[0]} className="cursor-pointer" opacity={b[11] ? 1 : 0.35} onClick={(e) => (mode === "manual" || mode === "ball" || pickKit ? undefined : (e.stopPropagation(), pickBox(id, b[0])))}>
-                            <rect
-                              x={b[1]}
-                              y={b[2]}
-                              width={b[3] - b[1]}
-                              height={b[4] - b[2]}
-                              fill="transparent"
-                              stroke={c}
-                              strokeWidth={isSel || twice ? dotR / 2 : dotR / 4}
-                              strokeDasharray={twice ? `${dotR} ${dotR / 2}` : undefined}
+                            <rect x={b[1]} y={b[2]} width={b[3] - b[1]} height={b[4] - b[2]} fill="transparent" stroke="none" />
+                            <PlayerMark
+                              box={[b[1], b[2], b[3], b[4]]}
+                              color={c}
+                              label={label(p, id)}
+                              style={labelStyle}
+                              unit={dotR}
+                              strong={isSel || twice}
+                              dashed={twice}
                             />
-                            <text x={(b[1] + b[3]) / 2} y={b[2] - dotR / 2} textAnchor="middle" fontSize={dotR * 2.4} fontFamily="var(--font-mono)" fontWeight={isSel ? 700 : 400} fill={c} stroke="#000" strokeWidth={dotR / 10} paintOrder="stroke">
-                              {label(p, id)}
-                            </text>
                           </g>
                         );
                       })}
@@ -2799,7 +2803,14 @@ export function Correction({
                   >
                     <input className={`${input} tc w-20`} placeholder="mm:ss" aria-label="Ir a un tiempo del video" value={goTo} onChange={(e) => setGoTo(e.target.value)} />
                   </form>
-                  <span className="ml-auto">
+                  <div className="seg ml-auto" role="group" aria-label="Cómo se marca a cada persona (Mayús + L)">
+                    {LABEL_STYLES.map((o) => (
+                      <button key={o.id} type="button" className="seg-opt" aria-pressed={labelStyle === o.id} title={`${o.label} (Mayús + L cambia)`} onClick={() => setPref("labelStyle", o.id)}>
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span>
                     <SpeedControl rate={rate} onChange={setRate} />
                   </span>
                   <button

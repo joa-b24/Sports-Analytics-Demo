@@ -25,6 +25,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { ClipEditor } from "@/components/clip/ClipEditor";
 import { AnalysisTab } from "@/components/match/AnalysisTab";
 import { PlaysTab } from "@/components/match/PlaysTab";
+import { MatchHeader, type TabId } from "@/components/match/MatchHeader";
 import { ReportTab } from "@/components/match/ReportTab";
 import { SegmentsTab } from "@/components/match/SegmentsTab";
 import { TagTab } from "@/components/match/TagTab";
@@ -35,31 +36,11 @@ import { SpeedControl } from "@/components/SpeedControl";
 import { VideoPlayer, type PlayerHandle } from "@/components/VideoPlayer";
 import { fmtT, isTyping, parseYouTubeId } from "@/lib/format";
 import { FOLDER_RULE, isFolderName, listLocal, localVideo } from "@/lib/local";
-import { matchSteps, type FolderFiles, type StepState } from "@/lib/steps";
+import { matchSteps, type FolderFiles } from "@/lib/steps";
 import { segmentsFromMarks, skipTarget, type Segment } from "@/lib/segments";
 import { mutate, setPref, useHydrated, usePref, useStore } from "@/lib/store";
 import type { Match, MatchVideo } from "@/lib/types";
 import { matchTimeline, matchVideos, nextVideo, videoOf } from "@/lib/videos";
-
-// In working order: the pitch, which parts of the video are play, the tracking, and then the tagging on top.
-// Calibration and tracking are optional: everything after them works with tagged events only.
-const TABS = [
-  { id: "calibration", label: "Calibración", icon: Crosshair },
-  { id: "segments", label: "Tramos", icon: Scissors },
-  { id: "tracking", label: "Tracking", icon: PersonSimpleRun },
-  { id: "tag", label: "Etiquetado", icon: VideoCamera },
-  { id: "plays", label: "Jugadas", icon: FilmStrip },
-  { id: "analysis", label: "Análisis", icon: ChartLineUp },
-  { id: "report", label: "Informe", icon: ClipboardText },
-] as const;
-type TabId = (typeof TABS)[number]["id"];
-
-const STATE_STYLE: Record<StepState, { dot: string; label: string }> = {
-  done: { dot: "bg-ok", label: "completo" },
-  partial: { dot: "bg-warn", label: "a medias" },
-  todo: { dot: "border border-line-strong", label: "por hacer" },
-  optional: { dot: "border border-dashed border-line-strong", label: "opcional" },
-};
 
 // Object URLs of local video files, per match and video. They only live for this browser session.
 const fileUrls = new Map<string, string>();
@@ -75,7 +56,13 @@ function MatchPage() {
   const linkT = Number(params.get("t"));
   const state = useStore();
   const hydrated = useHydrated();
-  const [tab, setTab] = useState<TabId>("tag");
+  // With events, the match opens on its analysis (what the staff reads); without, on capture. A link to a moment
+  // opens the events of that video.
+  const [tab, setTab] = useState<TabId>(() => {
+    if (linkVideo) return "tag";
+    const m = state.matches.find((x) => x.match_id === id);
+    return m && state.events.some((e) => e.match_id === m.match_id) ? "analysis" : "tag";
+  });
   // Time to go to as soon as the player knows the length of the video (it cannot seek before).
   const pendingSeek = useRef<number | null>(linkVideo && Number.isFinite(linkT) && linkT >= 0 ? linkT : null);
   const [time, setTime] = useState(0);
@@ -246,99 +233,42 @@ function MatchPage() {
       {presentEdit && (
         <ClipEditor match={match} edit={presentEdit} startPresenting onClose={() => router.replace(`/partido?id=${encodeURIComponent(match.match_id)}`, { scroll: false })} />
       )}
-      <div className="mb-5 print:hidden">
-        <Link
-          href="/partidos"
-          className="enter inline-flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-accent-200"
-        >
-          <ArrowLeft size={13} />
-          Análisis con video
-        </Link>
-        <div className="eyebrow enter mt-3" style={{ "--d": "40ms" } as React.CSSProperties}>
-          {match.kind === "rival" ? "Análisis táctico · rival" : match.kind === "reference" ? "Video de referencia" : "Análisis post-partido"}
-        </div>
-        <div className="enter mt-1 flex flex-wrap items-center gap-3" style={{ "--d": "90ms" } as React.CSSProperties}>
-          <input
-            className="-ml-2 min-w-0 flex-1 rounded-xl border border-transparent bg-transparent px-2 font-display text-3xl leading-tight text-ink transition-colors hover:border-line focus:border-accent focus:bg-surface focus:outline-none md:text-4xl"
-            value={match.name}
-            aria-label="Nombre del partido"
-            onChange={(e) => patch({ name: e.target.value })}
-          />
-          {match.is_demo && <DemoBadge />}
-        </div>
-        {/* Match details stay folded: they are set once, and the height goes to the video. */}
-        <div className="enter mt-2 flex flex-wrap items-start gap-x-6 gap-y-2 text-[11px] text-faint" style={{ "--d": "140ms" } as React.CSSProperties}>
-          <details className="min-w-0 flex-1">
-            <summary className="cursor-pointer text-xs text-muted transition-colors hover:text-accent-200">
-              {match.focus_team} <span className="text-faint">vs</span> {match.other_team} · <span className="tc">{match.date || "sin fecha"}</span> ·{" "}
-              <span className="link">editar datos</span>
-            </summary>
-            <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-2">
-              <label className="flex flex-col gap-1">
-                Equipo analizado
-                <input className={`${input} w-40`} value={match.focus_team} onChange={(e) => patch({ focus_team: e.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1">
-                Contrario
-                <input className={`${input} w-40`} value={match.other_team} onChange={(e) => patch({ other_team: e.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1">
-                Fecha
-                <input className={input} type="date" value={match.date} onChange={(e) => patch({ date: e.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1" title="Nombre de su carpeta en matches/, donde están el video, la calibración y el tracking">
-                Carpeta (matches/…)
-                <input className={`${input} tc w-64`} placeholder="2026_09_25_up_vs_rival" value={match.folder ?? ""} onChange={(e) => patch({ folder: e.target.value.trim() || undefined })} />
-                {match.folder && !isFolderName(match.folder) && (
-                  <span className="text-warn">
-                    No sigue la convención {FOLDER_RULE}. Se renombra con <code>python -m sportsan.ingest.rename_match {match.folder} &lt;nuevo&gt;</code>
-                  </span>
-                )}
-              </label>
-            </div>
-          </details>
-          <span className="flex items-baseline gap-5 text-xs">
-            <span>
-              <span className="num mr-1.5 text-2xl text-ink">{allEvents.length}</span>eventos
+      <MatchHeader match={match} events={allEvents} tab={tab} onTab={setTab} steps={steps}>
+        {match.is_demo && <DemoBadge />}
+        <details className="relative">
+          <summary className="btn cursor-pointer list-none">Datos del partido</summary>
+          <div className="absolute right-0 z-30 mt-2 flex w-80 flex-col gap-2 rounded-lg bg-raised p-4 text-xs text-muted shadow-xl">
+            <label className="flex flex-col gap-1">
+              Nombre
+              <input className={input} value={match.name} onChange={(e) => patch({ name: e.target.value })} />
+            </label>
+            <label className="flex flex-col gap-1">
+              Equipo analizado
+              <input className={input} value={match.focus_team} onChange={(e) => patch({ focus_team: e.target.value })} />
+            </label>
+            <label className="flex flex-col gap-1">
+              Contrario
+              <input className={input} value={match.other_team} onChange={(e) => patch({ other_team: e.target.value })} />
+            </label>
+            <label className="flex flex-col gap-1">
+              Fecha
+              <input className={input} type="date" value={match.date} onChange={(e) => patch({ date: e.target.value })} />
+            </label>
+            <label className="flex flex-col gap-1">
+              Carpeta (matches/…)
+              <input className={`${input} tc`} placeholder="2026_09_25_up_vs_rival" value={match.folder ?? ""} onChange={(e) => patch({ folder: e.target.value.trim() || undefined })} />
+              {match.folder && !isFolderName(match.folder) && (
+                <span className="text-warn">
+                  No sigue la convención {FOLDER_RULE}. Se renombra con <code>python -m sportsan.ingest.rename_match {match.folder} &lt;nuevo&gt;</code>
+                </span>
+              )}
+            </label>
+            <span className="text-faint">
+              {allEvents.length} eventos · {allPlays.length} jugadas
             </span>
-            <span>
-              <span className="num mr-1.5 text-2xl text-ink-2">{allPlays.length}</span>jugadas
-            </span>
-          </span>
-        </div>
-      </div>
-
-      {/* The tabs are the steps of the analysis, in working order, each with where it stands. */}
-      <div className="enter mb-5 overflow-x-auto pb-1 print:hidden" style={{ "--d": "190ms" } as React.CSSProperties}>
-        <ol className="flex min-w-max gap-1.5" aria-label="Pasos del análisis del partido">
-          {TABS.map((t, n) => {
-            const I = t.icon;
-            const st = steps[t.id];
-            const on = tab === t.id;
-            return (
-              <li key={t.id} className="flex items-center gap-1.5">
-                {n > 0 && <span className="h-px w-3 bg-line" aria-hidden />}
-                <button
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => setTab(t.id)}
-                  title={`${t.label}: ${STATE_STYLE[st.state].label} · ${st.text}`}
-                  className={`flex w-40 flex-col items-start gap-1 rounded-2xl px-3 py-2 text-left transition-colors ${
-                    on ? "bg-accent-900 text-accent-100 shadow-[inset_0_0_0_1px_rgba(74,114,255,.55)]" : "bg-surface text-ink-2 hover:bg-raised"
-                  }`}
-                >
-                  <span className="flex w-full items-center gap-1.5 text-sm font-medium">
-                    <I size={15} />
-                    <span className="truncate">{t.label}</span>
-                    <span className={`ml-auto h-2.5 w-2.5 shrink-0 rounded-full ${STATE_STYLE[st.state].dot}`} aria-label={STATE_STYLE[st.state].label} />
-                  </span>
-                  <span className={`w-full truncate text-[11px] ${on ? "text-accent-200" : "text-faint"}`}>{st.text}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      </div>
+          </div>
+        </details>
+      </MatchHeader>
 
       {/* The video takes the room; the working panel keeps a fixed, narrower width (wider for the pitch animation). */}
       <div

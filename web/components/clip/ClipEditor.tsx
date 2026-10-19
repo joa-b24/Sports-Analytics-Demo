@@ -246,6 +246,23 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
       })
     : [];
 
+  // Where each player stands in the frame, as an upright box (about 1.75 x 0.6 m at the local scale of the camera):
+  // the drawings are cut out there so the players stay in front of them.
+  const bodies: [number, number, number, number][] = snap && toImage
+    ? Object.keys(snap.tracks).flatMap((id) => {
+        const p = ctx.positionOf(Number(id), t);
+        if (!p) return [];
+        const feet = toImage(p);
+        const side = toImage([p[0] + 105 / snap.venue.length_m, p[1]]);
+        if (!feet || !side) return [];
+        const s = Math.hypot(side[0] - feet[0], side[1] - feet[1]);
+        if (!(s > 0) || s > image.w / 4) return [];
+        const w = 0.6 * s;
+        const h = 1.75 * s;
+        return [[feet[0] - w / 2, feet[1] - h, w, h + 0.1 * s] as [number, number, number, number]];
+      })
+    : [];
+
   // ------------------------------------------------------------------------------------------------- drawing
   const toPitch = (px: Pt): Pt | null => {
     if (!H || !snap) return null;
@@ -451,7 +468,7 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
       >
         {!presenting && tool !== "select" && tool !== "text" &&
           people.map((p) => <circle key={p.id} cx={p.px[0]} cy={p.px[1]} r={6 * k} fill="var(--color-ink)" fillOpacity={0.55} stroke="#000" strokeOpacity={0.5} strokeWidth={1.5 * k} pointerEvents="none" />)}
-        <ClipDrawings items={drawn} image={image} selected={presenting ? null : selected} onPick={!presenting && tool === "select" ? setSelected : undefined} />
+        <ClipDrawings items={drawn} image={image} bodies={bodies} selected={presenting ? null : selected} onPick={!presenting && tool === "select" ? setSelected : undefined} />
         {pendingPx.length > 0 && pending?.cursor && (
           <polyline points={[...pendingPx, pending.cursor].map((p) => p.join(",")).join(" ")} fill="none" stroke={DRAW_COLOR_VAR[color]} strokeWidth={3 * k} strokeDasharray={`${10 * k} ${8 * k}`} pointerEvents="none" />
         )}
