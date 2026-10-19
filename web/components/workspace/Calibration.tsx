@@ -3,6 +3,8 @@
 import { Check, Crosshair, DownloadSimple, FastForward, FolderOpen, GearSix, Info, Minus, Path, Pause, Play, Plus, Rewind, SkipBack, SkipForward, TerminalWindow, Trash, UsersThree, X } from "@phosphor-icons/react";
 import { IconButton, Modal } from "@/components/Modal";
 import { Command } from "@/components/Command";
+import { KitPanel, sampleShirt, useKits } from "@/components/workspace/KitPanel";
+import type { JerseyKey } from "@/lib/tracks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { FilePicker, partLabel } from "@/components/LocalPick";
@@ -115,6 +117,10 @@ export function Calibration({
   const [fps, setFps] = useState(29.97002997);
   const [time, setTime] = useState(0);
   const [matchId, setMatchId] = useState(folder || "partido_2026_09_25");
+  // Shirt colours of the match, taken from this video before processing (the tracking uses them for the teams).
+  const kits = useKits(matchId);
+  const [pickKit, setPickKit] = useState<JerseyKey | null>(null);
+  const [kitMsg, setKitMsg] = useState<string | null>(null);
   const [videoId, setVideoId] = useState(video || "v1");
   const [venueId, setVenueIdState] = useState(venueInit || VENUES[0].venue_id);
   const setVenueId = (id: string) => {
@@ -221,6 +227,7 @@ export function Calibration({
       } else if (e.key === "Escape") {
         setPendingPx(null);
         setPendingLm(null);
+        setPickKit(null);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -244,6 +251,14 @@ export function Calibration({
   };
 
   const onVideoClick = (e: React.MouseEvent) => {
+    if (pickKit && videoRef.current) {
+      const r = sampleShirt(videoRef.current, e.clientX, e.clientY);
+      if ("error" in r) return setKitMsg(r.error);
+      kits.setColors({ ...kits.colors, [pickKit]: r.hex });
+      setPickKit(null);
+      setKitMsg(null);
+      return;
+    }
     const px = toPixels(e);
     if (!px || stale) return;
     videoRef.current?.pause();
@@ -662,7 +677,7 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                     <svg
                       ref={overlayRef}
                       viewBox={`0 0 ${dims.w} ${dims.h}`}
-                      className={`absolute inset-0 h-full w-full ${stale ? "cursor-not-allowed" : "cursor-crosshair"}`}
+                      className={`absolute inset-0 h-full w-full ${pickKit ? "cursor-copy" : stale ? "cursor-not-allowed" : "cursor-crosshair"}`}
                       onClick={onVideoClick}
                       onMouseMove={onVideoMove}
                       onMouseLeave={() => {
@@ -970,6 +985,8 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
 
         {/* Everything used while marking, in the order it is used; its own scroll. */}
         <div className="space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto xl:pr-1">
+          <KitPanel kits={kits} picking={pickKit} onPick={setPickKit} />
+          {kitMsg && <p className="-mt-2 text-xs text-warn">{kitMsg}</p>}
           <Card title="Puntos de referencia de la sede" note="banda cercana abajo" delay={140}>
             <p className="mb-2 text-xs text-muted">
               {pendingPx

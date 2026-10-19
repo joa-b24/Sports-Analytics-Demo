@@ -422,6 +422,32 @@ def write_outputs(out_dir: Path, meta: dict, chunk: Chunk, stride: int, frames: 
     return path
 
 
+# ---------------------------------------------------------------- test
+
+TEST_S = 30
+
+
+def test_summary(result: dict, frames: list[int], per_frame_s: float, total_frames: int, stride: int, fps: float) -> dict:
+    """What a short test says before processing everything: how many people the detector sees per frame (all boxes and
+    those on the pitch; a full pitch has about 22 players plus referees, a narrow camera sees fewer), how much was
+    calibrated, and the time the whole plan would take at this speed."""
+    boxes = [len(b) for b in result["boxes"]]
+    on_pitch = [sum(1 for row in b if row[11]) for b in result["boxes"]]
+    q = result["quality"]
+    return {
+        "frames": len(frames),
+        "boxes_median": float(np.median(boxes)) if boxes else 0.0,
+        "boxes_p10": float(np.percentile(boxes, 10)) if boxes else 0.0,
+        "on_pitch_median": float(np.median(on_pitch)) if on_pitch else 0.0,
+        "calibrated_share": float(q.get("calibrated_share", 0.0)),
+        "identities": int(q.get("identities", 0)),
+        "teams": q.get("teams") or {},
+        "ms_per_frame": round(per_frame_s * 1000),
+        "estimate_s": float(estimate_seconds(total_frames, stride, per_frame_s)),
+        "fps": fps,
+    }
+
+
 # ---------------------------------------------------------------- CLI
 
 def main(argv: list[str] | None = None) -> None:
@@ -443,10 +469,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--tiles", type=int, help="trozos a lo ancho para detectar (cámara amplia); por defecto, `detector.tiles` de match.yaml o 1")
     ap.add_argument("--band", help="franja de la cancha en la imagen: «auto» (desde la calibración) o «y0,y1» en píxeles; por defecto, `detector.band` de match.yaml o todo el alto")
     ap.add_argument("--library")
-    ap.add_argument("--conf", type=float, default=0.2)
+    ap.add_argument("--conf", type=float, help="confianza mínima de una caja; por defecto, `detector.conf` de match.yaml o 0.2")
     ap.add_argument("--tracker", default=str(DEFAULT_TRACKER))
     ap.add_argument("--max-error", type=float, default=MAX_CONSISTENCY_M)
     ap.add_argument("--benchmark", action="store_true", help="solo mide la velocidad y estima el tiempo total")
+    ap.add_argument("--test", action="store_true",
+                    help=f"prueba de {TEST_S} s antes del proceso completo: escribe la parte en tracking/prueba/ con un summary.json (cuántas personas ve por cuadro, tiempo estimado) sin tocar lo hecho")
     ap.add_argument("--force", action="store_true", help="vuelve a procesar las partes ya hechas")
     ap.add_argument("--out-dir", help="carpeta de salida (por defecto, tracking/ del partido); para pruebas que no toquen lo hecho")
     args = ap.parse_args(argv)
@@ -484,6 +512,7 @@ def main(argv: list[str] | None = None) -> None:
     model_path = (Path(model_arg) if Path(model_arg).is_absolute() or Path(model_arg).exists() else root / "weights" / model_arg) if model_arg else default_model(root)
     tiles = int(args.tiles or det_cfg.get("tiles") or 1)
     band_raw = args.band or det_cfg.get("band")
+    conf = float(args.conf if args.conf is not None else det_cfg.get("conf", 0.2))
     band = "auto" if band_raw == "auto" else (tuple(int(v) for v in (band_raw.split(",") if isinstance(band_raw, str) else band_raw)) if band_raw else None)
     if not model_path.exists():
         raise SystemExit(f"No encuentro el modelo en {model_path}.")
@@ -504,7 +533,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.benchmark:
         probe = Chunk(chunks[0].start, min(chunks[0].end, chunks[0].start + round(20 * fps)))
         t0 = time.time()
-        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, args.conf, args.tracker, tiles=tiles, band=band)
+        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band)
         result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
         per = (time.time() - t0) / max(1, len(frames))
         q = result["quality"]
@@ -516,6 +545,27 @@ def main(argv: list[str] | None = None) -> None:
         print(f"    con --stride {stride * 2} ({fps / (stride * 2):.1f} cuadros por segundo): {fmt_duration(estimate_seconds(total_frames, stride * 2, per))}")
         if result["colors"]:
             print("  colores de camiseta más frecuentes en la cancha: " + ", ".join(f"{c} ({n} tracks)" for c, n in result["colors"]))
+        return
+
+    if args.test:
+        # The first stretch of play long enough (else the longest), TEST_S seconds of it, apart from the real parts.
+        long_enough = [c for c in chunks if c.end - c.start >= TEST_S * fps]
+        base = long_enough[0] if long_enough else max(chunks, key=lambda c: c.end - c.start)
+        probe = Chunk(base.start, min(base.end, base.start + round(TEST_S * fps)))
+        test_dir = root / cfg["paths"]["tracking_dir"] / "prueba"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        t0 = time.time()
+        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band)
+        result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
+        per = (time.time() - t0) / max(1, len(frames))
+        path = write_outputs(test_dir, meta, probe, stride, frames, result)
+        summary = test_summary(result, frames, per, total_frames, stride, fps)
+        summary.update({"part": path.name, "start_s": probe.start / fps, "end_s": probe.end / fps, "model": model_path.name, "tiles": tiles,
+                        "band": meta["band"], "conf": conf, "stride": stride, "created": time.strftime("%Y-%m-%d %H:%M")})
+        (test_dir / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+        print(f"  prueba: {summary['boxes_median']:.0f} cajas por cuadro (mediana), {summary['on_pitch_median']:.0f} en la cancha;"
+              f" calibrado el {summary['calibrated_share'] * 100:.0f} %; {per * 1000:.0f} ms por cuadro")
+        print(f"  estimado para todo lo planificado: {fmt_duration(summary['estimate_s'])}. Resultado en {test_dir / 'summary.json'}")
         return
 
     index_path = out_dir / f"tracks_{cfg['video_id']}_index.json"
@@ -533,7 +583,7 @@ def main(argv: list[str] | None = None) -> None:
             t0 = time.time()
             after = sum(c.end - c.start for c in pending[n:]) // stride
             bar = Progress(f"[{n}/{len(pending)}]", (chunk.end - chunk.start) // stride + 1, fps, stride, after_s=after)
-            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, args.conf, args.tracker, progress=bar, tiles=tiles, band=band)
+            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, conf, args.tracker, progress=bar, tiles=tiles, band=band)
             bar.end()
             if not frames:
                 print(f"  parte {chunk.name}: sin cuadros (¿fin del video?)")

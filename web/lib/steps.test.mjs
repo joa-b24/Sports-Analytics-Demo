@@ -9,7 +9,7 @@ const base = { videoIds: ["v1"], segmentsByVideo: {}, events: [], plays: [], tra
 test("an empty match: everything to do, calibration and tracking optional", () => {
   const s = matchSteps(base);
   assert.deepEqual(Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v.state])), {
-    calibration: "optional", segments: "todo", tracking: "optional", tag: "todo", plays: "optional", analysis: "todo", report: "todo",
+    calibration: "optional", segments: "todo", tracking: "optional", ball: "optional", tag: "todo", plays: "optional", board: "optional", analysis: "todo", report: "todo",
   });
 });
 
@@ -29,6 +29,7 @@ test("a match on its way", () => {
   assert.deepEqual(s.tracking, { state: "partial", text: "2 parte(s) de 2 tramos · 1 corregida(s)" });
   assert.deepEqual(s.tag, { state: "partial", text: "3 eventos · 1 por revisar · 1 sin destino" });
   assert.deepEqual(s.plays, { state: "partial", text: "1 de 2 animadas" });
+  assert.deepEqual(s.ball, { state: "todo", text: "0 de 2 partes con balón" });
   assert.equal(s.analysis.text, "con forma del equipo");
 });
 

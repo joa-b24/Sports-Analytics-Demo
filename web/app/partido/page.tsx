@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  GearSix,
   FastForward,
   FolderOpen,
   Pause,
@@ -17,7 +18,8 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { ClipEditor } from "@/components/clip/ClipEditor";
 import { AnalysisTab } from "@/components/match/AnalysisTab";
 import { PlaysTab } from "@/components/match/PlaysTab";
-import { MatchHeader, type TabId } from "@/components/match/MatchHeader";
+import { MatchHeader, isMode, mainOf, modeOf, type TabId } from "@/components/match/MatchHeader";
+import { BoardsWorkspace } from "@/components/board/BoardsWorkspace";
 import { ReportTab } from "@/components/match/ReportTab";
 import { SegmentsTab } from "@/components/match/SegmentsTab";
 import { TagTab } from "@/components/match/TagTab";
@@ -50,10 +52,25 @@ function MatchPage() {
   const hydrated = useHydrated();
   // With events, the match opens on its analysis (what the staff reads); without, on capture. A link to a moment
   // opens the events of that video.
-  const [tabSel, setTab] = useState<TabId | null>(null);
-  // Until the analyst picks one: a link to a moment opens its events; otherwise a match with events opens on its
-  // analysis (what the staff reads) and one without, on capture. Decided once the data is loaded.
-  const tab: TabId = tabSel ?? (linkVideo ? "tag" : state.events.some((e) => e.match_id === id) ? "analysis" : "tag");
+  // The mode comes from the sidebar (?modo=captura|estudio|analisis); inside it the analyst picks the step.
+  const modo = params.get("modo");
+  // The step picked inside a mode; when the sidebar changes the mode, its main step shows.
+  const [picked, setPicked] = useState<TabId | null>(null);
+  const setTab = (t: TabId) => setPicked(t);
+  // Without a mode: a link to a moment opens its events; a match with events opens on its analysis (what the staff
+  // reads) and one without, on capture.
+  const fallback: TabId = linkVideo ? "tag" : isMode(modo) ? mainOf(modo) : state.events.some((e) => e.match_id === id) ? "analysis" : "tag";
+  const tab: TabId = picked && (!isMode(modo) || modeOf(picked) === modo) ? picked : fallback;
+  // The sidebar's Captura / Estudio / Análisis go to the last match opened.
+  useEffect(() => {
+    if (id) setPref("currentMatch", id);
+  }, [id]);
+  // The URL says the mode being shown, so the sidebar marks it.
+  const shownMode = modeOf(tab);
+  useEffect(() => {
+    if (!id || linkVideo || linkEdit || modo === shownMode) return;
+    router.replace(`/partido?id=${encodeURIComponent(id)}&modo=${shownMode}`, { scroll: false });
+  }, [id, modo, shownMode, linkVideo, linkEdit, router]);
   // Time to go to as soon as the player knows the length of the video (it cannot seek before).
   const pendingSeek = useRef<number | null>(linkVideo && Number.isFinite(linkT) && linkT >= 0 ? linkT : null);
   const [time, setTime] = useState(0);
@@ -81,7 +98,11 @@ function MatchPage() {
   useEffect(() => {
     if (!folderForSteps) return;
     let live = true;
-    void listLocal(`matches/${folderForSteps}/tracking`).then((files) => live && setFolderFiles(files ? { tracking: files.map((f) => f.name) } : null));
+    void listLocal(`matches/${folderForSteps}/tracking`).then(async (files) => {
+      // A folder without tracking/ yet: nothing processed (not «no access»).
+      const folderOk = files ?? (await listLocal(`matches/${folderForSteps}`));
+      if (live) setFolderFiles(files ? { tracking: files.map((f) => f.name) } : folderOk ? { tracking: [] } : null);
+    });
     return () => {
       live = false;
     };
@@ -167,6 +188,7 @@ function MatchPage() {
     plays: allPlays,
     trackEdits: state.trackEdits,
     files: match.folder ? folderFiles : null,
+    boards: (state.boards ?? []).length,
   });
   const originalTime = new Map(allEvents.map((e) => [e.event_id, e]));
   const videoLabel = (vid: string) => videos.find((v) => v.video_id === vid)?.label ?? vid;
@@ -224,11 +246,30 @@ function MatchPage() {
       {presentEdit && (
         <ClipEditor match={match} edit={presentEdit} startPresenting onClose={() => router.replace(`/partido?id=${encodeURIComponent(match.match_id)}`, { scroll: false })} />
       )}
-      <MatchHeader match={match} events={allEvents} tab={tab} onTab={setTab} steps={steps}>
+      <MatchHeader
+        match={match}
+        events={allEvents}
+        tab={tab}
+        onTab={setTab}
+        steps={steps}
+        video={
+          videos.length > 1 ? (
+            <select className="input !w-auto" aria-label="Video del partido" value={video.video_id} onChange={(e) => pickVideo(e.target.value)}>
+              {videos.map((v) => (
+                <option key={v.video_id} value={v.video_id}>
+                  {v.video_id} · {v.label}
+                </option>
+              ))}
+            </select>
+          ) : null
+        }
+      >
         {match.is_demo && <DemoBadge />}
         <details className="relative">
-          <summary className="btn cursor-pointer list-none">Datos del partido</summary>
-          <div className="absolute right-0 z-30 mt-2 flex w-80 flex-col gap-2 rounded-lg bg-raised p-4 text-xs text-muted shadow-xl">
+          <summary className="btn cursor-pointer list-none" aria-label="Datos del partido y del video" title="Datos del partido y del video">
+            <GearSix size={16} />
+          </summary>
+          <div className="absolute right-0 z-30 mt-2 flex max-h-[80vh] w-96 flex-col gap-2 overflow-y-auto rounded-lg bg-raised p-4 text-xs text-muted shadow-xl">
             <label className="flex flex-col gap-1">
               Nombre
               <input className={input} value={match.name} onChange={(e) => patch({ name: e.target.value })} />
@@ -257,46 +298,10 @@ function MatchPage() {
             <span className="text-faint">
               {allEvents.length} eventos · {allPlays.length} jugadas
             </span>
-          </div>
-        </details>
-      </MatchHeader>
-
-      {/* The video takes the room; the working panel keeps a fixed, narrower width (wider for the pitch animation). */}
-      <div
-        className={
-          !withVideo
-            ? ""
-            : tab === "plays"
-              ? "grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
-              : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_26rem]"
-        }
-      >
-        {/* The player stays mounted on every tab so the video keeps its position. */}
-        <div className={withVideo ? "space-y-3 xl:sticky xl:top-4 xl:self-start" : "hidden"}>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="seg" role="group" aria-label="Video del partido">
-              {videos.map((v) => (
-                <button key={v.video_id} type="button" aria-pressed={v.video_id === video.video_id} onClick={() => pickVideo(v.video_id)} className="seg-opt">
-                  <span className="tc mr-1.5 opacity-70">{v.video_id}</span>
-                  {v.label}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              title="Un partido puede venir en varios videos, por ejemplo uno por tiempo"
-              onClick={() => {
-                const v = nextVideo(videos);
-                setVideos([...videos, v]);
-                pickVideo(v.video_id);
-              }}
-            >
-              <Plus size={14} />
-              Añadir video
-            </button>
+            <div className="mt-2 border-t border-line pt-3 text-xs text-muted">
+              <div className="mb-2 font-medium text-ink-2">Video {video.video_id}</div>
             {videos.length > 1 && (
-              <span className="ml-auto flex items-center gap-2 text-[11px] text-faint">
+              <span className="flex flex-wrap items-center gap-2 text-[11px] text-faint">
                 <input className={`${input} w-32`} aria-label="Nombre de este video" value={video.label} onChange={(e) => patchVideo({ label: e.target.value })} />
                 <select
                   className={input}
@@ -324,8 +329,88 @@ function MatchPage() {
                 )}
               </span>
             )}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+            <input
+              className={`${input} min-w-0 flex-1`}
+              placeholder={`Pega aquí el enlace de YouTube de ${video.label.toLowerCase()}`}
+              value={ytInput}
+              onChange={(e) => {
+                setYtDraft(e.target.value);
+                const parsed = parseYouTubeId(e.target.value);
+                if (parsed || e.target.value.trim() === "") patchVideo({ youtube_id: parsed });
+              }}
+            />
+            <label className={`${btn} relative cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`}>
+              <FolderOpen size={15} />
+              Abrir archivo local
+              <input
+                type="file"
+                accept="video/*"
+                className="sr-only"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const old = fileUrls.get(fileKey);
+                  if (old) URL.revokeObjectURL(old);
+                  fileUrls.set(fileKey, URL.createObjectURL(f));
+                  bump((n) => n + 1);
+                }}
+              />
+            </label>
+            {fileUrls.has(fileKey) && (
+              <button
+                type="button"
+                className="link"
+                onClick={() => {
+                  const old = fileUrls.get(fileKey) as string;
+                  if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+                  fileUrls.delete(fileKey);
+                  bump((n) => n + 1);
+                }}
+              >
+                quitar archivo
+              </button>
+            )}
           </div>
+          {ytDraft !== null && ytDraft.trim() !== "" && !parseYouTubeId(ytDraft) && (
+            <p className="text-xs text-danger">No reconozco ese enlace. Pega la URL completa del video de YouTube.</p>
+          )}
+          <p className="text-xs text-faint">
+            El archivo local debe ser el video original completo (sin recortar), para que los tiempos coincidan con YouTube. No se sube a
+            ningún lado.
+            {videos.length > 1 && " Cada video tiene sus propios tiempos, tramos, eventos y jugadas; Análisis e Informe los juntan."}
+          </p>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              title="Un partido puede venir en varios videos, por ejemplo uno por tiempo"
+              onClick={() => {
+                const v = nextVideo(videos);
+                setVideos([...videos, v]);
+                pickVideo(v.video_id);
+              }}
+            >
+              <Plus size={14} />
+              Añadir video
+            </button>
+            </div>
 
+          </div>
+        </details>
+      </MatchHeader>
+
+      {/* The video takes the room; the working panel keeps a fixed, narrower width (wider for the pitch animation). */}
+      <div
+        className={
+          !withVideo
+            ? ""
+            : tab === "plays"
+              ? "grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
+              : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_26rem]"
+        }
+      >
+        {/* The player stays mounted on every tab so the video keeps its position. */}
+        <div className={withVideo ? "space-y-3 xl:sticky xl:top-4 xl:self-start" : "hidden"}>
           {/* The width is capped by the height of the window, so the video and its controls always fit on screen. */}
           <div className="relative mx-auto w-full xl:max-w-[calc((100vh-15rem)*16/9)]">
             <div ref={setOverlaySlot} className={tab === "tag" ? "pointer-events-none absolute inset-0 z-10" : "hidden"} />
@@ -378,57 +463,6 @@ function MatchPage() {
             </span>
           </div>
           <div ref={setBelowSlot} className={tab === "tag" ? "" : "hidden"} />
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-            <input
-              className={`${input} min-w-0 flex-1`}
-              placeholder={`Pega aquí el enlace de YouTube de ${video.label.toLowerCase()}`}
-              value={ytInput}
-              onChange={(e) => {
-                setYtDraft(e.target.value);
-                const parsed = parseYouTubeId(e.target.value);
-                if (parsed || e.target.value.trim() === "") patchVideo({ youtube_id: parsed });
-              }}
-            />
-            <label className={`${btn} relative cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`}>
-              <FolderOpen size={15} />
-              Abrir archivo local
-              <input
-                type="file"
-                accept="video/*"
-                className="sr-only"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  const old = fileUrls.get(fileKey);
-                  if (old) URL.revokeObjectURL(old);
-                  fileUrls.set(fileKey, URL.createObjectURL(f));
-                  bump((n) => n + 1);
-                }}
-              />
-            </label>
-            {fileUrls.has(fileKey) && (
-              <button
-                type="button"
-                className="link"
-                onClick={() => {
-                  const old = fileUrls.get(fileKey) as string;
-                  if (old.startsWith("blob:")) URL.revokeObjectURL(old);
-                  fileUrls.delete(fileKey);
-                  bump((n) => n + 1);
-                }}
-              >
-                quitar archivo
-              </button>
-            )}
-          </div>
-          {ytDraft !== null && ytDraft.trim() !== "" && !parseYouTubeId(ytDraft) && (
-            <p className="text-xs text-danger">No reconozco ese enlace. Pega la URL completa del video de YouTube.</p>
-          )}
-          <p className="text-xs text-faint">
-            El archivo local debe ser el video original completo (sin recortar), para que los tiempos coincidan con YouTube. No se sube a
-            ningún lado.
-            {videos.length > 1 && " Cada video tiene sus propios tiempos, tramos, eventos y jugadas; Análisis e Informe los juntan."}
-          </p>
         </div>
 
         <div className="min-w-0">
@@ -485,7 +519,7 @@ function MatchPage() {
         </div>
       </div>
 
-      {(tab === "calibration" || tab === "tracking") &&
+      {(tab === "calibration" || tab === "tracking" || tab === "ball") &&
         (!match.folder ? (
           <Card title="Falta la carpeta del partido">
             <p className="text-sm text-pretty text-muted">
@@ -507,20 +541,6 @@ function MatchPage() {
           </Card>
         ) : (
           <>
-            {/* Calibration and tracking work on one video at a time: which one, chosen here. */}
-            {videos.length > 1 && (
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted">Video</span>
-                <div className="seg" role="group" aria-label="Video del partido">
-                  {videos.map((v) => (
-                    <button key={v.video_id} type="button" aria-pressed={v.video_id === video.video_id} onClick={() => pickVideo(v.video_id)} className="seg-opt">
-                      <span className="tc mr-1.5 opacity-70">{v.video_id}</span>
-                      {v.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
             {tab === "calibration" ? (
           <Calibration
             key={`${match.folder}|${video.video_id}`}
@@ -531,10 +551,19 @@ function MatchPage() {
             onVenue={(venue_id) => patch({ venue_id })}
           />
         ) : (
-          <Correction key={`${match.folder}|${video.video_id}`} embedded folder={match.folder} video={video.video_id} matchAppId={match.match_id} />
+          <Correction
+            key={`${match.folder}|${video.video_id}`}
+            embedded
+            folder={match.folder}
+            video={video.video_id}
+            matchAppId={match.match_id}
+            step={tab === "ball" ? "ball" : "players"}
+          />
             )}
           </>
         ))}
+
+      {tab === "board" && <BoardsWorkspace embedded />}
 
       {/* Full width, under both columns: the events table of the tagging tab is drawn here. */}
       <div ref={setTableSlot} className={tab === "tag" ? "mt-6" : "hidden"} />

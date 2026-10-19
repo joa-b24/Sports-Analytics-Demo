@@ -114,3 +114,16 @@ def test_goalkeeper_colours_count_for_their_team():
     assert classify_team(hex_to_lab("#ef8a2c"), refs) == "own"   # portera de naranja
     assert classify_team(hex_to_lab("#3cb24d"), refs) == "opp"   # portera de verde
     assert classify_team(hex_to_lab("#2b50ad"), refs) == "own"
+
+
+def test_the_short_test_counts_people_per_frame_and_estimates_the_time():
+    from sportsan.tracking.process import test_summary
+
+    def box(on):  # the 14 columns of box_columns; on_pitch is the 12th
+        return [1, 0, 0, 10, 20, 0.9, 50, 128, 128, 10.0, 10.0, on, "own", 1]
+
+    result = {"boxes": [[box(True)] * 18 + [box(False)] * 2, [box(True)] * 20, [box(True)] * 4], "quality": {"calibrated_share": 0.9, "identities": 21}}
+    s = test_summary(result, [0, 3, 6], 0.25, total_frames=3000, stride=3, fps=30.0)
+    assert s["frames"] == 3 and s["boxes_median"] == 20 and s["on_pitch_median"] == 18
+    assert s["calibrated_share"] == 0.9 and s["identities"] == 21 and s["ms_per_frame"] == 250
+    assert s["estimate_s"] > 0
