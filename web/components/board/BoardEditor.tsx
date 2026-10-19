@@ -3,6 +3,7 @@
 import {
   ArrowUpRight,
   Circle,
+  CircleDashed,
   CursorClick,
   LineSegments,
   Polygon,
@@ -11,11 +12,12 @@ import {
   Trash,
   type Icon,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode } from "react";
 import { BoardView, DRAW_COLOR_LABELS, DRAW_COLOR_VAR } from "@/components/board/BoardView";
 import { IconButton } from "@/components/Modal";
 import { toMeters } from "@/components/Pitch";
-import { btn, btnPrimary, input } from "@/components/Shell";
+import { btnPrimary, input } from "@/components/Shell";
+import { FitAspect, PanelTitle, SidePanel, StudioFrame, ToolRail, type FrameLayout } from "@/components/studio/Studio";
 import {
   ANNOTATION_LABELS,
   DRAW_COLORS,
@@ -28,7 +30,7 @@ import {
   type Pt,
   type ResolveContext,
 } from "@/lib/annotations";
-import { addStep, moveToken, removeStep, spanOfSteps, stepsOf, toggleToken } from "@/lib/boards";
+import { addStep, framingBox, moveToken, removeStep, spanOfSteps, stepsOf, toggleToken } from "@/lib/boards";
 import { isTyping } from "@/lib/format";
 import { uid } from "@/lib/store";
 import type { Board } from "@/lib/types";
@@ -52,8 +54,26 @@ const MIN_ARROW_M = 1.5;
 type Pending = { kind: "arrow" | "line" | "zone"; anchors: Anchor[]; cursor: Pt | null };
 type HandleDrag = { index: number; insert: boolean; x: number; y: number };
 
-export function BoardEditor({ board, save }: { board: Board; save: (b: Board) => void }) {
+type Panel = "step" | "board" | "list";
+const PANEL_TABS: [Panel, string][] = [
+  ["step", "Paso"],
+  ["board", "Jugada"],
+  ["list", "Jugadas"],
+];
+
+type Props = {
+  board: Board;
+  save: (b: Board) => void;
+  // The bar on top and two tabs of the side panel come from the workspace (the play's data and the list of plays).
+  header: ReactNode;
+  boardPanel: ReactNode;
+  listPanel: ReactNode;
+  layout: FrameLayout;
+};
+
+export function BoardEditor({ board, save, header, boardPanel, listPanel, layout }: Props) {
   const [step, setStep] = useState(0);
+  const [panel, setPanel] = useState<Panel>("step");
   const [tool, setTool] = useState<Tool>("move");
   const [color, setColor] = useState<string>("accent");
   const [dashed, setDashed] = useState(false);
@@ -117,6 +137,7 @@ export function BoardEditor({ board, save }: { board: Board; save: (b: Board) =>
     if (!isValidAnnotation(a)) return;
     save({ ...board, annotations: [...board.annotations, a] });
     setSelected(a.id);
+    setPanel("step");
   };
   const patchAnnotation = (id: string, p: Partial<Annotation>) =>
     save({ ...board, annotations: board.annotations.map((a) => (a.id === id ? { ...a, ...p } : a)) });
@@ -246,190 +267,220 @@ export function BoardEditor({ board, save }: { board: Board; save: (b: Board) =>
   }
   const pendingPts = pending ? [...pending.anchors.map(pointOf).filter((p): p is Pt => p !== null), ...(pending.cursor ? [pending.cursor] : [])] : [];
   const hint = TOOLS.find((x) => x.id === tool)?.hint;
+  const [, , vw, vh] = framingBox(board.framing);
+  const aspect = vw / vh;
 
   if (!kf) return null;
 
+  const stepNote = (
+    <div>
+      <PanelTitle>Paso {k + 1}</PanelTitle>
+      <textarea
+        className={`${input} w-full text-sm`}
+        rows={2}
+        placeholder="Nota del paso (sale en la lámina)"
+        value={kf.note ?? ""}
+        onChange={(e) => save({ ...board, keyframes: board.keyframes.map((x, j) => (j === k ? { ...x, note: e.target.value } : x)) })}
+      />
+    </div>
+  );
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {board.keyframes.map((s, i) => (
-          <button
-            key={`${s.t}_${i}`}
-            type="button"
-            aria-pressed={i === k}
-            onClick={() => {
-              setStep(i);
-              setPending(null);
-            }}
-            className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-              i === k ? "border-accent bg-accent/20 text-accent-100" : "border-line text-ink-2 hover:border-line-strong"
-            }`}
-          >
-            Paso {i + 1}
-          </button>
-        ))}
-        <button
-          type="button"
-          className={btn}
-          onClick={() => {
-            save(addStep(board));
-            setStep(board.keyframes.length);
-          }}
-        >
-          <Plus size={14} />
-          Paso
-        </button>
-        <IconButton
-          label={board.keyframes.length > 1 ? `Borrar el paso ${k + 1} y los dibujos que empiezan en él` : "La jugada necesita al menos un paso"}
-          tone="danger"
-          disabled={board.keyframes.length <= 1}
-          onClick={() => {
-            save(removeStep(board, k));
-            setStep(Math.max(0, k - 1));
-            setSelected(null);
-          }}
-        >
-          <Trash size={14} />
-        </IconButton>
-        <input
-          className={`${input} min-w-48 flex-1 text-sm`}
-          placeholder={`Nota del paso ${k + 1} (sale en la lámina)`}
-          value={kf.note ?? ""}
-          onChange={(e) => save({ ...board, keyframes: board.keyframes.map((x, j) => (j === k ? { ...x, note: e.target.value } : x)) })}
+    <StudioFrame
+      {...layout}
+      header={header}
+      rail={
+        <ToolRail
+          tools={TOOLS}
+          value={tool}
+          onChange={chooseTool}
+          color={sel ? sel.style.color : color}
+          onColor={(c) => (sel ? patchAnnotation(sel.id, { style: { ...sel.style, color: c } }) : setColor(c))}
+          dashed={sel ? !!sel.style.dashed : dashed}
+          onDashed={(d) => (sel && sel.kind !== "text" ? patchAnnotation(sel.id, { style: { ...sel.style, dashed: d || undefined } }) : setDashed(d))}
+          dashedIcon={CircleDashed}
         />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="seg" role="toolbar" aria-label="Herramientas de dibujo">
-          {TOOLS.map((tl) => {
-            const I = tl.icon;
-            return (
-              <button key={tl.id} type="button" className="seg-opt inline-flex items-center gap-1.5" aria-pressed={tool === tl.id} title={`${tl.label} (${tl.key})`} onClick={() => chooseTool(tl.id)}>
-                <I size={14} />
-                {tl.label}
-              </button>
-            );
-          })}
-        </div>
-        <ColorPick value={color} onChange={setColor} />
-        <label className="flex items-center gap-1.5 text-xs text-muted">
-          <input type="checkbox" checked={dashed} onChange={(e) => setDashed(e.target.checked)} />
-          Discontinua
-        </label>
-        {pending && pending.kind !== "arrow" && (
-          <>
-            <button type="button" className={btnPrimary} onClick={finish} disabled={pending.anchors.length < (pending.kind === "zone" ? 3 : 2)}>
-              Terminar {ANNOTATION_LABELS[pending.kind].toLowerCase()} (Enter)
-            </button>
-            <button type="button" className={btn} onClick={() => setPending(null)}>
-              Cancelar (Esc)
-            </button>
-          </>
-        )}
-      </div>
-      <p className="text-xs text-muted">{hint} Las flechas del teclado cambian de paso.</p>
-
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <BoardView
-          svgRef={svgRef}
-          framing={board.framing}
-          className="touch-none"
-          tokens={board.tokens}
-          positions={pos}
-          drawings={drawings}
-          selected={selected}
-          drag={drag}
-          onToken={onToken}
-          onPickDrawing={tool === "move" ? setSelected : undefined}
-          onPointerDown={onBackground}
-          onPointerMove={onMove}
-          onPointerUp={onUp}
-          onPointerLeave={() => {
-            if (drag || handle) onUp({} as RPointerEvent<SVGSVGElement>);
-          }}
-        >
-          {pendingPts.length >= 2 && (
-            <polyline
-              points={pendingPts.map((p) => p.join(",")).join(" ")}
-              fill="none"
-              stroke={DRAW_COLOR_VAR[color]}
-              strokeWidth={0.4}
-              strokeDasharray="0.8 0.8"
-              pointerEvents="none"
-            />
-          )}
-          {pendingPts.slice(0, pending?.anchors.length ?? 0).map((p, i) => (
-            <circle key={i} cx={p[0]} cy={p[1]} r={0.7} fill={DRAW_COLOR_VAR[color]} pointerEvents="none" />
-          ))}
-          {handles.map((h) => (
-            <circle
-              key={`${h.index}_${h.insert}`}
-              cx={h.p[0]}
-              cy={h.p[1]}
-              r={h.insert ? 0.8 : 1}
-              fill={h.insert ? "var(--color-bg)" : "var(--color-ink)"}
-              stroke="var(--color-accent-300)"
-              strokeWidth={0.35}
-              className="cursor-move"
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                setHandle({ index: h.index, insert: h.insert, x: h.p[0], y: h.p[1] });
-              }}
-            />
-          ))}
-        </BoardView>
-
-        <div className="space-y-4">
-          <div>
-            <div className="mb-2 text-sm text-ink">Dibujos de este paso</div>
-            {here.length === 0 ? (
-              <p className="text-xs text-faint">Ninguno. Elige una herramienta y dibuja sobre la cancha.</p>
-            ) : (
-              <ul className="space-y-2">
-                {here.map((a) => (
-                  <DrawingRow
-                    key={a.id}
-                    a={a}
-                    board={board}
-                    active={a.id === selected}
-                    onSelect={() => setSelected(a.id)}
-                    onPatch={(p) => patchAnnotation(a.id, p)}
-                    onRemove={() => removeAnnotation(a.id)}
+      }
+      canvas={
+        <div className="flex h-full flex-col">
+          <p className="mb-1 min-h-5 truncate px-1 text-xs text-faint" title={hint}>
+            {pending && pending.kind !== "arrow"
+              ? `${ANNOTATION_LABELS[pending.kind]}: ${pending.anchors.length} ${pending.anchors.length === 1 ? "punto" : "puntos"} · Enter termina, Esc cancela`
+              : hint}
+          </p>
+          <div className="min-h-0 flex-1">
+            <FitAspect aspect={aspect}>
+              <BoardView
+                svgRef={svgRef}
+                framing={board.framing}
+                fit
+                className="touch-none"
+                tokens={board.tokens}
+                positions={pos}
+                drawings={drawings}
+                selected={selected}
+                drag={drag}
+                onToken={onToken}
+                onPickDrawing={tool === "move" ? setSelected : undefined}
+                onPointerDown={onBackground}
+                onPointerMove={onMove}
+                onPointerUp={onUp}
+                onPointerLeave={() => {
+                  if (drag || handle) onUp({} as RPointerEvent<SVGSVGElement>);
+                }}
+              >
+                {pendingPts.length >= 2 && (
+                  <polyline
+                    points={pendingPts.map((p) => p.join(",")).join(" ")}
+                    fill="none"
+                    stroke={DRAW_COLOR_VAR[color]}
+                    strokeWidth={0.4}
+                    strokeDasharray="0.8 0.8"
+                    pointerEvents="none"
+                  />
+                )}
+                {pendingPts.slice(0, pending?.anchors.length ?? 0).map((p, i) => (
+                  <circle key={i} cx={p[0]} cy={p[1]} r={0.7} fill={DRAW_COLOR_VAR[color]} pointerEvents="none" />
+                ))}
+                {handles.map((h) => (
+                  <circle
+                    key={`${h.index}_${h.insert}`}
+                    cx={h.p[0]}
+                    cy={h.p[1]}
+                    r={h.insert ? 0.8 : 1}
+                    fill={h.insert ? "var(--color-bg)" : "var(--color-ink)"}
+                    stroke="var(--color-accent-300)"
+                    strokeWidth={0.35}
+                    className="cursor-move"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      setHandle({ index: h.index, insert: h.insert, x: h.p[0], y: h.p[1] });
+                    }}
                   />
                 ))}
-              </ul>
-            )}
+              </BoardView>
+            </FitAspect>
           </div>
-          <details className="rounded-xl border border-line-soft p-3">
-            <summary className="cursor-pointer text-sm text-ink">Fichas</summary>
-            <p className="mt-2 text-xs text-faint">Dorsal o rol de cada ficha. Quitar una la saca de todos los pasos (y borra sus dibujos).</p>
-            <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto pr-1">
-              {board.tokens.map((tk) => {
-                const on = board.keyframes.some((x) => x.pos[tk.id]);
-                return (
-                  <li key={tk.id} className="flex items-center gap-2 text-xs">
-                    <input type="checkbox" checked={on} aria-label={on ? "Quitar del pizarrón" : "Poner en el pizarrón"} onChange={() => save(toggleToken(board, tk.id))} />
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: tk.team === "ball" ? "var(--color-ball)" : tk.team === "own" ? "var(--color-own)" : "var(--color-opp)" }} />
-                    {tk.team === "ball" ? (
-                      <span className="text-muted">Balón</span>
-                    ) : (
-                      <input
-                        className={`${input} h-7 w-24 px-2 py-0 text-xs`}
-                        value={tk.label}
-                        maxLength={4}
-                        aria-label="Dorsal o rol"
-                        onChange={(e) => save({ ...board, tokens: board.tokens.map((x) => (x.id === tk.id ? { ...x, label: e.target.value } : x)) })}
-                      />
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </details>
         </div>
-      </div>
-    </div>
+      }
+      controls={
+        <>
+          <span className="cond px-1 text-[12px] font-bold tracking-wide text-muted uppercase">Pasos</span>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            {board.keyframes.map((s, i) => (
+              <button
+                key={`${s.t}_${i}`}
+                type="button"
+                aria-pressed={i === k}
+                aria-label={`Paso ${i + 1}`}
+                title={s.note || `Paso ${i + 1}`}
+                onClick={() => {
+                  setStep(i);
+                  setPending(null);
+                }}
+                className={`tc h-8 min-w-8 rounded-md px-2 text-xs font-semibold transition-colors ${
+                  i === k ? "bg-accent-900 text-accent-300 ring-1 ring-accent/60" : "bg-raised text-ink-2 hover:bg-line"
+                }`}
+              >
+                {i + 1}
+              </button>
+            ))}
+            <IconButton
+              label="Añadir un paso (copia las posiciones del último)"
+              onClick={() => {
+                save(addStep(board));
+                setStep(board.keyframes.length);
+              }}
+            >
+              <Plus size={15} />
+            </IconButton>
+          </div>
+          <span className="hidden text-xs text-faint 2xl:inline">← → cambia de paso</span>
+          {pending && pending.kind !== "arrow" && (
+            <button type="button" className={btnPrimary} onClick={finish} disabled={pending.anchors.length < (pending.kind === "zone" ? 3 : 2)}>
+              Terminar {ANNOTATION_LABELS[pending.kind].toLowerCase()}
+            </button>
+          )}
+          <IconButton
+            label={board.keyframes.length > 1 ? `Borrar el paso ${k + 1} y los dibujos que empiezan en él` : "La jugada necesita al menos un paso"}
+            tone="danger"
+            disabled={board.keyframes.length <= 1}
+            onClick={() => {
+              save(removeStep(board, k));
+              setStep(Math.max(0, k - 1));
+              setSelected(null);
+            }}
+          >
+            <Trash size={15} />
+          </IconButton>
+        </>
+      }
+      side={
+        <SidePanel tabs={PANEL_TABS} value={panel} onChange={setPanel}>
+          {panel === "step" ? (
+            <div className="space-y-4">
+              {stepNote}
+              <div>
+                <PanelTitle>Dibujos del paso</PanelTitle>
+                {here.length === 0 ? (
+                  <p className="text-xs text-faint">Ninguno. Elige una herramienta en la barra y dibuja sobre la cancha.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {here.map((a) => (
+                      <DrawingRow
+                        key={a.id}
+                        a={a}
+                        board={board}
+                        active={a.id === selected}
+                        onSelect={() => setSelected(a.id)}
+                        onPatch={(p) => patchAnnotation(a.id, p)}
+                        onRemove={() => removeAnnotation(a.id)}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          ) : panel === "board" ? (
+            <div className="space-y-4">
+              {boardPanel}
+              <div>
+                <PanelTitle>Fichas</PanelTitle>
+                <p className="mb-2 text-xs text-faint">Dorsal o rol de cada ficha. Quitar una la saca de todos los pasos (y borra sus dibujos).</p>
+                <ul className="grid grid-cols-2 gap-1.5">
+                  {board.tokens.map((tk) => {
+                    const on = board.keyframes.some((x) => x.pos[tk.id]);
+                    return (
+                      <li key={tk.id} className="flex items-center gap-1.5 text-xs">
+                        <input type="checkbox" checked={on} aria-label={on ? "Quitar del pizarrón" : "Poner en el pizarrón"} onChange={() => save(toggleToken(board, tk.id))} />
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ background: tk.team === "ball" ? "var(--color-ball)" : tk.team === "own" ? "var(--color-own)" : "var(--color-opp)" }}
+                        />
+                        {tk.team === "ball" ? (
+                          <span className="text-muted">Balón</span>
+                        ) : (
+                          <input
+                            className={`${input} h-7 w-full min-w-0 px-2 py-0 text-xs`}
+                            value={tk.label}
+                            maxLength={4}
+                            aria-label="Dorsal o rol"
+                            onChange={(e) => save({ ...board, tokens: board.tokens.map((x) => (x.id === tk.id ? { ...x, label: e.target.value } : x)) })}
+                          />
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </div>
+          ) : (
+            listPanel
+          )}
+        </SidePanel>
+      }
+    />
   );
 }
 

@@ -22,8 +22,10 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { revealRef } from "@/components/motion";
 import { setPref, usePref, useStore } from "@/lib/store";
+import type { Match, MatchEvent } from "@/lib/types";
 import { useThemeSync } from "@/lib/theme";
 import { useRosterFromFile } from "@/components/RosterCard";
+import { TEAM_SECTIONS } from "@/lib/features";
 import { EdgeReveal, useFocusMode } from "@/components/FocusMode";
 
 type NavItem = { href: string; label: string; icon: Icon; locked?: string; disabled?: string; active: boolean };
@@ -61,10 +63,54 @@ function NavLink({ n, open }: { n: NavItem; open: boolean }) {
   );
 }
 
+// The match the three modes below work on: its teams and score, as a small scoreboard. With the sidebar folded, the
+// score alone (or both initials before any goal), the name on hover.
+function CurrentMatch({ match, events, open, active }: { match: Match | undefined; events: MatchEvent[]; open: boolean; active: boolean }) {
+  if (!match) return open ? <p className="m-0 px-2 py-1 text-[11px] text-faint">Elige un partido en Resumen</p> : null;
+  const goals = events.filter((e) => e.match_id === match.match_id && e.type === "goal");
+  const own = goals.filter((e) => e.team === "own").length;
+  const opp = goals.filter((e) => e.team === "opp").length;
+  const initials = (s: string) => s.trim().split(/\s+/).map((w) => w[0]).join("").slice(0, 3).toUpperCase();
+  const date = match.date ? new Date(`${match.date}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "short" }) : "";
+  const ring = active ? "shadow-[inset_0_0_0_1px_var(--color-own)]" : "shadow-[inset_0_0_0_1px_var(--color-line)] hover:shadow-[inset_0_0_0_1px_var(--color-line-strong)]";
+  const href = `/partido?id=${encodeURIComponent(match.match_id)}`;
+  if (!open)
+    return (
+      <Link href={href} title={`${match.name}${date ? ` · ${date}` : ""}`} aria-label={`Partido elegido: ${match.name}`} className={`cond grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-bg/70 text-[11px] leading-none font-extrabold text-ink uppercase transition-shadow ${ring}`}>
+        {goals.length ? (
+          <span className="tabular-nums">
+            {own}–{opp}
+          </span>
+        ) : (
+          <span className="flex flex-col items-center gap-0.5">
+            <span className="text-own">{initials(match.focus_team)}</span>
+            <span className="text-faint">{initials(match.other_team)}</span>
+          </span>
+        )}
+      </Link>
+    );
+  return (
+    <Link href={href} title="Abrir el partido" aria-label={`Partido elegido: ${match.name}`} className={`my-0.5 flex items-stretch gap-2 rounded-lg bg-bg/70 px-2 py-1.5 transition-shadow ${ring}`}>
+      <span className="flex flex-col justify-center gap-1" aria-hidden>
+        <i className="h-3 w-1 rounded-full bg-own" />
+        <i className="h-3 w-1 rounded-full bg-opp" />
+      </span>
+      <span className="cond flex min-w-0 flex-1 flex-col justify-center text-[13px] leading-tight font-bold text-ink uppercase">
+        <span className="truncate">{match.focus_team}</span>
+        <span className="truncate text-ink-2">{match.other_team}</span>
+      </span>
+      <span className="flex flex-col items-end justify-center">
+        <span className="cond text-base leading-none font-extrabold text-ink tabular-nums">{goals.length ? `${own}–${opp}` : "–"}</span>
+        {date && <span className="mt-0.5 text-[10px] text-faint">{date}</span>}
+      </span>
+    </Link>
+  );
+}
+
 function Sidebar() {
   const path = usePathname();
   const params = useSearchParams();
-  const { matches } = useStore();
+  const { matches, events } = useStore();
   const light = usePref("theme", "dark") === "light";
   const open = usePref("sidebar", "icons") === "full";
   const current = usePref("currentMatch", "");
@@ -92,7 +138,7 @@ function Sidebar() {
       disabled: match ? undefined : "elige un partido en Resumen",
     })),
   ];
-  const team: NavItem[] = [
+  const team: NavItem[] = !TEAM_SECTIONS ? [] : [
     { href: "/jugadoras", label: "Jugadoras", icon: UsersThree, active: at("/jugadoras") },
     { href: "/entrenamientos", label: "Sesiones", icon: Barbell, active: at("/entrenamientos") },
     { href: "/planificacion", label: "Calendario", icon: CalendarDots, locked: "en desarrollo", active: at("/planificacion") },
@@ -121,13 +167,10 @@ function Sidebar() {
         ))}
         {/* The match section: one block, so its four entries read as one group. */}
         <div className={`flex gap-1 rounded-xl bg-surface p-1 md:my-2 md:flex-col ${open ? "" : "md:items-center"}`} role="group" aria-label="Partidos">
-          {open && (
-            <div className="px-2 pt-1 pb-1.5">
-              <div className="cond text-xs font-bold text-faint uppercase">Partidos</div>
-              {match && <div className="truncate text-xs text-ink-2">{match.name}</div>}
-            </div>
-          )}
-          {matchNav.map((n) => (
+          {open && <div className="cond px-2 pt-1 text-xs font-bold text-faint uppercase">Partidos</div>}
+          <NavLink n={matchNav[0]} open={open} />
+          <CurrentMatch match={match} events={events} open={open} active={onMatch} />
+          {matchNav.slice(1).map((n) => (
             <NavLink key={n.label} n={n} open={open} />
           ))}
         </div>

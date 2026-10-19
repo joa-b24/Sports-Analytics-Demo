@@ -68,7 +68,6 @@ export function VideoTimeline({
       </div>
       <div className="tc mt-1 flex justify-between text-[10px] text-faint">
         <span>0:00</span>
-        <span className="font-sans">clic en una marca para ir al evento · rayado: pausa o no medible</span>
         <span>{fmtT(end)}</span>
       </div>
     </div>

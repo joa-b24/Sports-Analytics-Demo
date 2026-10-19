@@ -1,6 +1,6 @@
 "use client";
 
-import { Check } from "@phosphor-icons/react";
+import { FileText, Monitor, Path, PlayCircle, Scissors, SoccerBall, Strategy, Tag, Target, type Icon } from "@phosphor-icons/react";
 import type { StepId, StepStatus } from "@/lib/steps";
 import type { Match, MatchEvent } from "@/lib/types";
 
@@ -39,6 +39,19 @@ export const MODES = [
     ],
   },
 ] as const;
+// One icon per step: in the bar of the match (green when the step is done) and in the match list (only the done ones).
+export const STEP_ICONS: Record<StepId, Icon> = {
+  calibration: Target,
+  segments: Scissors,
+  tracking: Path,
+  ball: SoccerBall,
+  tag: Tag,
+  plays: PlayCircle,
+  board: Strategy,
+  analysis: Monitor,
+  report: FileText,
+};
+
 export type ModeId = (typeof MODES)[number]["id"];
 export type TabId = (typeof MODES)[number]["steps"][number][0];
 
@@ -102,8 +115,10 @@ export function MatchHeader({ match, events, tab, onTab, steps, video, children 
         {modeSteps.map(([id, label], n) => {
           const st = steps[id as StepId];
           const on = tab === id;
+          const I = STEP_ICONS[id as StepId];
+          const done = st?.state === "done";
           return (
-            <li key={id} className={`min-w-[8.5rem] flex-1 ${n > 0 ? "border-l border-line-soft" : ""}`}>
+            <li key={id} className={`min-w-[7rem] flex-1 ${n > 0 ? "border-l border-line-soft" : ""}`}>
               <button
                 type="button"
                 aria-pressed={on}
@@ -112,10 +127,10 @@ export function MatchHeader({ match, events, tab, onTab, steps, video, children 
                 className={`relative flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${on ? "bg-raised" : "hover:bg-raised/60"}`}
               >
                 <span className={`cond flex items-center gap-1.5 text-[13px] font-bold whitespace-nowrap uppercase ${on ? "text-ink" : "text-muted"}`}>
-                  {st?.state === "done" && <Check size={12} weight="bold" className="text-ok" />}
+                  <I size={15} weight={done ? "fill" : "regular"} className={done ? "text-ok" : "text-faint"} aria-hidden />
                   {label}
+                  {done && <span className="sr-only"> (completo)</span>}
                 </span>
-                {st && <span className="truncate text-xs text-faint">{st.text}</span>}
                 <span className="absolute inset-x-0 bottom-0 h-0.5 bg-line">
                   <span className={`block h-full transition-[width] duration-500 ${on ? "bg-own" : "bg-ink-2/60"}`} style={{ width: `${st ? progress(st) : 0}%` }} />
                 </span>
@@ -125,6 +140,8 @@ export function MatchHeader({ match, events, tab, onTab, steps, video, children 
         })}
       </ol>
       {children}
+      {/* The bar only names the steps (and ticks the finished ones); where the open step stands goes under it. */}
+      {steps[tab as StepId]?.text && <p className="m-0 basis-full text-right text-xs text-faint">{steps[tab as StepId].text}</p>}
     </div>
   );
 }

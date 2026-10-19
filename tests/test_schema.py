@@ -167,3 +167,12 @@ def test_duelo_con_resultado_y_detalle_es_valido(mock_dir):
     ev.loc[ev["type"] == "duel", "detail"] = "long"
     with pytest.raises(SchemaError):
         validate_events(ev)
+
+
+def test_fuera_de_lugar_es_un_tipo_valido_sin_resultado(mock_dir):
+    ev = load_events(mock_dir).copy()
+    ev.loc[ev["type"] == "throw_in", "type"] = "offside"
+    validate_events(ev)
+    ev.loc[ev["type"] == "offside", "outcome"] = "won"
+    with pytest.raises(SchemaError):
+        validate_events(ev)

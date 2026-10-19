@@ -1,7 +1,9 @@
-import { createReadStream } from "node:fs";
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { uploadTarget } from "@/lib/uploads";
 
 // Files of the repository, read and written by the app while it runs on this computer (npm run dev): the video of a
 // match, its calibration and tracking files, segments.csv, match.yaml and the squad. A deployed app has no repository
@@ -10,12 +12,15 @@ import { Readable } from "node:stream";
 //   GET  /api/local/<ruta>          the file (videos with byte ranges, so they can be seeked)
 //   GET  /api/local/<carpeta>?list  the files of a folder
 //   PUT  /api/local/<ruta>          writes the body (only the files listed in WRITABLE)
+//   POST /api/local/<ruta>          uploads a file of a match folder from Datos (lib/uploads.ts says which), streamed
+//                                   to disk (a video of several GB never sits in memory); 409 if it exists, unless
+//                                   ?overwrite=1
 
 export const dynamic = "force-dynamic";
 
 const ROOT = path.resolve(process.env.SPORTSAN_ROOT ?? path.join(process.cwd(), ".."));
 // Only these parts of the repository are reachable.
-const READABLE = [/^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.json$/, /^data\/strava(\/.*)?$/, /^data\/boards(\/.*)?$/];
+const READABLE = [/^matches$/, /^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.json$/, /^data\/strava(\/.*)?$/, /^data\/boards(\/.*)?$/];
 const WRITABLE = [
   /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors|labels)_[\w.-]+\.json$/,
   /^matches\/[\w.-]+\/(match\.yaml|segments\.csv)$/,
@@ -93,4 +98,36 @@ export async function PUT(req: Request, ctx: { params: Promise<{ path: string[] 
   await mkdir(path.dirname(target.abs), { recursive: true });
   await writeFile(target.abs, text, "utf-8");
   return Response.json({ ok: true, path: target.rel });
+}
+
+export async function POST(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  if (!enabled()) return notFound();
+  const { path: parts } = await ctx.params;
+  const rel = parts.map((p) => decodeURIComponent(p)).join("/");
+  const target = uploadTarget(rel) ? resolve(parts, [/^matches\/[^/]+\/.+$/]) : null;
+  if (!target) return Response.json({ error: "Ese archivo no se puede subir a la carpeta de un partido" }, { status: 403 });
+  if (!req.body) return Response.json({ error: "Archivo vacío" }, { status: 400 });
+  const existing = await stat(target.abs).catch(() => null);
+  if (existing?.isDirectory()) return Response.json({ error: "Ya hay una carpeta con ese nombre" }, { status: 409 });
+  if (existing && new URL(req.url).searchParams.get("overwrite") !== "1") {
+    return Response.json({ exists: true, size: existing.size, path: target.rel }, { status: 409 });
+  }
+  await mkdir(path.dirname(target.abs), { recursive: true });
+  // Written next to the target and renamed at the end: an interrupted upload never leaves half a file under the real
+  // name (*.part is out of git).
+  const part = `${target.abs}.${process.pid}.${Date.now()}.part`;
+  try {
+    await pipeline(Readable.fromWeb(req.body as import("node:stream/web").ReadableStream), createWriteStream(part));
+    const size = (await stat(part)).size;
+    if (size === 0) throw new Error("Archivo vacío");
+    await rename(part, target.abs);
+    return Response.json({ ok: true, path: target.rel, size });
+  } catch (e) {
+    await rm(part, { force: true }).catch(() => {});
+    const busy = (e as NodeJS.ErrnoException).code === "EPERM" || (e as NodeJS.ErrnoException).code === "EBUSY";
+    return Response.json(
+      { error: busy ? "El archivo está abierto en otro programa (o en el reproductor): ciérralo y vuelve a intentarlo" : `No se pudo guardar: ${(e as Error).message}` },
+      { status: busy ? 423 : 500 },
+    );
+  }
 }

@@ -21,6 +21,8 @@ EVENT_TYPES = (
     "final_third_entry", "box_entry", "goal_kick", "cross",
     # Opcional (2026-10-17): solo en los partidos donde se quiere el mapa de duelos
     "duel",
+    # 2026-10-19: fuera de lugar, con el equipo que lo comete (el de la jugadora adelantada)
+    "offside",
 )
 # Valores permitidos de `outcome` y `detail` por tipo de evento. Los dos son opcionales (nulos = no se anotó);
 # un tipo que no aparece aquí no admite ese campo.

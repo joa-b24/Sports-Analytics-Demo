@@ -92,17 +92,19 @@ type Props = {
   onPickDrawing?: (id: string) => void;
   svgRef?: Ref<SVGSVGElement>;
   className?: string;
+  // Inside a box that already sizes it (Estudio): no width cap for a half.
+  fit?: boolean;
   // Drawn over everything: handles of the selected drawing, the drawing being made.
   children?: React.ReactNode;
 } & Omit<React.SVGProps<SVGSVGElement>, "ref" | "children">;
 
 // The board at one moment: pitch, drawings and pieces. Static unless handlers are given.
-export function BoardView({ tokens, positions, drawings, selected = null, framing = "full", drag = null, onToken, onPickDrawing, svgRef, className = "", children, ...rest }: Props) {
+export function BoardView({ tokens, positions, drawings, selected = null, framing = "full", drag = null, onToken, onPickDrawing, svgRef, className = "", fit = false, children, ...rest }: Props) {
   const under = drawings.filter((d) => d.kind === "zone" || d.kind === "line");
   const over = drawings.filter((d) => d.kind !== "zone" && d.kind !== "line");
   return (
     // A half is taller than wide: on screen it is kept narrower so it fits in the window.
-    <Pitch svgRef={svgRef} className={`${framing === "full" ? "" : "mx-auto max-w-xl print:max-w-none"} ${className}`} showDirection={framing === "full"} viewBox={framingBox(framing).join(" ")} {...rest}>
+    <Pitch svgRef={svgRef} className={`${framing === "full" || fit ? "" : "mx-auto max-w-xl print:max-w-none"} ${className}`} showDirection={framing === "full"} viewBox={framingBox(framing).join(" ")} {...rest}>
       {under.map((d) => (
         <Drawing key={d.id} r={d} selected={d.id === selected} onPick={onPickDrawing} />
       ))}

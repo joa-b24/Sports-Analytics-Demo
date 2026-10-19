@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
 import { LABEL_STYLES, PlayerMark, type LabelStyle } from "@/components/PlayerMark";
 import { IconButton, Modal } from "@/components/Modal";
+import { Select } from "@/components/Select";
 import { Command } from "@/components/Command";
 import { ProcessPanel } from "@/components/workspace/ProcessPanel";
 import { LoadingStage } from "@/components/workspace/LoadingStage";
@@ -24,7 +25,7 @@ import { buildLabels, labelsName } from "@/lib/labels";
 import { localFile, listLocal, localVideo, readLocal, tracksParts, writeLocal } from "@/lib/local";
 import { parseHms } from "@/lib/segments";
 import { SMOOTH_DEFAULTS, smoothTrack, type SmoothOptions, type SmoothReport, type TrackPoint } from "@/lib/smooth";
-import { getPref, mutate, setPref, useHydrated, usePref, useStore } from "@/lib/store";
+import { getPref, mutate, setPref, uid, useHydrated, usePref, useStore } from "@/lib/store";
 import {
   applyAbsorb,
   clash,
@@ -62,7 +63,11 @@ import {
   type TeamCode,
   type TracksFile,
 } from "@/lib/tracks";
-import { type RivalPlayer, type TrackEdits } from "@/lib/types";
+import { type MatchEvent, type RivalPlayer, type TrackEdits } from "@/lib/types";
+import { autoEvents, pending as pendingAuto, reviewedStretches, AUTO, type Suggestion as AutoSuggestion } from "@/lib/autoEvents";
+import type { FixedFile } from "@/lib/positions";
+import { matchVideos } from "@/lib/videos";
+import { AutoSuggestions } from "@/components/workspace/AutoSuggestions";
 import { NOBODY, PLAYERS_DONE, SAMPLE_S, applyQuick, applyQuickOnto, leftovers, namedCount, nextCheckpoint, partStatus, quickModel, sampleFrames, type QuickLabel } from "@/lib/quick";
 
 const TEAM_LABELS: Record<TeamCode, string> = { own: "Analizado", opp: "Contrario", ref: "Árbitra", unk: "Sin equipo" };
@@ -131,8 +136,8 @@ const SIDE_MIN_PX = 260;
 const SIDE_MAX_PX = 640;
 const SIDE_DEFAULT_PX = 336;
 // The panels that can go beside the video or under it (dragged by their grip).
-type ModuleId = "ball" | "pitch" | "quick" | "squad" | "person";
-const MODULE_NAMES: Record<ModuleId, string> = { ball: "Balón", pitch: "En la cancha", quick: "Revisión rápida", squad: "Plantilla", person: "Jugadora" };
+type ModuleId = "ball" | "pitch" | "quick" | "squad" | "person" | "auto";
+const MODULE_NAMES: Record<ModuleId, string> = { ball: "Balón", pitch: "En la cancha", quick: "Revisión rápida", squad: "Plantilla", person: "Jugadora", auto: "Sugerencias" };
 const MODULE_DRAG = "application/x-sportsan-module";
 // Held keys: an arrow plays (or rewinds) at this speed; Space held steps one processed frame every CREEP_MS.
 const FAST_RATE = 4;
@@ -234,6 +239,15 @@ export function Correction({
     if (step) {
       setView((v) => (step === "ball" ? "ball" : v === "quick" ? "quick" : "players"));
       setMode(step === "ball" ? "ball" : null);
+    }
+  }
+  // The ball view is not for players: nobody stays selected (or pinned) in it.
+  const [prevView, setPrevView] = useState(view);
+  if (view !== prevView) {
+    setPrevView(view);
+    if (view === "ball") {
+      setSel(null);
+      setPinned(null);
     }
   }
   // Full screen: the video with its boxes, and one line on top with what matters in each view.
@@ -542,7 +556,14 @@ export function Correction({
       setHistory([]);
       setNotice(null);
       setMsg("");
-      seekFrame(d.start_frame);
+      setBIdx(0);
+      // Straight to the start of the new part: seekFrame still holds the limits of the previous one and would clamp
+      // the jump to its end (or its start), a frame whose calibration is not this part's.
+      const v = videoRef.current;
+      if (v) {
+        v.pause();
+        v.currentTime = (d.start_frame + 0.5) / (d.fps || fps);
+      }
     } catch {
       setData(null);
       setMsg("Ese archivo no es una parte de tracking (se espera tracks_<video>_<inicio>_<fin>.json).");
@@ -2096,6 +2117,104 @@ export function Correction({
   const quickCenter: [number, number] | null = quickBox ? [(quickBox[1] + quickBox[3]) / 2, (quickBox[2] + quickBox[4]) / 2] : null;
   const zoomTransform = zoomTo(view === "players" ? zoomCenter : view === "ball" ? ballCenter : view === "quick" ? quickCenter : null);
 
+  // ---------------------------------------------------------------- events suggested from the reviewed ball
+  // Only in the ball view, on what the ball review went through, with the direction of play said for this video.
+  const autoAll = useMemo<AutoSuggestion[]>(() => {
+    const seen = edits.ballReview?.seen ?? [];
+    if (!data || view !== "ball" || !attack || seen.length === 0) return [];
+    const byFrame = new Map<number, FixedFile["frames"][number]["positions"]>();
+    for (const [id, pts] of paths)
+      for (const q of pts) {
+        const list = byFrame.get(q.frame) ?? [];
+        list.push({ id, x: q.x, y: q.y, source: q.source });
+        byFrame.set(q.frame, list);
+      }
+    const file: FixedFile = {
+      kind: "tracks_fixed",
+      match_id: data.match_id,
+      video_id: data.video_id,
+      fps: data.fps,
+      start_frame: data.start_frame,
+      end_frame: data.end_frame,
+      stride: data.stride,
+      venue: data.venue?.length_m && data.venue?.width_m ? { length_m: data.venue.length_m, width_m: data.venue.width_m } : null,
+      people: ppl.filter((q) => q.team === "own" || q.team === "opp").map((q) => ({ id: q.id, team: q.team, player_id: q.player_id || null, tracks: q.tracks })),
+      ball: ball.map((b) => ({ frame: b.frame, x: b.x, y: b.y, source: b.source })),
+      frames: data.frames.map((fr) => ({ frame: fr.frame, positions: byFrame.get(fr.frame) ?? [] })),
+    };
+    const half = (bEvery * data.fps) / 2;
+    return autoEvents({
+      file,
+      ownRight: attack === "right",
+      reviewed: reviewedStretches([...seen, ...(edits.ball ?? []).map((b) => b.frame)], bEvery, data.fps),
+      out: seen.filter((f) => !(edits.ball ?? []).some((b) => Math.abs(b.frame - f) <= half)),
+      links: edits.ballLinks ?? [],
+    });
+  }, [data, view, attack, edits.ballReview, bEvery, paths, ppl, ball, edits.ball, edits.ballLinks]);
+  const autoList = data ? pendingAuto(autoAll, matchEvents, data.video_id, data.fps, edits.autoRejected ?? []) : [];
+  // The suggestion at this moment: the nearest within the duplicate window, the coming one first.
+  const autoActive =
+    autoList
+      .filter((s) => Math.abs(s.frame - frame) <= AUTO.duplicateS * fps)
+      .sort((a, b) => Math.abs(a.frame - frame) - Math.abs(b.frame - frame))[0] ?? null;
+  const autoBlocked = !attack
+    ? "Indica hacia dónde atacamos en este video (engrane del balón) para leer los eventos."
+    : bSeen.length === 0
+      ? "Aparecen al revisar el balón: solo se leen los tramos ya revisados."
+      : undefined;
+  const acceptAuto = (s: AutoSuggestion, i: number) => {
+    const opt = s.options[i];
+    if (!opt || !data) return;
+    if (opt.events.length === 0) {
+      setEdits({ ...edits, autoRejected: [...new Set([...(edits.autoRejected ?? []), s.id])] });
+      return setMsg(`«${opt.label}»: sin eventos.`);
+    }
+    const m = state.matches.find((x) => x.match_id === eventsMatchId);
+    if (!m) return setMsg("Elige el partido de los eventos en el engrane del balón.");
+    const vids = matchVideos(m);
+    const vi = vids.findIndex((v) => v.video_id === data.video_id);
+    const period = vids[vi]?.period ?? (vi <= 0 ? 1 : 2);
+    const evs: MatchEvent[] = opt.events.map((e) => ({
+      event_id: uid("e"),
+      match_id: m.match_id,
+      video_id: data.video_id,
+      t_video: Math.round((e.frame / data.fps) * 10) / 10,
+      period,
+      type: e.type,
+      team: e.team,
+      player_id: e.player_id ?? null,
+      x: e.x,
+      y: e.y,
+      outcome: e.outcome ?? null,
+      detail: null,
+      note: null,
+      ...(e.x_end != null && e.y_end != null ? { x_end: e.x_end, y_end: e.y_end } : {}),
+    }));
+    mutate((st) => ({ ...st, events: [...st.events, ...evs] }));
+    setMsg(`Añadido: ${opt.label}. Se revisa en Eventos.`);
+  };
+  const rejectAuto = (s: AutoSuggestion) => setEdits({ ...edits, autoRejected: [...new Set([...(edits.autoRejected ?? []), s.id])] });
+  // s accepts the suggestion at this moment (its first option), x rejects it. Before the other keys of the ball view.
+  const autoKeys = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  useEffect(() => {
+    autoKeys.current = (e: KeyboardEvent) => {
+      if (view !== "ball" || !autoActive || isTyping(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "s") acceptAuto(autoActive, 0);
+      else if (e.key === "x") rejectAuto(autoActive);
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => autoKeys.current(e);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+  const autoPanel = (
+    <AutoSuggestions list={autoList} active={autoActive} frame={frame} fps={fps} blocked={autoBlocked} onSeek={seekFrame} onAccept={acceptAuto} onReject={rejectAuto} />
+  );
+
   if (!hydrated) return null;
 
   const kitsCard = (
@@ -2161,6 +2280,16 @@ export function Correction({
   // Ball view: one compact bar (the pitch goes beside the video); the events as ball positions, in a dialog.
   // The same measure as the status of the part and the strip under the video.
   const ballShare = status?.ball ?? 0;
+  // Step of the ball review: a small segmented control (in the bar and in the settings).
+  const stepSeg = (
+    <span className="seg" role="group" aria-label="Paso de la revisión del balón">
+      {[0.5, 1, 2].map((v) => (
+        <button key={v} type="button" aria-pressed={bEvery === v} className="seg-opt tc !px-2 !py-0.5 text-xs" onClick={() => (setPref("ball:every", String(v)), bGo(0))}>
+          {v} s
+        </button>
+      ))}
+    </span>
+  );
   const ballBar = (
     <div className="rounded-2xl bg-surface/70 p-3 text-xs text-muted">
       <div className="flex items-center gap-2">
@@ -2172,7 +2301,7 @@ export function Correction({
         </div>
         <span className="tc min-w-[2.75rem] text-right text-ink-2">{Math.round(100 * ballShare)} %</span>
         <button type="button" className={btn} onClick={bNotSeen} title="El balón no se ve o está fuera de juego: siguiente muestra (no cuenta como faltante)">
-          No se ve / fuera <kbd className="kbd">Enter</kbd>
+          <EyeSlash size={15} /> <kbd className="kbd">Enter</kbd>
         </button>
         <IconButton
           label={ballLinkFrom !== null ? "Recta en curso: clic donde cae (i para cancelar)" : "Recta a mano (i): desde la última marca hasta donde cae, para pases largos o balones por alto"}
@@ -2194,78 +2323,113 @@ export function Correction({
           <HandPointing size={15} />
         </IconButton>
       </div>
-      {ballAuto && (
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-          <span className="text-ink-2">
-            Tracker de balón: {ballAuto.frames.length} cuadro(s) seguros (anillo naranja discontinuo){edits.ballRejected?.length ? `, ${edits.ballRejected.length} quitado(s) a mano` : ""}.
-          </span>
-          <span className={asksLeft.length ? "text-warn" : "text-ok"}>
-            {asksLeft.length ? `Pide ${asksLeft.length} marca(s) a mano: n lleva a la siguiente.` : "Ya no pide marcas."}
-          </span>
-        </div>
-      )}
-      {ballOdd.length > 0 && (
-        <div className="mt-2 text-[11px] text-pretty text-warn">
-          {ballOdd.length} salto(s) imposibles del balón (más de 35 m/s): casi siempre una marca sobre un balón por alto, que llevada al suelo cae
-          lejos. <kbd className="kbd">a</kbd> lleva al siguiente; quita esas marcas y traza una recta (<kbd className="kbd">i</kbd>) de donde sale a
-          donde cae.
-        </div>
-      )}
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span>
-          Clic en el balón · <kbd className="kbd">→</kbd> paso · <kbd className="kbd">Alt →</kbd> cuadro · <kbd className="kbd">Tab</kbd> dos pasos ·{" "}
-          <kbd className="kbd">n</kbd> donde falta · <kbd className="kbd">i</kbd> recta hasta donde cae · <kbd className="kbd">k</kbd> mantener ·
-          <kbd className="kbd">a</kbd> salto imposible ·
-          clic en la cancha de la derecha también marca ·{" "}
-          <kbd className="kbd">z</kbd> zoom
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {ballAuto && (
+          <button
+            type="button"
+            className={`tag ${asksLeft.length ? "tag-warn" : ""}`}
+            title={`Tracker de balón: ${ballAuto.frames.length} cuadro(s) seguros (anillo naranja discontinuo)${edits.ballRejected?.length ? `, ${edits.ballRejected.length} quitado(s) a mano` : ""}. ${asksLeft.length ? "n lleva a donde pide marca." : "Ya no pide marcas."}`}
+            onClick={nextMissingBall}
+          >
+            {asksLeft.length ? <>Pide {asksLeft.length} <kbd className="kbd">n</kbd></> : <><Check size={12} weight="bold" /> Tracker</>}
+          </button>
+        )}
+        {ballOdd.length > 0 && (
+          <button
+            type="button"
+            className="tag tag-warn"
+            title="Saltos imposibles del balón (más de 35 m/s): casi siempre una marca sobre un balón por alto. Quita esas marcas y traza una recta (i) de donde sale a donde cae."
+            onClick={nextBallAnomaly}
+          >
+            <Warning size={12} /> {ballOdd.length} salto(s) <kbd className="kbd">a</kbd>
+          </button>
+        )}
+        <span
+          className="inline-flex cursor-help items-center text-faint"
+          title={"Clic en el balón (o en la cancha) marca\n→ paso · Alt → cuadro · Tab dos pasos\nEnter no se ve / fuera · n donde falta\ni recta hasta donde cae · k mantener quieto\na salto imposible · Supr quitar · h marcas · z zoom\ns acepta la sugerencia · x la descarta"}
+          aria-label="Atajos de teclado"
+        >
+          <Keyboard size={16} />
         </span>
-        <label className="flex items-center gap-1.5" title="Las cajas de las jugadoras sobre el video (tecla h)">
-          <input type="checkbox" className="accent-accent" checked={ballBoxes} onChange={(e) => setPref("ball:boxes", e.target.checked ? "1" : "0")} />
-          Cajas <kbd className="kbd">h</kbd>
-        </label>
-        <label className="ml-auto flex items-center gap-1.5">
-          Paso
-          <select className={input} value={bEvery} onChange={(e) => (setPref("ball:every", e.target.value), bGo(0))}>
-            {[0.5, 1, 2].map((v) => (
-              <option key={v} value={v}>
-                {v} s
-              </option>
-            ))}
-          </select>
-        </label>
-        <IconButton label="Balón desde los eventos etiquetados…" onClick={() => setModal("ballEvents")}>
+        <span className="ml-auto flex items-center gap-1.5" title="Cada cuánto se detiene la revisión (→ avanza una muestra)">
+          <span className="text-faint">Paso</span>
+          {stepSeg}
+        </span>
+        <IconButton label={attack ? "Ajustes del balón…" : "Ajustes del balón: falta indicar hacia dónde atacamos"} tone={attack ? "default" : "accent"} onClick={() => setModal("ballEvents")}>
           <GearSix size={15} />
         </IconButton>
       </div>
     </div>
   );
+  // Settings of the ball view: where we attack in this video (events, suggestions and analysis need it), the match whose
+  // tagged events give ball positions, and the step of the review.
+  const attackOpt = (value: "left" | "right", label: string) => {
+    const on = attack === value;
+    return (
+      <button
+        type="button"
+        aria-pressed={on}
+        onClick={() => setPref(`attack:${mid}:${data?.video_id}`, on ? "" : value)}
+        className={`group flex flex-1 flex-col items-stretch gap-2 rounded-xl p-2.5 text-left transition-colors ${on ? "bg-own/15 shadow-[inset_0_0_0_1.5px_var(--color-own)]" : "bg-bg/60 shadow-[inset_0_0_0_1px_var(--color-line)] hover:shadow-[inset_0_0_0_1px_var(--color-line-strong)]"}`}
+      >
+        <svg viewBox="0 0 105 68" className="w-full rounded-md bg-pitch" aria-hidden>
+          <rect x="1" y="1" width="103" height="66" fill="none" stroke="currentColor" className="text-white/40" strokeWidth="0.8" />
+          <line x1="52.5" y1="1" x2="52.5" y2="67" stroke="currentColor" className="text-white/40" strokeWidth="0.8" />
+          <circle cx="52.5" cy="34" r="9" fill="none" stroke="currentColor" className="text-white/40" strokeWidth="0.8" />
+          <path
+            d={value === "right" ? "M30 34 H72 M64 26 L74 34 L64 42" : "M75 34 H33 M41 26 L31 34 L41 42"}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={on ? "text-own" : "text-white/55"}
+          />
+        </svg>
+        <span className={`text-xs font-medium ${on ? "text-ink" : "text-ink-2"}`}>{label}</span>
+      </button>
+    );
+  };
   const ballEventsPanel = (
-    <div className="space-y-3 text-sm">
-      <div className="grid gap-2 sm:grid-cols-2">
-        <label className="text-[11px] text-muted">
-          Partido de la app
-          <select className={`${input} mt-1 w-full`} value={eventsMatchId} onChange={(e) => setPref(`ballMatch:${mid}`, e.target.value)}>
-            <option value="">(ninguno)</option>
-            {state.matches.map((m) => (
-              <option key={m.match_id} value={m.match_id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-[11px] text-muted">
-          En este video, el equipo analizado ataca hacia
-          <select className={`${input} mt-1 w-full`} value={attack} onChange={(e) => setPref(`attack:${mid}:${data?.video_id}`, e.target.value)}>
-            <option value="">(sin indicar: no se usan)</option>
-            <option value="right">la derecha del dibujo (x = 105)</option>
-            <option value="left">la izquierda del dibujo (x = 0)</option>
-          </select>
-        </label>
-      </div>
-      <p className="text-[11px] text-pretty text-faint">
-        Los eventos etiquetados con posición dan el balón donde no hay una marca tuya a menos de {BALL_FILL_S} s. En esta parte:{" "}
-        {ballKnown.filter((b) => b.source === "event").length} evento(s) con posición. La dirección de ataque también orienta el análisis.
-      </p>
+    <div className="space-y-5 text-sm">
+      <section>
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <h3 className="cond m-0 text-[13px] font-bold tracking-wide text-ink uppercase">Hacia dónde atacamos</h3>
+          <span className="text-[11px] text-faint">en este video{attack ? "" : " · sin indicar"}</span>
+        </div>
+        <div className="flex gap-2">
+          {attackOpt("left", "Hacia la izquierda")}
+          {attackOpt("right", "Hacia la derecha")}
+        </div>
+        <p className="mt-2 text-[11px] text-pretty text-faint">
+          Como se ve en el dibujo de «En la cancha». Lo usan las sugerencias de eventos, el balón desde los eventos y el análisis. Clic otra vez para
+          dejarlo sin indicar.
+        </p>
+      </section>
+      <section>
+        <h3 className="cond mb-2 text-[13px] font-bold tracking-wide text-ink uppercase">Partido de los eventos</h3>
+        <Select
+          variant="field"
+          label="Partido de la app"
+          className="w-full justify-between"
+          clearable
+          placeholder="Ninguno"
+          value={eventsMatchId || null}
+          onChange={(v) => setPref(`ballMatch:${mid}`, v ?? "")}
+          options={state.matches.map((m) => ({ value: m.match_id, label: m.name }))}
+        />
+        <p className="mt-2 text-[11px] text-pretty text-faint">
+          Ahí entran las sugerencias que aceptes. Sus eventos con posición dan el balón donde no hay una marca tuya a menos de {BALL_FILL_S} s:{" "}
+          <span className="text-ink-2">{ballKnown.filter((b) => b.source === "event").length} en esta parte</span>.
+        </p>
+      </section>
+      <section>
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <h3 className="cond m-0 text-[13px] font-bold tracking-wide text-ink uppercase">Paso de la revisión</h3>
+          <span className="text-[11px] text-faint">→ avanza una muestra</span>
+        </div>
+        {stepSeg}
+      </section>
     </div>
   );
   // Short pieces, all at once.
@@ -2789,7 +2953,7 @@ export function Correction({
           </form>
         )}
       </div>
-      {qTeam === "own" && qRoster.length === 0 && <p className="mt-2 text-xs text-faint">Sin plantilla: añádela en Jugadoras.</p>}
+      {qTeam === "own" && qRoster.length === 0 && <p className="mt-2 text-xs text-faint">Sin plantilla: añádela en Configuración › Plantilla.</p>}
     </section>
   );
   const quickPanel = qMode === "player" ? quickPlayerPanel : quickSamplesPanel;
@@ -3065,8 +3229,8 @@ export function Correction({
     </div>
   );
   // Which modules this view has, where each one goes, and the grip that moves it.
-  const viewModules: ModuleId[] = view === "ball" ? ["ball", "pitch"] : view === "quick" ? ["quick", "squad"] : ["pitch", "person"];
-  const moduleNode: Record<ModuleId, React.ReactNode> = { ball: ballBar, pitch: pitchCard, quick: quickPanel, squad: squadPanel, person: personModule };
+  const viewModules: ModuleId[] = view === "ball" ? ["pitch", "ball", "auto"] : view === "quick" ? ["quick", "squad"] : ["pitch", "person"];
+  const moduleNode: Record<ModuleId, React.ReactNode> = { ball: ballBar, pitch: pitchCard, quick: quickPanel, squad: squadPanel, person: personModule, auto: autoPanel };
   const sideMods = viewModules.filter((m) => !belowSet.has(m));
   const belowMods = viewModules.filter((m) => belowSet.has(m));
   // With the table fitting the window, the window is a limit, not a size: the video as large as fits above its controls
@@ -3375,7 +3539,7 @@ export function Correction({
         </Modal>
       )}
       {modal === "ballEvents" && data && (
-        <Modal title="Balón desde los eventos" onClose={() => setModal(null)}>
+        <Modal title="Ajustes del balón" onClose={() => setModal(null)}>
           {ballEventsPanel}
         </Modal>
       )}
@@ -3744,13 +3908,24 @@ export function Correction({
                     <input className={`${input} tc w-20`} placeholder="mm:ss" aria-label="Ir a un tiempo del video" value={goTo} onChange={(e) => setGoTo(e.target.value)} />
                   </form>
                   <span className="ml-auto flex items-center gap-1">
-                    <IconButton
-                      label={focusSel ? "Solo la seleccionada resaltada (h): las demás se ven al pasar el ratón. Clic: todas" : "Todas resaltadas (h). Clic: solo la seleccionada"}
-                      tone={focusSel ? "accent" : "default"}
-                      onClick={() => setPref("correction:focus", focusSel ? "all" : "sel")}
-                    >
-                      <Target size={16} weight={focusSel ? "fill" : "regular"} />
-                    </IconButton>
+                    {/* h: in the ball view it shows or hides the players' marks; elsewhere, who is highlighted. */}
+                    {view === "ball" ? (
+                      <IconButton
+                        label={ballBoxes ? "Ocultar las marcas de las jugadoras (h)" : "Mostrar las marcas de las jugadoras (h)"}
+                        tone={ballBoxes ? "accent" : "default"}
+                        onClick={() => setPref("ball:boxes", ballBoxes ? "0" : "1")}
+                      >
+                        <BoundingBox size={16} weight={ballBoxes ? "fill" : "regular"} />
+                      </IconButton>
+                    ) : (
+                      <IconButton
+                        label={focusSel ? "Solo la seleccionada resaltada (h): las demás se ven al pasar el ratón. Clic: todas" : "Todas resaltadas (h). Clic: solo la seleccionada"}
+                        tone={focusSel ? "accent" : "default"}
+                        onClick={() => setPref("correction:focus", focusSel ? "all" : "sel")}
+                      >
+                        <Target size={16} weight={focusSel ? "fill" : "regular"} />
+                      </IconButton>
+                    )}
                     <IconButton
                       label={cropping ? "Terminar el recorte" : cropTopPref || cropBottomPref ? "Recorte del cuadro (cambiar)" : "Recortar el cuadro: ver menos cielo"}
                       tone={cropping || cropTopPref || cropBottomPref ? "accent" : "default"}
@@ -3948,6 +4123,8 @@ export function Correction({
                     onSeek={seekFrame}
                     out={bSeen.filter((f) => !(edits.ball ?? []).some((b) => Math.abs(b.frame - f) <= (bEvery * fps) / 2))}
                     outHalf={(bEvery * fps) / 2}
+                    step={bEvery * fps}
+                    links={edits.ballLinks ?? []}
                   />
                 )}
             {view === "players" && selected && (

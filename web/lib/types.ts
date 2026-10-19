@@ -22,6 +22,8 @@ export const EVENT_TYPES = [
   "cross",
   // Optional (2026-10-17): only tagged in the matches where the duels map is wanted.
   "duel",
+  // 2026-10-19: offside, with the team that commits it.
+  "offside",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -42,6 +44,7 @@ export const EVENT_LABELS: Record<EventType, string> = {
   goal_kick: "Saque de meta",
   cross: "Centro",
   duel: "Duelo",
+  offside: "Fuera de lugar",
 };
 
 // Keyboard shortcut for each event type in the tagging tool: a letter that recalls its Spanish name.
@@ -63,6 +66,7 @@ export const EVENT_KEYS: Record<EventType, string> = {
   goal_kick: "m",
   cross: "c",
   duel: "d",
+  offside: "q",
 };
 
 // Second datum of an event, by type. Same values as EVENT_OUTCOMES / EVENT_DETAILS in schema.py.
@@ -174,6 +178,9 @@ export interface Match {
   // Venue of the match (lib/venue.ts), chosen in its calibration.
   venue_id?: string;
   report: Report;
+  // Possession read from the followed ball, in seconds, kept when the report is built (the match list shows it without
+  // reading the tracking files). Absent until the report of a match with the ball followed is opened.
+  possession?: { own: number; opp: number; followed_s: number };
   is_demo?: boolean;
 }
 
@@ -291,7 +298,11 @@ export interface CalibAnchor {
   t_video: number;
   image_w: number;
   image_h: number;
+  // Clicked points, plus the points computed from `lines` (ids `ix:...`, lib/calibLines.ts) so that whoever reads the
+  // anchors file (sportsan.tracking.propagate) gets them as any other point.
   points: AnchorPoint[];
+  // Lines of the pitch marked on the frame (two pixels each and the line of the model). Absent in older anchors.
+  lines?: { line_id: string; a: [number, number]; b: [number, number] }[];
 }
 
 // Same values as the `tipo` column of segments.csv in the data contract.
@@ -328,9 +339,28 @@ export interface VenueSpec {
   // Centre of the football field relative to the centre of the soccer pitch.
   grid_dx_m?: number;
   grid_dy_m?: number;
+  // Soccer markings when they are not the regulation ones (m). Absent: regulation (lib/venue.ts SOCCER_DEFAULTS).
+  box_depth_m?: number;
+  box_width_m?: number;
+  goal_area_depth_m?: number;
+  goal_area_width_m?: number;
+  penalty_spot_m?: number;
+  circle_r_m?: number;
+  // Width of the American football field between its sidelines (m). Absent: 53 1/3 yd.
+  football_width_m?: number;
   // Paint colours, used in the venue diagrams.
   soccer_color: string;
   grid_color: string;
+  // Goal mouth measured on an image or by hand (m). Absent: not measured (shown as missing, never the regulation size).
+  goal_width_m?: number;
+  goal_height_m?: number;
+  // Extra drawings in venue meters (lib/venueFit.ts): straight lines (mowing lines, other paint) and mowing stripes.
+  layers?: (
+    | { id: string; kind: "line"; color: string; pts: [number, number][] }
+    | { id: string; kind: "stripes"; color: string; axis: "across" | "along"; width_m: number; offset_m: number }
+  )[];
+  // Reference groups (lib/venueFit.ts REFERENCE_GROUPS) checked by eye against an image of the venue.
+  checked?: string[];
 }
 
 // The person's corrections to the automatic tracks of one processed part (lib/tracks.ts). The file with the
@@ -365,6 +395,8 @@ export interface TrackEdits {
   ballReview?: { every: number; seen: number[] };
   // Impossible movements the analyst looked at and found fine (anomalyKey of lib/anomalies.ts).
   anomalyOk?: string[];
+  // Events suggested from the ball (lib/autoEvents.ts) rejected here, by suggestion id.
+  autoRejected?: string[];
 }
 
 // A pass tagged by hand (pass 4 of the tagging): who to whom. to_id is null when it did not reach a teammate.

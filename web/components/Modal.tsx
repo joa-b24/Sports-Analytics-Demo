@@ -9,11 +9,14 @@ export function Modal({
   onClose,
   children,
   wide = false,
+  size,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   wide?: boolean;
+  // "full": almost the whole window (a large table).
+  size?: "full";
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -32,7 +35,7 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         className={`enter max-h-[90vh] w-full overflow-y-auto rounded-3xl bg-raised p-6 shadow-[0_0_0_1px_var(--color-line-strong),0_30px_60px_-20px_rgba(0,0,0,.8)] ${
-          wide ? "max-w-3xl" : "max-w-lg"
+          size === "full" ? "max-w-[min(96vw,92rem)]" : wide ? "max-w-3xl" : "max-w-lg"
         }`}
         onClick={(e) => e.stopPropagation()}
       >

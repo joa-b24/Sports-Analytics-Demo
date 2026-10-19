@@ -1,5 +1,5 @@
-import { PITCH, type VenueSpec } from "./types";
-import type { Pt } from "./homography";
+import { PITCH, type VenueSpec } from "./types.ts";
+import type { Pt } from "./homography.ts";
 
 // Reference model of a venue, in real meters. Origin: corner of the soccer pitch that is far from the camera and to
 // its left; x along the length, y across the width (y grows toward the camera). Same orientation as the data contract.
@@ -47,46 +47,53 @@ function circle(cx: number, cy: number, r: number, from = 0, to = 2 * Math.PI, s
   });
 }
 
-// Standard soccer markings for a pitch of L x W meters. `exact` says whether the pitch size itself is trusted.
-function soccerMarkings(L: number, W: number, exact: boolean): { landmarks: Landmark[]; lines: ModelLine[] } {
+// Regulation soccer markings (m). A venue can paint them otherwise (VenueSpec box_depth_m...).
+export const SOCCER_DEFAULTS = { box_depth_m: 16.5, box_width_m: 40.32, goal_area_depth_m: 5.5, goal_area_width_m: 18.32, penalty_spot_m: 11, circle_r_m: 9.15 };
+export const FOOTBALL_WIDTH_M = (160 / 3) * YARD; // 53 1/3 yd
+
+// Soccer markings for a pitch of L x W meters. `exact` says whether the pitch size itself is trusted.
+function soccerMarkings(L: number, W: number, exact: boolean, m: typeof SOCCER_DEFAULTS = SOCCER_DEFAULTS): { landmarks: Landmark[]; lines: ModelLine[] } {
   const cx = L / 2;
   const cy = W / 2;
+  const R = m.circle_r_m;
+  const bh = m.box_width_m / 2;
+  const gh = m.goal_area_width_m / 2;
   const landmarks: Landmark[] = [];
   const lines: ModelLine[] = [];
   const soccer = (id: string, label: string, x: number, y: number) => landmarks.push({ id, label, x, y, group: "soccer", exact });
   soccer("sc_c", "Centro de la cancha", cx, cy);
   soccer("sc_hf", "Media cancha · banda lejana", cx, 0);
   soccer("sc_hn", "Media cancha · banda cercana", cx, W);
-  soccer("sc_cf", "Círculo central · punto lejano", cx, cy - 9.15);
-  soccer("sc_cn", "Círculo central · punto cercano", cx, cy + 9.15);
-  soccer("sc_cl", "Círculo central · punto izq.", cx - 9.15, cy);
-  soccer("sc_cr", "Círculo central · punto der.", cx + 9.15, cy);
+  soccer("sc_cf", "Círculo central · punto lejano", cx, cy - R);
+  soccer("sc_cn", "Círculo central · punto cercano", cx, cy + R);
+  soccer("sc_cl", "Círculo central · punto izq.", cx - R, cy);
+  soccer("sc_cr", "Círculo central · punto der.", cx + R, cy);
   for (const [tag, name, x0, dir] of [["l", "izq.", 0, 1], ["r", "der.", L, -1]] as const) {
     soccer(`sc_${tag}_cf`, `Esquina ${name} lejana`, x0, 0);
     soccer(`sc_${tag}_cn`, `Esquina ${name} cercana`, x0, W);
-    soccer(`sc_${tag}_pf`, `Área grande ${name} · vértice lejano`, x0 + dir * 16.5, cy - 20.16);
-    soccer(`sc_${tag}_pn`, `Área grande ${name} · vértice cercano`, x0 + dir * 16.5, cy + 20.16);
-    soccer(`sc_${tag}_pgf`, `Área grande ${name} · línea de meta lejana`, x0, cy - 20.16);
-    soccer(`sc_${tag}_pgn`, `Área grande ${name} · línea de meta cercana`, x0, cy + 20.16);
-    soccer(`sc_${tag}_gf`, `Área chica ${name} · vértice lejano`, x0 + dir * 5.5, cy - 9.16);
-    soccer(`sc_${tag}_gn`, `Área chica ${name} · vértice cercano`, x0 + dir * 5.5, cy + 9.16);
-    soccer(`sc_${tag}_ps`, `Punto penal ${name}`, x0 + dir * 11, cy);
+    soccer(`sc_${tag}_pf`, `Área grande ${name} · vértice lejano`, x0 + dir * m.box_depth_m, cy - bh);
+    soccer(`sc_${tag}_pn`, `Área grande ${name} · vértice cercano`, x0 + dir * m.box_depth_m, cy + bh);
+    soccer(`sc_${tag}_pgf`, `Área grande ${name} · línea de meta lejana`, x0, cy - bh);
+    soccer(`sc_${tag}_pgn`, `Área grande ${name} · línea de meta cercana`, x0, cy + bh);
+    soccer(`sc_${tag}_gf`, `Área chica ${name} · vértice lejano`, x0 + dir * m.goal_area_depth_m, cy - gh);
+    soccer(`sc_${tag}_gn`, `Área chica ${name} · vértice cercano`, x0 + dir * m.goal_area_depth_m, cy + gh);
+    soccer(`sc_${tag}_ps`, `Punto penal ${name}`, x0 + dir * m.penalty_spot_m, cy);
     const box = (d: number, h: number): Pt[] => [[x0, cy - h], [x0 + dir * d, cy - h], [x0 + dir * d, cy + h], [x0, cy + h]];
-    lines.push({ pts: box(16.5, 20.16), group: "soccer" });
-    lines.push({ pts: box(5.5, 9.16), group: "soccer" });
-    // Penalty arc: the part of the 9.15 m circle around the penalty spot that lies outside the box.
-    const a = Math.acos(5.5 / 9.15);
-    lines.push({ pts: circle(x0 + dir * 11, cy, 9.15, dir === 1 ? -a : Math.PI - a, dir === 1 ? a : Math.PI + a, 16), group: "soccer" });
+    lines.push({ pts: box(m.box_depth_m, bh), group: "soccer" });
+    lines.push({ pts: box(m.goal_area_depth_m, gh), group: "soccer" });
+    // Penalty arc: the part of the circle around the penalty spot that lies outside the box.
+    const a = Math.acos(Math.min(1, (m.box_depth_m - m.penalty_spot_m) / R));
+    lines.push({ pts: circle(x0 + dir * m.penalty_spot_m, cy, R, dir === 1 ? -a : Math.PI - a, dir === 1 ? a : Math.PI + a, 16), group: "soccer" });
   }
   lines.push({ pts: [[0, 0], [L, 0], [L, W], [0, W], [0, 0]], group: "soccer" });
   lines.push({ pts: [[cx, 0], [cx, W]], group: "soccer" });
-  lines.push({ pts: circle(cx, cy, 9.15), group: "soccer" });
+  lines.push({ pts: circle(cx, cy, R), group: "soccer" });
   return { landmarks, lines };
 }
 
 // Regulation American football grid centred on (cx, cy). Exact by regulation; the hash marks depend on the standard used.
-function footballGrid(cx: number, cy: number, hashFar: number, hashNear: number): { landmarks: Landmark[]; lines: ModelLine[]; x0: number; x1: number } {
-  const half = (160 / 3 / 2) * YARD; // field is 53 1/3 yd wide
+function footballGrid(cx: number, cy: number, hashFar: number, hashNear: number, width = FOOTBALL_WIDTH_M): { landmarks: Landmark[]; lines: ModelLine[]; x0: number; x1: number } {
+  const half = width / 2;
   const ySide = { f: cy - half, n: cy + half };
   const yHash = { f: ySide.f + hashFar, n: ySide.n - hashNear };
   const landmarks: Landmark[] = [];
@@ -118,9 +125,10 @@ export function buildVenue(spec: VenueSpec, builtin = false): Venue {
   const W = spec.width_m;
   const overlay = spec.kind === "football_overlay";
   // Over a football grid the soccer lines are the uncertain part; on a soccer-only pitch they are all there is.
-  const soccer = soccerMarkings(L, W, !overlay);
+  const marks = Object.fromEntries(Object.entries(SOCCER_DEFAULTS).map(([k, v]) => [k, spec[k as keyof typeof SOCCER_DEFAULTS] ?? v])) as typeof SOCCER_DEFAULTS;
+  const soccer = soccerMarkings(L, W, !overlay, marks);
   const grid = overlay
-    ? footballGrid(L / 2 + (spec.grid_dx_m ?? 0), W / 2 + (spec.grid_dy_m ?? 0), spec.hash_far_m ?? DEFAULT_HASH_M, spec.hash_near_m ?? DEFAULT_HASH_M)
+    ? footballGrid(L / 2 + (spec.grid_dx_m ?? 0), W / 2 + (spec.grid_dy_m ?? 0), spec.hash_far_m ?? DEFAULT_HASH_M, spec.hash_near_m ?? DEFAULT_HASH_M, spec.football_width_m ?? FOOTBALL_WIDTH_M)
     : null;
   return {
     venue_id: spec.venue_id,

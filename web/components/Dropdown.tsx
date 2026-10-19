@@ -22,7 +22,8 @@ export function Dropdown({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      // A list drawn over the page by a control inside the panel (Select, PlayerPicker) is part of the panel.
+      if (!ref.current?.contains(e.target as Node) && !(e.target as Element).closest?.("[data-popover]")) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;

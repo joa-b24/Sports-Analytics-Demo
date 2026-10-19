@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { DownloadSimple, FilmStrip, PencilSimple, Printer, Plus, Trash } from "@phosphor-icons/react";
 import { BinChart, CompareBars, Legend, ZoneMap } from "@/components/charts";
@@ -47,6 +47,16 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       now: new Date().toISOString().slice(0, 10),
     });
   const data = useMemo(() => build(false), [match, events, plays, segmentsByVideo, fixed, state.roster, state.matches, state.events, state.edits]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The possession goes into the match too, for its summary in the match list.
+  const poss = data.summary.ball?.possession;
+  useEffect(() => {
+    if (!poss) return;
+    const next = { own: poss.own, opp: poss.opp, followed_s: data.summary.ball?.followed_s ?? 0 };
+    const cur = match.possession;
+    if (cur && cur.own === next.own && cur.opp === next.opp && cur.followed_s === next.followed_s) return;
+    mutate((s) => ({ ...s, matches: s.matches.map((m) => (m.match_id === match.match_id ? { ...m, possession: next } : m)) }));
+  }, [poss?.own, poss?.opp]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setReport = (p: Partial<Report>) =>
     mutate((s) => ({

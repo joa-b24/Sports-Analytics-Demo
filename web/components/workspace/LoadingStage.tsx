@@ -1,6 +1,6 @@
 "use client";
 
-import { SoccerBall } from "@phosphor-icons/react";
+import { SoccerBallIcon } from "@phosphor-icons/react";
 
 // What shows while a part of the tracking (a large file) and its video open: the pitch lines draw themselves and a ball
 // bounces over an indeterminate bar. `overlay` puts it over a video that is still loading.
@@ -29,7 +29,7 @@ export function LoadingStage({ label, overlay = false }: { label: string; overla
       <div className="relative flex flex-col items-center">
         <div className="relative h-16 w-12">
           <span className="loader-ball absolute inset-x-0 top-0 grid place-items-center text-ink">
-            <SoccerBall size={34} weight="fill" />
+            <SoccerBallIcon size={34} weight="fill" />
           </span>
           <span className="loader-shadow absolute bottom-0 left-1/2 h-1.5 w-8 -translate-x-1/2 rounded-full bg-ink/25" />
         </div>

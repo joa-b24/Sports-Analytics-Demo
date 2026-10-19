@@ -1,36 +1,31 @@
 "use client";
 
 import { FilmSlate, Keyboard, Warning, X } from "@phosphor-icons/react";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { Modal } from "@/components/Modal";
 import { COLORS } from "@/components/Pitch";
-import { Card, btn, input } from "@/components/Shell";
+import { Card, btn } from "@/components/Shell";
 import type { PlayerHandle } from "@/components/VideoPlayer";
+import { useFixedParts } from "@/lib/fixed";
 import { fmtT, isTyping } from "@/lib/format";
+import { partFor, positionsAt } from "@/lib/positions";
 import type { Segment } from "@/lib/segments";
 import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
 import { ACTIVE_S, NO_FILTER, activeAt, duplicatesOf, eventsFor, knownPlayers, missingEnd, missingReview, type EventFilter, type Pass } from "@/lib/tagging";
-import {
-  DETAIL_KEYS,
-  DETAIL_TITLES,
-  EVENT_DETAILS,
-  EVENT_KEYS,
-  EVENT_LABELS,
-  EVENT_OUTCOMES,
-  EVENT_TYPES,
-  OUTCOME_KEYS,
-  type EventType,
-  type Match,
-  type MatchEvent,
-} from "@/lib/types";
-import { EventsTable } from "./EventsTable";
-import { ReviewPanel } from "./ReviewPanel";
+import { DETAIL_KEYS, DETAIL_TITLES, EVENT_DETAILS, EVENT_KEYS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, OUTCOME_KEYS, type EventType, type Match, type MatchEvent } from "@/lib/types";
+import { useScreenBoxes } from "@/lib/videoPeople";
+import { EventsCompact, EventsTable } from "./EventsTable";
+import { teamColor } from "./eventOptions";
+import type { PlayerChoice } from "./PlayerPicker";
+import { ReviewPanel, type BallView } from "./ReviewPanel";
 import { VideoTimeline } from "./VideoTimeline";
 
 type Props = {
   match: Match;
   // Video of the match being tagged; its events are the ones received.
   videoId: string;
+  // The half of this video (from the match data): every event tagged here gets it.
   defaultPeriod: 1 | 2;
   events: MatchEvent[];
   segments: Segment[];
@@ -40,27 +35,33 @@ type Props = {
   playerRef: RefObject<PlayerHandle | null>;
   // Plays a stretch of the video and stops at its end.
   playClip: (t0: number, t1: number) => void;
-  // Where the page lets this tab draw: over the video, under it, and full width below both columns.
+  // Where the page lets this tab draw: over the video and under it.
   overlaySlot: HTMLElement | null;
   belowSlot: HTMLElement | null;
-  tableSlot: HTMLElement | null;
 };
 
 const PASSES: { id: Pass; label: string; help: string }[] = [
   { id: 1, label: "1 · Identificar", help: "Con el video corriendo: qué pasó y de qué equipo. Una tecla por evento." },
   { id: 2, label: "2 · Revisar", help: "Uno por uno: posición, jugadora, resultado, detalle y nota." },
-  { id: 3, label: "3 · Ejecución", help: "Tiros, centros, córners, tiros libres y penales: a dónde fueron. Un tiro bloqueado no pide dirección." },
+  { id: 3, label: "3 · Ejecución", help: "Tiros, centros, córners, tiros libres y penales: a dónde fueron." },
 ];
-const teamColor = (e: MatchEvent) => (e.team === "own" ? COLORS.own : e.team === "opp" ? COLORS.opp : "var(--color-faint)");
+const LAGS = [0, 2, 3, 5];
+// + / − move the moment of the last event (pass 1) by this much (s).
+const NUDGE_S = 0.1;
+// How many people near the ball are suggested, and how far (m).
+const NEAR_N = 4;
+const NEAR_MAX_M = 15;
+// The ball's recent path drawn on the review pitch (s), sampled every TRAIL_STEP_S.
+const TRAIL_S = 2;
+const TRAIL_STEP_S = 0.2;
 
-export function TagTab({ match, videoId, defaultPeriod, events, segments, time, duration, playerRef, playClip, overlaySlot, belowSlot, tableSlot }: Props) {
+export function TagTab({ match, videoId, defaultPeriod, events, segments, time, duration, playerRef, playClip, overlaySlot, belowSlot }: Props) {
   // Pass 4 (passes by hand) was removed: a browser that was on it opens pass 1. Passes are read from the tracking.
   const pass = Math.min(3, Math.max(1, Number(usePref("tagPass", "1")) || 1)) as Pass;
   const setPass = (p: Pass) => setPref("tagPass", String(p));
   const [team, setTeam] = useState<"own" | "opp">("own");
-  const [period, setPeriod] = useState<1 | 2>(defaultPeriod);
   // Seconds subtracted from the current time: you press the key after the action happened.
-  const [lag, setLag] = useState(3);
+  const lag = Number(usePref("tagLag", "3")) || 0;
   // The event just tagged: its result and detail can still be completed with one more key.
   const [lastId, setLastId] = useState<string | null>(null);
   // Tagged in this session, newest last: Ctrl + Z takes them back one by one.
@@ -72,9 +73,12 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
   const [filter, setFilter] = useState<EventFilter>(NO_FILTER);
   const [current, setCurrent] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState(false);
+  const [bigTable, setBigTable] = useState(false);
+  // Clicking a player on the video picks her for the event under review.
+  const [picking, setPicking] = useState(false);
+  const [pickMsg, setPickMsg] = useState<string | null>(null);
 
-  const update = (id: string, patch: Partial<MatchEvent>) =>
-    mutate((s) => ({ ...s, events: s.events.map((e) => (e.event_id === id ? { ...e, ...patch } : e)) }));
+  const update = (id: string, patch: Partial<MatchEvent>) => mutate((s) => ({ ...s, events: s.events.map((e) => (e.event_id === id ? { ...e, ...patch } : e)) }));
   const remove = (id: string) => mutate((s) => ({ ...s, events: s.events.filter((e) => e.event_id !== id) }));
   const now = () => Math.max(0, (playerRef.current?.getTime() ?? time) - lag);
 
@@ -84,7 +88,7 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
       match_id: match.match_id,
       video_id: videoId,
       t_video: Math.round(now() * 10) / 10,
-      period,
+      period: defaultPeriod,
       type,
       team,
       player_id: null,
@@ -108,16 +112,13 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
   const makePlay = (t: number, title: string) =>
     mutate((s) => ({
       ...s,
-      plays: [
-        ...s.plays,
-        { play_id: uid("p"), match_id: match.match_id, video_id: videoId, title, t_start: Math.max(0, t - 8), t_end: t + 4, note: "", keyframes: [] },
-      ],
+      plays: [...s.plays, { play_id: uid("p"), match_id: match.match_id, video_id: videoId, title, t_start: Math.max(0, t - 8), t_end: t + 4, note: "", keyframes: [] }],
     }));
   const [playMsg, setPlayMsg] = useState<string | null>(null);
   const markPlay = () => {
     const t = now();
     makePlay(t, `Jugada · ${fmtT(t)}`);
-    setPlayMsg(`Jugada guardada en ${fmtT(t)} (8 s antes y 4 s después). Se edita en la pestaña Jugadas.`);
+    setPlayMsg(`Jugada guardada en ${fmtT(t)}: se edita en Jugadas.`);
   };
 
   // The tag of a just-tagged event disappears after a moment.
@@ -145,9 +146,10 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
     }
     return false;
   };
-  const handlers = useRef({ add, completeByKey, undo, markPlay, pass });
+  const shiftLast = (ds: number) => last && update(last.event_id, { t_video: Math.round(Math.max(0, last.t_video + ds) * 100) / 100 });
+  const handlers = useRef({ add, completeByKey, undo, markPlay, pass, shiftLast });
   useEffect(() => {
-    handlers.current = { add, completeByKey, undo, markPlay, pass };
+    handlers.current = { add, completeByKey, undo, markPlay, pass, shiftLast };
   });
 
   // Keyboard of the first pass. The review passes have their own (ReviewPanel).
@@ -164,7 +166,11 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === "a") setTeam("own");
+      // + / −: the moment of the last event.
+      if (k === "+" || k === "=" || k === "-") {
+        e.preventDefault();
+        h.shiftLast(k === "-" ? -NUDGE_S : NUDGE_S);
+      } else if (k === "a") setTeam("own");
       else if (k === "s") setTeam("opp");
       else if (k === "j") h.markPlay();
       else if (!h.completeByKey(k)) {
@@ -176,11 +182,13 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Suggestions for the player field: the squad first (only for our matches), then names already used here.
+  // Suggestions for the player field: the squad first (only for our matches, with numbers), then names already used.
   const { roster } = useStore();
-  const squad = match.kind === "own" ? (roster ?? []) : [];
-  const players = [...new Set([...squad.map((p) => p.player_id), ...knownPlayers(events)])];
-  const numberOf = new Map(squad.map((p) => [p.player_id, p.number]));
+  const players: PlayerChoice[] = useMemo(() => {
+    const squad = match.kind === "own" ? (roster ?? []) : [];
+    const known = knownPlayers(events).filter((p) => !squad.some((s) => s.player_id === p));
+    return [...squad.map((p) => ({ player_id: p.player_id, number: p.number })), ...known.map((p) => ({ player_id: p }))];
+  }, [match.kind, roster, events]);
   const shown = eventsFor(pass, events, filter);
   const active = activeAt(events, time);
   const activeIds = new Set(active.map((e) => e.event_id));
@@ -194,82 +202,128 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
   const toReview = events.filter((e) => missingReview(e).length > 0).length;
   const withEnd = events.filter((e) => missingEnd(e) !== null);
   const toEnd = withEnd.filter((e) => missingEnd(e)).length;
-  // Events near the playhead, for the small table under the video.
-  const nearby = events.filter((e) => Math.abs(e.t_video - time) <= 8).slice(0, 8);
+  const filtered = JSON.stringify(filter) !== JSON.stringify(NO_FILTER);
+
+  // ---------------------------------------------------------------- tracking (when the match has it)
+  // Positions and ball of this video, oriented with the analysed team attacking right (as the events).
+  const fixed = useFixedParts(match.folder, [videoId]);
+  const reviewing = pass !== 1 ? (shown.find((e) => e.event_id === current) ?? shown[0] ?? null) : null;
+  // Who is near the ball at the moment of the event under review: named players, those of its team first.
+  const near: PlayerChoice[] = useMemo(() => {
+    if (!reviewing || !fixed) return [];
+    const part = partFor(fixed.parts, videoId, reviewing.t_video, reviewing.t_video);
+    const at = part ? positionsAt(part, reviewing.t_video) : null;
+    if (!part || !at?.ball) return [];
+    const [bx, by] = at.ball;
+    const names = new Map(part.file.people.map((p) => [p.id, p.player_id]));
+    return at.players
+      .flatMap((d) => {
+        const name = names.get(d.id);
+        if (!name || (d.team !== "own" && d.team !== "opp")) return [];
+        return [{ player_id: name, color: d.team === "own" ? COLORS.own : COLORS.opp, near_m: Math.hypot(d.x - bx, d.y - by), mine: d.team === reviewing.team }];
+      })
+      .filter((c) => c.near_m <= NEAR_MAX_M)
+      .sort((a, b) => Number(b.mine) - Number(a.mine) || a.near_m - b.near_m)
+      .slice(0, NEAR_N);
+  }, [reviewing, fixed, videoId]);
+  // The ball at the playhead and its path over the last seconds.
+  const ball: BallView | null = (() => {
+    if (pass === 1 || !fixed) return null;
+    const part = partFor(fixed.parts, videoId, time, time);
+    if (!part) return null;
+    const trail: [number, number][] = [];
+    for (let t = Math.max(0, time - TRAIL_S); t <= time + 1e-6; t += TRAIL_STEP_S) {
+      const b = positionsAt(part, t)?.ball;
+      if (b) trail.push(b);
+    }
+    return { now: positionsAt(part, time)?.ball ?? null, trail };
+  })();
+  const fps = fixed?.parts.find((p) => p.file.video_id === videoId)?.file.fps ?? 29.97;
+  const screen = useScreenBoxes(match.folder, videoId, Math.round(time * fps), pass === 2);
+  const canPick = pass === 2 && !!reviewing && !!screen && screen.boxes.length > 0;
+  const pickOn = picking && canPick;
+  const pickBox = (b: NonNullable<typeof screen>["boxes"][number]) => {
+    if (!reviewing) return;
+    if (!b.player_id) return setPickMsg("Esa persona no tiene nombre en la mesa de corrección: escríbelo a mano.");
+    update(reviewing.event_id, { player_id: b.player_id, ...(b.team === "own" || b.team === "opp" ? { team: b.team } : {}) });
+    setPicking(false);
+    setPickMsg(null);
+  };
+  useEffect(() => {
+    if (!pickOn) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPicking(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pickOn]);
 
   const overlayEl = (
-    <div className="pointer-events-none absolute top-3 left-3 z-10 flex max-w-[70%] flex-col items-start gap-1.5">
-      {overlay.map((e) => {
-        const dup = duplicatesOf(events, e).length > 0 && !kept.has(e.event_id);
-        return (
-          <div
-            key={e.event_id}
-            className={`enter pointer-events-auto flex items-center gap-2 rounded-full py-1 pr-2 pl-3 text-xs shadow-lg backdrop-blur ${
-              dup ? "bg-warn-900/90 text-warn" : "bg-bg/85 text-ink"
-            }`}
-          >
-            <span className="h-2 w-2 rounded-full" style={{ background: teamColor(e) }} />
-            <span className="font-medium">{EVENT_LABELS[e.type]}</span>
-            <span className="tc text-[10px] opacity-70">{fmtT(e.t_video)}</span>
-            {dup && (
-              <>
-                <Warning size={13} />
-                <span>¿duplicado?</span>
-                <button type="button" className="rounded-full bg-bg/60 px-2 py-0.5 hover:text-danger" onClick={() => remove(e.event_id)}>
-                  quitar
-                </button>
-                <button type="button" className="rounded-full bg-bg/60 px-2 py-0.5 hover:text-ink" onClick={() => setKept((k) => new Set(k).add(e.event_id))}>
-                  conservar
-                </button>
-              </>
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <>
+      {pickOn && screen && (
+        <svg viewBox={`0 0 ${screen.size[0]} ${screen.size[1]}`} className="pointer-events-auto absolute inset-0 h-full w-full cursor-crosshair" onClick={() => setPicking(false)}>
+          {screen.boxes.map((b) => {
+            const c = b.team === "own" ? COLORS.own : b.team === "opp" ? COLORS.opp : "#94a3b8";
+            const [x1, y1, x2, y2] = b.box;
+            return (
+              <g
+                key={b.identity}
+                className="cursor-pointer"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  pickBox(b);
+                }}
+              >
+                <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} fill={c} fillOpacity={0.12} stroke={c} strokeWidth={screen.size[0] / 600} rx={screen.size[0] / 400} />
+                {b.player_id && (
+                  <text x={(x1 + x2) / 2} y={y1 - screen.size[0] / 300} textAnchor="middle" fontSize={screen.size[0] / 90} fontWeight={600} fill="#fff" stroke="#000" strokeWidth={screen.size[0] / 900} paintOrder="stroke">
+                    {b.player_id}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+      )}
+      <div className="pointer-events-none absolute top-3 left-3 z-10 flex max-w-[70%] flex-col items-start gap-1.5">
+        {pickOn && <div className="enter rounded-full bg-own px-3 py-1 text-xs font-medium text-[var(--on-own)] shadow-lg">Clic en la jugadora · Esc cancela</div>}
+        {pickMsg && <div className="enter rounded-full bg-warn-900/90 px-3 py-1 text-xs text-warn shadow-lg">{pickMsg}</div>}
+        {overlay.map((e) => {
+          const dup = duplicatesOf(events, e).length > 0 && !kept.has(e.event_id);
+          return (
+            <div key={e.event_id} className={`enter pointer-events-auto flex items-center gap-2 rounded-full py-1 pr-2 pl-3 text-xs shadow-lg backdrop-blur ${dup ? "bg-warn-900/90 text-warn" : "bg-bg/85 text-ink"}`}>
+              <span className="h-2 w-2 rounded-full" style={{ background: teamColor(e) }} />
+              <span className="font-medium">{EVENT_LABELS[e.type]}</span>
+              <span className="tc text-[10px] opacity-70">{fmtT(e.t_video)}</span>
+              {dup && (
+                <>
+                  <Warning size={13} />
+                  <span>¿duplicado?</span>
+                  <button type="button" className="rounded-full bg-bg/60 px-2 py-0.5 hover:text-danger" onClick={() => remove(e.event_id)}>
+                    quitar
+                  </button>
+                  <button type="button" className="rounded-full bg-bg/60 px-2 py-0.5 hover:text-ink" onClick={() => setKept((k) => new Set(k).add(e.event_id))}>
+                    conservar
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 
   const belowEl = (
-    <div className="space-y-3">
-      <VideoTimeline
-        events={events}
-        segments={segments}
-        time={time}
-        duration={duration}
-        selected={pass === 1 ? null : current}
-        onSeek={(t) => playerRef.current?.seek(Math.max(0, t))}
-        onPick={open}
-      />
-      <div className="rounded-2xl bg-surface/60 p-3">
-        <div className="mb-2 flex items-baseline justify-between text-xs">
-          <span className="text-ink-2">Eventos activos</span>
-          <span className="text-faint">8 s alrededor del momento actual · resaltado: el video está pasando por él</span>
-        </div>
-        {nearby.length === 0 ? (
-          <p className="text-xs text-faint">Ningún evento cerca de este momento.</p>
-        ) : (
-          <ul className="space-y-0.5 text-xs">
-            {nearby.map((e) => (
-              <li key={e.event_id}>
-                <button
-                  type="button"
-                  onClick={() => open(e)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors hover:bg-raised ${
-                    activeIds.has(e.event_id) ? "bg-accent-900/60 text-ink" : e.event_id === current ? "bg-raised text-ink" : "text-muted"
-                  }`}
-                >
-                  <span className="tc w-12">{fmtT(e.t_video)}</span>
-                  <span className="h-2 w-2 rounded-full" style={{ background: teamColor(e) }} />
-                  <span className="w-32 truncate">{EVENT_LABELS[e.type]}</span>
-                  <span className="w-24 truncate">{e.player_id ?? "–"}</span>
-                  <span className="truncate text-warn">{[...missingReview(e), ...(missingEnd(e) ? ["destino"] : [])].join(", ")}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
+    <VideoTimeline
+      events={events}
+      segments={segments}
+      time={time}
+      duration={duration}
+      selected={pass === 1 ? null : current}
+      onSeek={(t) => playerRef.current?.seek(Math.max(0, t))}
+      onPick={open}
+    />
   );
 
   const teamBtn = (t: "own" | "opp", label: string, key: string) => (
@@ -310,6 +364,7 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
           ["A / S", "equipo analizado / contrario"],
           ["1 2 3", "resultado del último evento"],
           ["7 8 9", "detalle del último evento"],
+          ["+ / −", "mover el último evento una décima"],
           ["J", "guardar este momento como jugada"],
           ["Ctrl + Z", "quitar el último evento marcado"],
         ].map(([k, v]) => (
@@ -325,22 +380,27 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
   );
 
   return (
-    <div className="space-y-5">
-      <div className="seg w-full" role="group" aria-label="Pasada del etiquetado">
-        {PASSES.map((p) => (
-          <button key={p.id} type="button" aria-pressed={pass === p.id} onClick={() => setPass(p.id)} className="seg-opt flex-1 text-center">
-            {p.label}
-          </button>
-        ))}
+    <div className="flex h-full min-h-0 flex-col gap-4 xl:overflow-y-auto">
+      <div className="shrink-0">
+        <div className="seg w-full" role="group" aria-label="Pasada del etiquetado">
+          {PASSES.map((p) => (
+            <button key={p.id} type="button" aria-pressed={pass === p.id} onClick={() => setPass(p.id)} className="seg-opt flex-1 text-center" title={p.help}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-pretty text-muted">
+          {PASSES[pass - 1].help} {pass === 2 && <span className="text-faint">{toReview} por completar.</span>}
+          {pass === 3 && (
+            <span className="text-faint">
+              {toEnd} de {withEnd.length} sin destino.
+            </span>
+          )}
+        </p>
       </div>
-      <p className="-mt-3 text-xs text-pretty text-muted">
-        {PASSES[pass - 1].help}{" "}
-        {pass === 2 && <span className="text-faint">{toReview} por completar.</span>}
-        {pass === 3 && <span className="text-faint">{toEnd} de {withEnd.length} sin destino.</span>}
-      </p>
 
       {pass === 1 && (
-        <Card title="Nuevo evento" note={<span className="tc">Ahora {fmtT(time)}</span>}>
+        <Card className="shrink-0" title="Nuevo evento" note={<span className="tc">{fmtT(time)}</span>}>
           <div className="flex gap-2">
             {teamBtn("own", match.focus_team, "A")}
             {teamBtn("opp", match.other_team, "S")}
@@ -354,6 +414,13 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
               <FilmSlate size={15} />
               Jugada <kbd className="kbd">J</kbd>
             </button>
+            <div className="seg ml-auto" role="group" aria-label="Segundos que se restan" title="Se restan al tiempo actual: la tecla se pulsa después de la acción">
+              {LAGS.map((v) => (
+                <button key={v} type="button" aria-pressed={lag === v} className="seg-opt tc !px-2.5" onClick={() => setPref("tagLag", String(v))}>
+                  −{v} s
+                </button>
+              ))}
+            </div>
           </div>
           {showKeys && <div className="mt-3">{keysCard}</div>}
           {playMsg && <p className="mt-2 text-xs text-ok">{playMsg}</p>}
@@ -393,60 +460,52 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
               )}
             </div>
           )}
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted">
-            <label className="flex items-center gap-1.5">
-              Periodo
-              <select className={input} value={period} onChange={(e) => setPeriod(Number(e.target.value) as 1 | 2)}>
-                <option value={1}>1</option>
-                <option value={2}>2</option>
-              </select>
-            </label>
-            <label className="flex items-center gap-1.5" title="Segundos que se restan al tiempo actual: la tecla se pulsa después de la acción">
-              Restar
-              <select className={input} value={lag} onChange={(e) => setLag(Number(e.target.value))}>
-                {[0, 2, 3, 5].map((v) => (
-                  <option key={v} value={v}>
-                    {v} s
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <p className="mt-3 text-[11px] text-pretty text-faint">
-            Cada evento marcado aparece sobre el video unos segundos. Si hay otro igual del mismo equipo a menos de 3 s sale en amarillo
-            como posible duplicado. Posición, jugadora y nota se ponen en la pasada 2.
-          </p>
-          <p className="mt-1.5 text-[11px] text-pretty text-faint">
-            Duelos (D): etiquetarlos alarga mucho esta pasada. Hazlo solo en los partidos donde quieras su mapa en el informe; si un partido
-            no tiene duelos, el mapa no aparece.
-          </p>
         </Card>
       )}
 
-
       {(pass === 2 || pass === 3) && (
-        <ReviewPanel
-          pass={pass}
-          match={match}
-          list={shown}
-          all={events}
-          current={current}
-          setCurrent={setCurrent}
-          update={update}
-          playClip={playClip}
-        />
+        <div className="shrink-0">
+          <ReviewPanel
+            pass={pass}
+            match={match}
+            list={shown}
+            all={events}
+            current={reviewing?.event_id ?? null}
+            setCurrent={setCurrent}
+            update={update}
+            playClip={playClip}
+            time={time}
+            players={players}
+            near={near}
+            ball={ball}
+            picking={pickOn}
+            onPickVideo={
+              canPick
+                ? () => {
+                    playerRef.current?.pause();
+                    setPickMsg(null);
+                    setPicking((v) => !v);
+                  }
+                : null
+            }
+          />
+        </div>
       )}
 
-      <datalist id="known-players">
-        {players.map((p) => (
-          <option key={p} value={p} label={numberOf.get(p) != null ? `#${numberOf.get(p)}` : undefined} />
-        ))}
-      </datalist>
+      <EventsCompact
+        events={shown}
+        total={events.length}
+        filtered={filtered}
+        onClearFilter={() => setFilter(NO_FILTER)}
+        current={pass === 1 ? null : (reviewing?.event_id ?? null)}
+        activeIds={activeIds}
+        onOpen={open}
+        onExpand={() => setBigTable(true)}
+        time={time}
+      />
 
-      {overlaySlot && createPortal(overlayEl, overlaySlot)}
-      {belowSlot ? createPortal(belowEl, belowSlot) : belowEl}
-      {(() => {
-        const table = (
+      {bigTable && (
+        <Modal title="Eventos" onClose={() => setBigTable(false)} size="full">
           <EventsTable
             match={match}
             pass={pass}
@@ -456,13 +515,19 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
             setFilter={setFilter}
             update={update}
             remove={remove}
-            onOpen={open}
+            onOpen={(e) => {
+              open(e);
+              setBigTable(false);
+            }}
             onMakePlay={(e) => makePlay(e.t_video, `${EVENT_LABELS[e.type]} · ${fmtT(e.t_video)}`)}
             activeIds={activeIds}
+            players={players}
           />
-        );
-        return tableSlot ? createPortal(table, tableSlot) : table;
-      })()}
+        </Modal>
+      )}
+
+      {overlaySlot && createPortal(overlayEl, overlaySlot)}
+      {belowSlot ? createPortal(belowEl, belowSlot) : belowEl}
     </div>
   );
 }

@@ -7,19 +7,21 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test lib/homography.test.mjs lib/segments.test.mjs lib/analysis.test.mjs lib/load.test.mjs lib/videos.test.mjs lib/tracks.test.mjs lib/smooth.test.mjs lib/parts.test.mjs lib/tagging.test.mjs lib/roster.test.mjs lib/steps.test.mjs lib/labels.test.mjs lib/cuts.test.mjs lib/suggestions.test.mjs lib/positions.test.mjs lib/passes.test.mjs lib/quick.test.mjs lib/report.test.mjs lib/overlay.test.mjs lib/annotations.test.mjs lib/boards.test.mjs lib/clips.test.mjs lib/anomalies.test.mjs lib/physical.test.mjs lib/reportSections.test.mjs lib/trackingSettings.test.mjs"
+    "test": "node --test lib/homography.test.mjs lib/segments.test.mjs lib/analysis.test.mjs lib/load.test.mjs lib/videos.test.mjs lib/tracks.test.mjs lib/smooth.test.mjs lib/parts.test.mjs lib/tagging.test.mjs lib/roster.test.mjs lib/steps.test.mjs lib/labels.test.mjs lib/cuts.test.mjs lib/suggestions.test.mjs lib/positions.test.mjs lib/passes.test.mjs lib/quick.test.mjs lib/report.test.mjs lib/overlay.test.mjs lib/annotations.test.mjs lib/boards.test.mjs lib/clips.test.mjs lib/anomalies.test.mjs lib/physical.test.mjs lib/reportSections.test.mjs lib/trackingSettings.test.mjs lib/summary.test.mjs lib/autoEvents.test.mjs lib/home.test.mjs lib/uploads.test.mjs lib/venueFit.test.mjs lib/calibLines.test.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",
     "next": "16.3.8",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/yauzl": "^3.4.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
     "tailwindcss": "^4",
