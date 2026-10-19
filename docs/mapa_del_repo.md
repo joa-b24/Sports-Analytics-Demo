@@ -94,6 +94,7 @@ de la laptop y todas van varias veces más lento. Mejor una detrás de otra.
 | Carpeta o archivo | Qué es | ¿Entra a git? |
 |---|---|---|
 | `web/` | La app (sección 5) | sí |
+| `desktop/` | La misma app como programa de Windows (Electron): arranca el servidor de `web/` y le da acceso a la carpeta del proyecto. `npm run dist` deja el instalador y la versión portable en `desktop/dist/` (sección 5.7) | sí, sin `node_modules/`, `server/` ni `dist/` |
 | `src/sportsan/` | El paquete Python (sección 6) | sí |
 | `tests/` | Tests de Python, uno por módulo (`test_<módulo>.py`); `tests/fixtures/` tiene casos compartidos con la app | sí |
 | `matches/<match_id>/` | Un partido: su configuración y sus archivos (sección 4) | solo `match.yaml` y `segments.csv` |
@@ -156,45 +157,52 @@ internet no hay carpeta: se vuelve a elegir cada archivo a mano.
 
 ### 5.1 Pantallas
 
-Cada pantalla es un archivo `web/app/<ruta>/page.tsx`. El menú lateral está en `web/components/Shell.tsx` (lista `NAV`).
+Cada pantalla es un archivo `web/app/<ruta>/page.tsx`. La barra de iconos de la izquierda está en `web/components/Shell.tsx` (listas `NAV` y `NAV_END`; cada icono dice su nombre al pasar el cursor) y abajo tiene el botón de tema claro/oscuro.
 
 | Menú | Ruta | Archivo | Qué hace |
 |---|---|---|---|
-| Resumen | `/` | `app/page.tsx` | Portada: últimos partidos y accesos |
-| Análisis con video | `/partidos` | `app/partidos/page.tsx` | Todos los videos en tres grupos: nuestros partidos, rivales y videos de referencia; alta de uno nuevo (`components/MatchList.tsx`). `/rivales` redirige aquí |
+| Inicio | `/` | `app/page.tsx` | Último partido propio con eventos (marcador y cifras), próximo rival, pendientes por partido (tramos, eventos) y carga de entrenamiento |
+| Partidos | `/partidos` | `app/partidos/page.tsx` | Todos los videos en tres grupos: nuestros partidos, rivales y videos de referencia; alta de uno nuevo (`components/MatchList.tsx`). `/rivales` redirige aquí |
 | (al abrir un partido) | `/partido?id=` | `app/partido/page.tsx` | El partido: video, selector de video y sus pestañas (5.2). `?video=&t=` abre ese momento; `?edit=` abre un clip editado en modo presentación |
 | Pizarrón | `/pizarron?id=` | `app/pizarron/page.tsx` | Jugadas en el pizarrón: ABP diseñadas sin partido y jugadas que vienen de un partido («Pasar al pizarrón» en Jugadas). Lista filtrable por categoría (córner, tiro libre, saque de banda, salida de balón, otra) y a favor o en contra; encuadre (cancha entera o una mitad). Tres vistas: Editar (pasos, fichas y dibujos; `components/board/BoardEditor.tsx`), Animación (`BoardPlayer.tsx`) y Láminas para imprimir o guardar en PDF, de 2 a 4 pasos por página (`BoardSheets.tsx`). El botón de película la guarda en `data/boards/` para exportarla a MP4 |
 | Jugadoras | `/jugadoras` | `app/jugadoras/page.tsx` | Plantilla (pegar lista, editar números; `components/RosterCard.tsx`) y lo que se sabe de cada jugadora. El perfil sigue bloqueado |
 | Sesiones | `/entrenamientos` | `app/entrenamientos/page.tsx` | Importa sesiones por CSV; carga, ACWR, cuestionario |
-| Planificación | `/planificacion` | `app/planificacion/page.tsx` | Vista previa bloqueada |
-| Carga de datos | `/datos` | `app/datos/page.tsx` | Importar y exportar: respaldo completo, eventos, sesiones |
-| Configuración | `/configuracion` | `app/configuracion/page.tsx` | Sedes: medidas, rejilla, colores, medición sobre imagen satelital |
+| Calendario | `/planificacion` | `app/planificacion/page.tsx` | Vista previa bloqueada (en desarrollo) |
+| Datos | `/datos` | `app/datos/page.tsx` | Importar y exportar: respaldo completo, eventos, sesiones |
+| Configuración | `/configuracion` | `app/configuracion/page.tsx` | Apariencia (tema, color de nuestro equipo y del rival, cómo se marca a las jugadoras sobre el video) y sedes: medidas, rejilla, colores, medición sobre imagen satelital |
 
-`app/layout.tsx` envuelve todas las pantallas (fuentes, menú). `app/globals.css` tiene todo el diseño: colores (solo por tokens),
-tipografías, clases (`.btn`, `.card`, `.input`...), animaciones y los valores de impresión.
+`app/layout.tsx` envuelve todas las pantallas (fuente Archivo, menú) y aplica el tema y los colores guardados antes de pintar
+(`THEME_BOOT` en `lib/teamColors.ts`). `app/globals.css` tiene todo el diseño: colores (solo por tokens; el tema claro los
+redefine en `:root[data-theme="light"]`), clases (`.btn`, `.card`, `.seg`, `.sec-tag`, `.num`...), animaciones e impresión.
+Dirección de diseño: base neutra casi negra, color solo en los datos, azul rey para el equipo analizado (cambiable),
+tipografía condensada para cifras, marcador y encabezados de sección. Los colores de equipo salen de `lib/teamColors.ts`
+y `lib/theme.ts` los aplica (`--color-own`, `--color-opp`).
 
-### 5.2 Pestañas de un partido
+### 5.2 Los tres modos de un partido
 
-Las pestañas son los pasos del análisis, en orden: Calibración, Tramos, Tracking, Etiquetado, Jugadas, Análisis, Informe. Cada una
-muestra su estado (verde completo, ámbar a medias, círculo vacío por hacer, punteado opcional) calculado en `web/lib/steps.ts` a
-partir de los datos del partido y de lo que hay en su carpeta. Calibración y Tracking son opcionales: todo lo demás funciona solo
+Arriba, el marcador del partido (goles etiquetados) y tres modos (`components/match/MatchHeader.tsx`): **Captura**
+(Calibración, Tramos, Tracking, Eventos), **Estudio** (Jugadas, con el editor de clips y el paso al pizarrón) y **Análisis**
+(Pantalla e Informe). Cada modo muestra sus pasos en una franja con su estado calculado en `web/lib/steps.ts` a partir de
+los datos del partido y de lo que hay en su carpeta. Un partido con eventos abre en Análisis; uno sin, en Captura. Calibración y Tracking son opcionales: todo lo demás funciona solo
 con eventos.
 
 | Pestaña | Archivo | Qué hace | Dónde está el cálculo |
 |---|---|---|---|
 | Calibración | `components/workspace/Calibration.tsx` | Arriba: pasos, «Video y sede» (diálogo), cargar calibración o detecciones y «Comandos» (los comandos de Python para copiar). Izquierda: video y lo cargado. Derecha, en orden de uso: puntos de la sede, lupa y ajuste fino, ajuste y guardar ancla, anclas guardadas (Exportar las escribe en `tracking/`). `/calibracion` sigue funcionando | `lib/homography.ts`, `lib/venue.ts` |
 | Tramos | `components/match/SegmentsTab.tsx` | Marcas de corte → tramos de juego/pausa/no medible; escribe e importa `segments.csv` | `lib/segments.ts` |
-| Tracking | `components/workspace/Correction.tsx` | Colores de uniforme, comando de proceso y mesa de corrección (5.4). `/correccion` sigue funcionando | `lib/tracks.ts`, `lib/parts.ts`, `lib/quick.ts`, `lib/anomalies.ts` |
-| Etiquetado | `components/match/TagTab.tsx` | Tres pasadas: 1 identificar (teclas, etiqueta sobre el video, aviso de duplicado, `J` = jugada), 2 revisar uno por uno (`ReviewPanel.tsx`), 3 ejecución: destino de tiros en la portería (`GoalFrame.tsx`; no lo pide un tiro bloqueado ni un tiro libre que no fue tiro) y de centros y córners en la cancha. Los pases no se etiquetan: salen del tracking. Bajo el video, línea de tiempo (`VideoTimeline.tsx`) y eventos activos; abajo, la tabla con filtros (`EventsTable.tsx`) | `lib/tagging.ts`; catálogo en `lib/types.ts` |
+| Tracking | `components/workspace/Correction.tsx` | Colores de uniforme, comando de proceso y mesa de corrección (5.4). Cada persona se marca sobre el video como caja, óvalo en el piso con el nombre en el borde, o flecha arriba (`components/PlayerMark.tsx`; Mayús + L cambia). `/correccion` sigue funcionando | `lib/tracks.ts`, `lib/parts.ts`, `lib/quick.ts`, `lib/anomalies.ts` |
+| Eventos | `components/match/TagTab.tsx` | Tres pasadas: 1 identificar (teclas, etiqueta sobre el video, aviso de duplicado, `J` = jugada), 2 revisar uno por uno (`ReviewPanel.tsx`), 3 ejecución: destino de tiros en la portería (`GoalFrame.tsx`; no lo pide un tiro bloqueado ni un tiro libre que no fue tiro) y de centros y córners en la cancha. Los pases no se etiquetan: salen del tracking. Bajo el video, línea de tiempo (`VideoTimeline.tsx`) y eventos activos; abajo, la tabla con filtros (`EventsTable.tsx`) | `lib/tagging.ts`; catálogo en `lib/types.ts` |
 | Jugadas | `components/match/PlaysTab.tsx` | Jugadas y su animación (casilla «Balón parado»: el informe la lista en esa sección): posiciones medidas si la jugada cae en una parte corregida (`tracks_fixed_*`), si no keyframes a mano. «Pasar al pizarrón» copia la jugada al Pizarrón; «Dibujar sobre el clip» abre el editor de clips (5.3) | `lib/positions.ts` (`positionsAt`), `lib/stats.ts` (`interpolate`), `lib/clips.ts` |
 | Análisis | `components/match/AnalysisTab.tsx` | Respuestas a las preguntas del cuerpo técnico (`docs/preguntas_cuerpo_tecnico.md`). Tiros: un gol y su tiro (y su penal) cuentan una vez. «Pases leídos del tracking» (`PassStretches.tsx`): por tramo de juego, si están completos (equipo analizado y balón seguidos); los pases etiquetados antes siguen en `PassesCards.tsx`. Con posiciones medidas: forma del bloque (`TeamShape.tsx`), mapa de calor y jugadoras detrás del balón (`PositionsCards.tsx`) | `lib/analysis.ts` (`finishes`), `lib/stats.ts`, `lib/positions.ts` (`passStretches`), `lib/fixed.ts` |
-| Informe | `components/match/ReportTab.tsx` | Informe imprimible por niveles de datos (N1 eventos, N2 balón seguido, N3 tracking revisado, N4 tracking con nombres): portada con nivel, últimos resultados, resumen, mapas (tiros y portería, centros con destino, duelos, pérdidas y recuperaciones en 5 carriles × 3 tercios), transiciones con «ver» (abre el clip editado si lo hay), balón parado, jugadoras clave, textos de la analista, jugadas y método. Una sección sin su nivel dice qué le falta y no se imprime. «Exportar datos del reporte» (`report_<match_id>.json`), «Exportar lista de clips» (`clips_<match_id>.json`), «Sin nombres» (dorsales). Con balón seguido: posesión, pases por zona, cambios y red de pases (`ReportBall.tsx`). Solo dibuja: todo el cálculo está en `lib/report.ts` | `lib/report.ts` (`buildReport`, `dataLevel`, `clipList`) |
+| Informe | `components/match/ReportTab.tsx` | Encabezado con título y marcador, **General** comparando los dos equipos, y debajo un selector del equipo que describen las demás secciones. Las secciones se eligen y ordenan con «Secciones» (catálogo y biblioteca en `lib/reportSections.ts`; se guarda en `Report.sections` y `Report.focus`); una sección sin datos se oculta sola. Nuevas: Bloque (calor, posición media, altura de línea, largo y ancho), Mapa de pases (flechas, progresivos), Distancia y velocidad (`components/match/ReportExtra.tsx`, cálculo en `lib/physical.ts` y `passArrows` de `lib/positions.ts`). Antes: informe imprimible por niveles de datos (N1 eventos, N2 balón seguido, N3 tracking revisado, N4 tracking con nombres): portada con nivel, últimos resultados, resumen, mapas (tiros y portería, centros con destino, duelos, pérdidas y recuperaciones en 5 carriles × 3 tercios), transiciones con «ver» (abre el clip editado si lo hay), balón parado, jugadoras clave, textos de la analista, jugadas y método. Una sección sin su nivel dice qué le falta y no se imprime. «Exportar datos del reporte» (`report_<match_id>.json`), «Exportar lista de clips» (`clips_<match_id>.json`), «Sin nombres» (dorsales). Con balón seguido: posesión, pases por zona, cambios y red de pases (`ReportBall.tsx`). Solo dibuja: todo el cálculo está en `lib/report.ts` | `lib/report.ts` (`buildReport`, `dataLevel`, `clipList`) |
 
 ### 5.3 Piezas compartidas (`web/components/`)
 
 | Archivo | Qué contiene |
 |---|---|
-| `Shell.tsx` | Menú lateral plegable, `PageHeader`, `Card`, `Section`, nombres de clases de botón |
+| `Shell.tsx` | Barra de iconos, `PageHeader`, `Card`, `Section` (rótulo condensado), nombres de clases de botón |
+| `PlayerMark.tsx` | Cómo se marca una persona sobre el video: caja, óvalo en el piso o flecha |
+| `match/MatchHeader.tsx` | Marcador del partido, los tres modos y la franja de pasos |
 | `VideoPlayer.tsx` | Reproductor de YouTube o de archivo local, con la misma interfaz |
 | `SpeedControl.tsx` | Botón de velocidad con deslizador (hasta 5x) |
 | `Pitch.tsx` | La cancha dibujada (SVG de 105 x 68), los colores de equipo y `toMeters` (clic → metros) |
@@ -298,6 +306,21 @@ Todo en el `localStorage` del navegador, en la clave `sportsan:v1`, con esta for
 Consecuencias: otro navegador u otra computadora empiezan vacíos; borrar los datos del sitio borra todo. El respaldo es Datos →
 Exportar respaldo. Las preferencias de interfaz (menú plegado, hacia dónde ataca el equipo) van aparte, en `sportsan:ui`, y no
 entran al respaldo.
+
+### 5.7 La app de escritorio (`desktop/`)
+
+Es la misma app de `web/` dentro de Electron. `web/next.config.ts` compila un servidor autónomo (`output: "standalone"`);
+`desktop/stage.mjs` lo copia a `desktop/server/` y `desktop/main.js` lo arranca con el Node de Electron en
+`http://127.0.0.1:3939` (puerto fijo: los datos del navegador viven en ese origen) con `SPORTSAN_LOCAL=1` y
+`SPORTSAN_ROOT` = la carpeta del proyecto, que pregunta la primera vez y guarda en `%APPDATA%/Rendimiento/config.json`.
+Así lee y escribe videos, tracking y `segments.csv` como `npm run dev`. Los datos del navegador no se comparten con el de
+`localhost:3000`: se pasan con Datos → Exportar respaldo e importar.
+
+| Comando | Desde | Qué hace |
+|---|---|---|
+| `npm run build` | `demo/web/` | Compila la app (también es la versión web) |
+| `npm install` y luego `npm run dist` | `demo/desktop/` | Copia el servidor y genera `dist/Rendimiento Setup <versión>.exe` (instalador) y `dist/Rendimiento <versión>.exe` (portable) |
+| `npm start` | `demo/desktop/` | Abre la app de escritorio sin empaquetar |
 
 ## 6. El paquete Python (`src/sportsan/`)
 
