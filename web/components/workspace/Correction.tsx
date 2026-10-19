@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Plus, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
@@ -83,6 +83,23 @@ const afterDrag = { on: false };
 const TRACKS_PART = /^tracks_v\d+_\d+_\d+\.json$/;
 const asEvent = (files: File[]) => ({ target: { files, value: "" } }) as unknown as React.ChangeEvent<HTMLInputElement>;
 
+// A notice about the selected player: icon and number, the details in its tooltip; a click does the obvious thing.
+const BADGE_TONES = {
+  plain: "bg-bg/60 text-ink-2 hover:bg-raised",
+  warn: "bg-warn-900/50 text-warn hover:bg-warn-900/80",
+  danger: "bg-danger/15 text-danger hover:bg-danger/25",
+  accent: "bg-accent/15 text-accent-300 hover:bg-accent/25",
+  ok: "bg-ok/15 text-ok cursor-default",
+};
+function Badge({ icon, n, tone, title, onClick }: { icon: React.ReactNode; n?: number; tone: keyof typeof BADGE_TONES; title: string; onClick?: () => void }) {
+  return (
+    <button type="button" title={title} aria-label={title} onClick={onClick} className={`tc inline-flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-1.5 text-xs transition-colors ${BADGE_TONES[tone]}`}>
+      {icon}
+      {n !== undefined && <span>{n}</span>}
+    </button>
+  );
+}
+
 // The size of an element, kept up to date (a callback ref and its last width and height).
 function useBox() {
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -113,11 +130,6 @@ function Head({ embedded, children }: { embedded: boolean; children: React.React
 const SIDE_MIN_PX = 260;
 const SIDE_MAX_PX = 640;
 const SIDE_DEFAULT_PX = 336;
-// Height of the timeline panel (px), dragged on the bar above it.
-const BOTTOM_MIN_PX = 70;
-const BOTTOM_DEFAULT_PX = 180;
-// Room kept under the video for the modules moved there.
-const BELOW_MIN_PX = 200;
 // The panels that can go beside the video or under it (dragged by their grip).
 type ModuleId = "ball" | "pitch" | "quick" | "squad" | "person";
 const MODULE_NAMES: Record<ModuleId, string> = { ball: "Balón", pitch: "En la cancha", quick: "Revisión rápida", squad: "Plantilla", person: "Jugadora" };
@@ -178,7 +190,7 @@ export function Correction({
   // What each part of the table needs: the width of the video column, and the height of the content of the side
   // column, of the modules under the video and of the timeline panel.
   const [colRef, colBox] = useBox();
-  const [sideRef, sideBox] = useBox();
+  const [sideRef] = useBox();
   const [belowRef, belowBox] = useBox();
   const [bottomRef, bottomBox] = useBox();
   // Who has a candidate on screen in the badge of suggestions.
@@ -275,8 +287,6 @@ export function Correction({
   const listShow = usePref("correction:listShow", "named") as "named" | "all";
   // Room of each panel: the side column (px) and the share of the window's height the video may take.
   const sideW = Math.min(SIDE_MAX_PX, Math.max(SIDE_MIN_PX, Number(usePref("correction:sideW", String(SIDE_DEFAULT_PX))) || SIDE_DEFAULT_PX));
-  const bottomPref = Math.max(BOTTOM_MIN_PX, Number(usePref("correction:bottomH", String(BOTTOM_DEFAULT_PX))) || BOTTOM_DEFAULT_PX);
-  const bottomH = fitH ? Math.min(bottomPref, Math.round(fitH * 0.5)) : bottomPref;
   // Modules placed under the video (the rest go in the side column).
   const belowPref = usePref("correction:below", "squad");
   const belowSet = new Set(belowPref.split(",").filter(Boolean));
@@ -996,7 +1006,6 @@ export function Correction({
   const candList = [...cand.next.map((x) => ({ verb: "sigue como", x, other: x.to })), ...cand.prev.map((x) => ({ verb: "viene de", x, other: x.from }))];
   // The badge of suggestions shows one: the one being checked, or the one chosen with its arrow.
   const candI = peek && candList.some((c) => c.x === peek) ? candList.findIndex((c) => c.x === peek) : Math.max(0, Math.min(candIdx, candList.length - 1));
-  const candCur = candList[candI] ?? null;
   const nextCand = () => {
     const next = (candI + 1) % candList.length;
     setCandIdx(next);
@@ -1272,6 +1281,9 @@ export function Correction({
   const hints = allCutHints.filter((h) => h.kind === "team");
   const hintsByPerson = new Map<number, CutHint[]>();
   for (const h of hints) hintsByPerson.set(h.person, [...(hintsByPerson.get(h.person) ?? []), h]);
+  // Her changes of shirt, and the one on screen (to cut it).
+  const selHints = sel !== null ? (hintsByPerson.get(sel) ?? []) : [];
+  const hintHere = selHints.find((h) => Math.abs(h.frame - frame) <= 1.5 * fps) ?? null;
   const hintText = (h: CutHint) =>
     h.kind === "excursion"
       ? `se va ${h.seconds?.toFixed(1)} s a ${h.meters?.toFixed(0)} m y vuelve`
@@ -1381,10 +1393,6 @@ export function Correction({
   const dragSide = (e: React.PointerEvent<HTMLElement>) => {
     const w0 = sideW;
     dragBy(e, (dx) => setPref("correction:sideW", String(Math.round(Math.min(SIDE_MAX_PX, Math.max(SIDE_MIN_PX, w0 - dx))))));
-  };
-  const dragBottom = (e: React.PointerEvent<HTMLElement>) => {
-    const h0 = bottomH;
-    dragBy(e, (_dx, dy) => setPref("correction:bottomH", String(Math.round(Math.max(BOTTOM_MIN_PX, h0 - dy)))));
   };
   const moveModule = (m: ModuleId, where: "side" | "below") => {
     const next = new Set(belowSet);
@@ -2901,10 +2909,11 @@ export function Correction({
                   </div>
                 )}
               {selected ? (
-                  <div className="space-y-2 rounded-lg bg-surface p-3">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                      <ul className="min-w-0 flex-1 basis-72">{renderRow(selected)}</ul>
-                      <span className="flex items-center gap-1">
+                  <div className="space-y-1.5 rounded-lg bg-surface p-3">
+                    <ul>{renderRow(selected)}</ul>
+                    {/* Her tools on the left; what is left to check on her, as icon and number, on the right (details on hover). */}
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="flex items-center">
                         <IconButton label="Unir con… (u): clic en la caja o fila de la misma jugadora" tone={mode === "merge" ? "accent" : "default"} onClick={() => setMode(mode === "merge" ? null : "merge")}>
                           <ArrowsMerge size={16} />
                         </IconButton>
@@ -2941,113 +2950,71 @@ export function Correction({
                           <X size={16} />
                         </IconButton>
                       </span>
-                    </div>
-                    {/* Notices about her, in one row of chips. */}
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                      {candCur && (
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-xl py-0.5 pr-0.5 pl-2 ${peek === candCur.x ? "bg-warn-900/70 text-warn" : "bg-bg/60 text-ink-2"}`}
-                          title={`¿${candCur.verb} ${label(personById.get(candCur.other), candCur.other)}? Ordenadas por dónde debería estar según cómo se movía; la primera acierta un tercio de las veces.`}
-                        >
-                          <span className="text-faint">{candCur.verb}</span>
-                          <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLORS[personById.get(candCur.other)?.team ?? "unk"] }} />
-                          <span className="tc">{label(personById.get(candCur.other), candCur.other)}</span>
-                          <span className="tc text-faint">
-                            {candCur.x.gapS.toFixed(1)} s · {candCur.x.distM.toFixed(0)} m
-                          </span>
-                          <IconButton label="Ver en el video (n)" tone={peek === candCur.x ? "accent" : "default"} onClick={() => peekAt(candCur.x)}>
-                            <Eye size={13} />
-                          </IconButton>
-                          <IconButton label="Es ella: unir" onClick={() => joinCandidate(candCur.x)}>
-                            <Check size={13} />
-                          </IconButton>
-                          <IconButton label="No es ella (no se vuelve a proponer)" tone="danger" onClick={() => rejectCandidate(candCur.x)}>
-                            <X size={13} />
-                          </IconButton>
-                          {candList.length > 1 && (
-                            <>
-                              <span className="tc pl-1 text-faint">
-                                {candI + 1}/{candList.length}
-                              </span>
-                              <IconButton label="Otra candidata" onClick={nextCand}>
-                                <SkipForward size={13} />
-                              </IconButton>
-                            </>
-                          )}
-                        </span>
-                      )}
-                      {(() => {
-                        // One badge for all her changes of shirt: c goes from one to the next; the scissors cut the one on screen.
-                        const hs = hintsByPerson.get(selected.id) ?? [];
-                        if (hs.length === 0) return null;
-                        const here = hs.find((h) => Math.abs(h.frame - frame) <= 1.5 * fps);
-                        return (
-                          <span className="inline-flex items-center gap-1 rounded-xl bg-warn-900/50 py-0.5 pr-0.5 pl-2 text-warn" title={here ? hintText(here) : "Cambios de camiseta: c va al siguiente"}>
-                            <TShirt size={13} weight="fill" />
-                            {hs.length} cambio(s) de camiseta
-                            <IconButton label="Ir al siguiente (c)" onClick={() => nextOf(hs.map((h) => Math.max(data?.start_frame ?? 0, h.frame - Math.round(fps))))}>
-                              <SkipForward size={13} />
-                            </IconButton>
-                            <IconButton label={here ? "Cortar aquí: de este punto en adelante es otra persona" : "Ve a un cambio (c) para cortarlo"} tone="accent" disabled={!here} onClick={() => here && fixHint(here)}>
-                              <Scissors size={13} />
-                            </IconButton>
-                          </span>
-                        );
-                      })()}
-                      {absorbForSel.length > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-accent-900/40 py-0.5 pr-0.5 pl-2 text-ink-2">
-                          <MagicWand size={13} />
-                          {absorbForSel.length} trozo(s) corto(s) suyos
-                          {absorbForSel.some((a) => a.adds > 0) && ` (+${absorbForSel.reduce((n, a) => n + a.adds, 0)} cuadros)`}
-                          <IconButton label="Añadírselos" tone="accent" onClick={() => absorb(absorbForSel)}>
-                            <Plus size={13} />
-                          </IconButton>
-                        </span>
-                      )}
-                      {selected.conflicts.length > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-warn-900/60 py-0.5 pr-0.5 pl-2 text-warn" title="Haz clic en la caja que sí es ella en esos cuadros, o deja una donde están en el mismo sitio">
-                          <Warning size={13} />
-                          dos cajas en {selected.conflicts.length} cuadro(s)
-                          <IconButton label="Ir al primero" onClick={() => seekFrame(selected.conflicts[0])}>
-                            <Eye size={13} />
-                          </IconButton>
-                          <IconButton label="Dejar una donde están en el mismo sitio (m)" tone="accent" onClick={unifySelf}>
-                            <MagicWand size={13} />
-                          </IconButton>
-                        </span>
-                      )}
-                      {selAnoms.length > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-danger/15 py-0.5 pr-0.5 pl-2 text-danger" title="Movimientos que nadie puede correr: casi siempre la caja perdió sus pies un momento. Recuadro rojo en su línea.">
-                          <Warning size={13} weight="fill" />
-                          {selAnoms.length} salto(s) imposible(s)
-                          <IconButton label="Revisarlos uno a uno (a)" onClick={() => anomStep(1)}>
-                            <SkipForward size={13} />
-                          </IconButton>
-                          <IconButton label="Quitar los cuadros de todos (se rellenan al guardar)" tone="danger" onClick={anomDropAll}>
-                            <Eraser size={13} />
-                          </IconButton>
-                        </span>
-                      )}
-                      {selGaps.length > 0 ? (
-                        <span
-                          className="inline-flex items-center gap-1 rounded-xl bg-danger/15 py-0.5 pr-0.5 pl-2 text-danger"
-                          title={`Huecos por revisar (rojo en la línea): se perdió en medio de la imagen durante más de ${FIX_GAP_S} s. Con «g» vas a 1 s de donde se perdió y avanzas de segundo en segundo. Si en el hueco hay otra caja que es ella, únela; si el detector no la vio, márcala a mano (p). Los huecos donde salió de cuadro no cuentan: al guardar se rellenan con una recta.`}
-                        >
-                          {selGaps.length} hueco(s) por revisar · el más largo {(Math.max(...selGaps.map(([a, b]) => b - a)) / fps).toFixed(1)} s
-                          <IconButton label="Ir al siguiente hueco (g)" onClick={nextGap}>
-                            <SkipForward size={13} />
-                          </IconButton>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-ok/15 px-2 py-0.5 text-ok" title="No le quedan huecos en medio de la imagen; los de fuera de cuadro se rellenan al guardar">
-                          <Check size={13} weight="bold" /> Sin huecos por revisar
-                        </span>
-                      )}
-                      {selOffCamera.length > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-bg/60 px-2 py-0.5 text-faint" title="Huecos donde salió de cuadro (estaba en el borde de la imagen al perderla o al encontrarla): gris en la línea; se rellenan al guardar">
-                          {selOffCamera.length} fuera de cuadro
-                        </span>
-                      )}
+                      <span className="ml-auto flex flex-wrap items-center justify-end gap-1">
+                        {candList.length > 0 && (
+                          <Badge
+                            icon={<UsersThree size={13} weight="bold" />}
+                            n={candList.length}
+                            tone={peek ? "warn" : "plain"}
+                            title={`${candList.length} candidata(s) a ser la misma persona («sigue como» / «viene de»): ver la siguiente en el video (n); se une o se descarta en la barra bajo el video`}
+                            onClick={() => (peek ? nextCand() : peekAt(candList[0].x))}
+                          />
+                        )}
+                        {selHints.length > 0 && (
+                          <Badge
+                            icon={<TShirt size={13} weight="fill" />}
+                            n={selHints.length}
+                            tone="warn"
+                            title={`${selHints.length} cambio(s) de camiseta: ir al siguiente (c)`}
+                            onClick={() => nextOf(selHints.map((h) => Math.max(data?.start_frame ?? 0, h.frame - Math.round(fps))))}
+                          />
+                        )}
+                        {hintHere && (
+                          <Badge icon={<Scissors size={13} />} tone="accent" title={`Cortar aquí (${hintText(hintHere)}): de este punto en adelante es otra persona`} onClick={() => fixHint(hintHere)} />
+                        )}
+                        {absorbForSel.length > 0 && (
+                          <Badge
+                            icon={<MagicWand size={13} />}
+                            n={absorbForSel.length}
+                            tone="accent"
+                            title={`${absorbForSel.length} trozo(s) corto(s) suyos${absorbForSel.some((x) => x.adds > 0) ? ` (+${absorbForSel.reduce((t, x) => t + x.adds, 0)} cuadros)` : ""}: añadírselos`}
+                            onClick={() => absorb(absorbForSel)}
+                          />
+                        )}
+                        {selected.conflicts.length > 0 && (
+                          <Badge
+                            icon={<Warning size={13} />}
+                            n={selected.conflicts.length}
+                            tone="warn"
+                            title={`Dos cajas a la vez en ${selected.conflicts.length} cuadro(s): ir al primero y hacer clic en la que es ella (m deja una donde están en el mismo sitio)`}
+                            onClick={() => seekFrame(selected.conflicts[0])}
+                          />
+                        )}
+                        {selAnoms.length > 0 && (
+                          <Badge
+                            icon={<Warning size={13} weight="fill" />}
+                            n={selAnoms.length}
+                            tone="danger"
+                            title={`${selAnoms.length} salto(s) imposible(s), recuadros rojos en su línea: revisarlos uno a uno (a)`}
+                            onClick={() => anomStep(1)}
+                          />
+                        )}
+                        {selAnoms.length > 0 && <Badge icon={<Eraser size={13} />} tone="danger" title="Quitar los cuadros de todos sus saltos imposibles (se rellenan al guardar)" onClick={anomDropAll} />}
+                        {selGaps.length > 0 ? (
+                          <Badge
+                            icon={<CircleDashed size={13} weight="bold" />}
+                            n={selGaps.length}
+                            tone="danger"
+                            title={`${selGaps.length} hueco(s) por revisar en medio de la imagen (el más largo, ${(Math.max(...selGaps.map(([x, y]) => y - x)) / fps).toFixed(1)} s): ir al siguiente (g). Si en el hueco hay otra caja que es ella, únela; si no la vio el detector, márcala a mano (p)`}
+                            onClick={nextGap}
+                          />
+                        ) : (
+                          <Badge icon={<Check size={13} weight="bold" />} tone="ok" title="Sin huecos por revisar: los de fuera de cuadro se rellenan al guardar" />
+                        )}
+                        {selOffCamera.length > 0 && (
+                          <Badge icon={<EyeSlash size={13} />} n={selOffCamera.length} tone="plain" title={`${selOffCamera.length} hueco(s) donde salió de cuadro: gris en la línea; se rellenan al guardar`} />
+                        )}
+                      </span>
                     </div>
                   </div>
               ) : (
@@ -3105,12 +3072,9 @@ export function Correction({
   // With the table fitting the window, the window is a limit, not a size: the video as large as fits above its controls
   // (and the modules under it), each panel as tall as its content, and nothing stretched to fill.
   const hasBelow = belowMods.length > 0 || dragMod !== null;
-  const bottomUse = view === "players" ? bottomH : Math.min(bottomH, bottomBox.h + 24);
-  const avail = fitH ? fitH - 16 - bottomUse : 0;
-  const belowNeed = hasBelow ? Math.min(Math.max(belowBox.h, 120), BELOW_MIN_PX) + 12 : 0;
+  const avail = fitH ? fitH - 16 - (bottomBox.h + 24) : 0;
+  const belowNeed = hasBelow ? Math.max(belowBox.h, dragMod ? 128 : 0) + 12 : 0;
   const stageW = fitH && colBox.w ? Math.max(240, Math.min(colBox.w, (avail - underH - 12 - belowNeed) * aspect)) : null;
-  const mainH =
-    fitH && stageW ? Math.min(avail, Math.max(stageW / aspect + underH + 12 + (hasBelow ? belowBox.h + 12 : 0), sideMods.length > 0 ? sideBox.h : 0)) : null;
   const zoneDrop = (where: "side" | "below") => ({
     onDragOver: (e: React.DragEvent) => {
       if (e.dataTransfer.types.includes(MODULE_DRAG)) e.preventDefault();
@@ -3538,7 +3502,7 @@ export function Correction({
           <div ref={rootEl} className="enter flex flex-col xl:-mb-12">
           <div
             className={`grid min-h-0 gap-4 ${sideMods.length > 0 || dragMod ? "xl:grid-cols-[minmax(0,1fr)_var(--side-w)]" : ""}`}
-            style={{ "--side-w": `${sideW}px`, ...(mainH ? { height: mainH } : {}) } as React.CSSProperties}
+            style={{ "--side-w": `${sideW}px` } as React.CSSProperties}
           >
             <div ref={colRef} className="flex min-h-0 min-w-0 flex-col gap-3">
                 <div
@@ -3919,7 +3883,7 @@ export function Correction({
                 )}
                 </div>
                 {hasBelow && (
-                  <div {...zoneDrop("below")} className={`min-h-0 flex-1 overflow-y-auto rounded-lg ${dragMod ? "outline-2 outline-offset-2 outline-dashed outline-line-strong" : ""}`}>
+                  <div {...zoneDrop("below")} className={`rounded-lg ${dragMod ? "outline-2 outline-offset-2 outline-dashed outline-line-strong" : ""}`}>
                     <div ref={belowRef} className="grid auto-rows-min gap-3 [grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))]">
                       {belowMods.map((m) => moduleBox(m, "below"))}
                       {belowMods.length === 0 && <p className="grid h-32 place-items-center text-xs text-faint">Suelta aquí para ponerlo bajo el video</p>}
@@ -3942,7 +3906,7 @@ export function Correction({
               <span className="mx-auto block h-full w-px rounded-full transition-colors group-hover:bg-line-strong" />
             </div>
             <div
-              className={`${fitH ? "absolute inset-0" : ""} overflow-y-auto rounded-lg pr-1 ${dragMod ? "outline-2 outline-offset-2 outline-dashed outline-line-strong" : ""}`}
+              className={`rounded-lg ${dragMod ? "outline-2 outline-offset-2 outline-dashed outline-line-strong" : ""}`}
               {...zoneDrop("side")}
             >
               <div ref={sideRef} className="space-y-3">
@@ -3954,21 +3918,8 @@ export function Correction({
             )}
           </div>
 
-          {/* Between the video and the timeline: dragged, the timeline panel gets taller or shorter. */}
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Alto de la línea de tiempo (arrastra; doble clic: el de siempre)"
-            title="Arrastra para cambiar el alto de la línea de tiempo · doble clic: el de siempre"
-            className="group hidden h-4 shrink-0 cursor-row-resize touch-none items-center justify-center xl:flex"
-            onPointerDown={dragBottom}
-            onDoubleClick={() => setPref("correction:bottomH", String(BOTTOM_DEFAULT_PX))}
-          >
-            <span className="h-1 w-14 rounded-full bg-line transition-colors group-hover:bg-line-strong" />
-          </div>
-
           {/* The timeline of the part, full width under both columns. */}
-          <div className="shrink-0 overflow-y-auto rounded-lg bg-surface p-3" style={fitH ? { height: bottomUse } : undefined}>
+          <div className="mt-4 shrink-0 rounded-lg bg-surface p-3">
           <div ref={bottomRef} className="space-y-2">
                 {/* Whole part on one bar: click to jump. */}
                 <div className="flex items-center gap-3">
