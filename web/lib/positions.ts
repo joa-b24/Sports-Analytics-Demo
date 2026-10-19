@@ -552,6 +552,39 @@ export function passNetwork(parts: Oriented[], team: "own" | "opp", playByVideo:
   };
 }
 
+export interface PassArrow {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  from: string | null; // passer's name
+  progressive: boolean; // gains at least PROGRESSIVE_M towards the rival goal
+}
+export const PROGRESSIVE_M = 10;
+
+// Every pass of a team read from the followed ball, from the passer (at her last touch) to the receiver (at her
+// first), with the team attacking right. A pass whose two ends are not in frame is left out.
+export function passArrows(parts: Oriented[], team: "own" | "opp", playByVideo: Record<string, Segment[]> = {}): PassArrow[] {
+  const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
+  const out: PassArrow[] = [];
+  for (const o of parts) {
+    const name = new Map(o.file.people.map((p) => [p.id, p.player_id]));
+    const [mx] = metersPerUnit(o.file);
+    const play = usePlay ? (playByVideo[o.file.video_id] ?? []) : null;
+    for (const p of passesAndTurnovers(o.file).passes) {
+      if (p.team !== team || !inStretches(play, p.from_frame / o.file.fps)) continue;
+      const a = positionsNear(o.file, p.from_frame)?.find((q) => q.id === p.from);
+      const b = positionsNear(o.file, p.frame)?.find((q) => q.id === p.to);
+      if (!a || !b) continue;
+      let [x1, y1] = orient(o, a.x, a.y);
+      let [x2, y2] = orient(o, b.x, b.y);
+      if (team === "opp") [x1, y1, x2, y2] = [PITCH.length - x1, PITCH.width - y1, PITCH.length - x2, PITCH.width - y2];
+      out.push({ x1, y1, x2, y2, from: name.get(p.from) ?? null, progressive: (x2 - x1) * mx >= PROGRESSIVE_M });
+    }
+  }
+  return out;
+}
+
 // --------------------------------------------------------------------------------------------- behind the ball
 
 export interface BehindBall {

@@ -60,6 +60,8 @@ export function normalizeReport(r: Partial<Report> | null | undefined): Report {
     conclusiones: text("conclusiones"),
     jornada: text("jornada"),
     print_touches: src.print_touches === true,
+    focus: src.focus === "opp" ? "opp" : "own",
+    ...(Array.isArray(src.sections) ? { sections: (src.sections as unknown[]).filter((x): x is string => typeof x === "string") } : {}),
     results_manual: results.filter((x): x is ManualResult => !!x && typeof x === "object").map((x) => ({
       date: typeof x.date === "string" ? x.date : "",
       opponent: typeof x.opponent === "string" ? x.opponent : "",

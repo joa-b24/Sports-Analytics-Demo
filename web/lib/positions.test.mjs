@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autoFixed, ballReport, passStretches, behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passNetwork, passesAndTurnovers, positionsAt, touches, unnamedLeftovers } from "./positions.ts";
+import { autoFixed, ballReport, passStretches, behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passArrows, passNetwork, passesAndTurnovers, positionsAt, touches, unnamedLeftovers } from "./positions.ts";
 
 // A corrected part: 30 fps, one of every 3 frames. `at(i)` gives the positions of processed frame i.
 const fixed = ({ n = 10, people, at, ball = [] }) => ({
@@ -56,6 +56,9 @@ test("who has the ball, passes and changes of team", () => {
   assert.deepEqual(net.edges, [{ a: "Ana", b: "Bea", count: 1 }]);
   assert.equal(net.passes, 1);
   assert.equal(net.unnamed, 0);
+  // The same pass as an arrow: from Ana to Bea, 20 units forward (progressive), and mirrored when the team attacks left.
+  assert.deepEqual(passArrows([{ file: f, ownRight: true }], "own"), [{ x1: 20, y1: 30, x2: 40, y2: 30, from: "Ana", progressive: true }]);
+  assert.deepEqual(passArrows([{ file: f, ownRight: false }], "own")[0].x2, 65);
 });
 
 test("an interpolated ball is never a touch, even right next to a player (it went over her)", () => {

@@ -127,6 +127,11 @@ export interface Report {
   results_manual?: ManualResult[];
   // The table of touches by player goes into the printout only when the analyst says so.
   print_touches?: boolean;
+  // Which team the sections after «General» describe (2026-10-19): usually the analysed one.
+  focus?: "own" | "opp";
+  // The sections of the report, in order, by id (REPORT_SECTIONS in lib/reportSections.ts). Absent: the default
+  // layout. A section left out is not shown; a section without data hides itself anyway.
+  sections?: string[];
 }
 
 export const EMPTY_REPORT: Report = {
@@ -140,6 +145,7 @@ export const EMPTY_REPORT: Report = {
   jornada: "",
   results_manual: [],
   print_touches: false,
+  focus: "own",
 };
 
 // One video of a match. Times in events, plays and segment marks are times inside their own video.

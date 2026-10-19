@@ -1,22 +1,14 @@
 "use client";
 
 import {
-  ArrowLeft,
-  ChartLineUp,
-  ClipboardText,
-  Crosshair,
-  PersonSimpleRun,
   FastForward,
-  FilmStrip,
   FolderOpen,
   Pause,
   Play,
   Plus,
   Rewind,
-  Scissors,
   SkipBack,
   SkipForward,
-  VideoCamera,
   X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
@@ -58,11 +50,10 @@ function MatchPage() {
   const hydrated = useHydrated();
   // With events, the match opens on its analysis (what the staff reads); without, on capture. A link to a moment
   // opens the events of that video.
-  const [tab, setTab] = useState<TabId>(() => {
-    if (linkVideo) return "tag";
-    const m = state.matches.find((x) => x.match_id === id);
-    return m && state.events.some((e) => e.match_id === m.match_id) ? "analysis" : "tag";
-  });
+  const [tabSel, setTab] = useState<TabId | null>(null);
+  // Until the analyst picks one: a link to a moment opens its events; otherwise a match with events opens on its
+  // analysis (what the staff reads) and one without, on capture. Decided once the data is loaded.
+  const tab: TabId = tabSel ?? (linkVideo ? "tag" : state.events.some((e) => e.match_id === id) ? "analysis" : "tag");
   // Time to go to as soon as the player knows the length of the video (it cannot seek before).
   const pendingSeek = useRef<number | null>(linkVideo && Number.isFinite(linkT) && linkT >= 0 ? linkT : null);
   const [time, setTime] = useState(0);
