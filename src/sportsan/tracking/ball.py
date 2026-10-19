@@ -91,8 +91,9 @@ def to_pixel(H, venue: dict, x: float, y: float) -> tuple[float, float] | None:
     return (q[0] / q[2], q[1] / q[2]) if q[2] > 1e-9 else None
 
 
-def candidates(img: np.ndarray, polygon: np.ndarray | None) -> np.ndarray:
-    """Manchas blancas pequeñas dentro de la cancha: centros (N, 2) en píxeles."""
+def candidates(img: np.ndarray, polygon: np.ndarray | None, cap: int | None = MAX_CANDIDATES) -> np.ndarray:
+    """Manchas blancas pequeñas dentro de la cancha: centros (N, 2) en píxeles. Al correr se quedan las `cap` más
+    blancas; al entrenar van todas (cap=None): el modelo aprende de los negativos difíciles que el tope dejaría fuera."""
     import cv2
 
     # Solo el rectángulo que ocupa la cancha (más un borde para el top-hat): el cielo y la grada no se miran.
@@ -115,17 +116,18 @@ def candidates(img: np.ndarray, polygon: np.ndarray | None) -> np.ndarray:
         cv2.fillPoly(mask, [np.round(polygon - np.array([x0, y0], np.float32)).astype(np.int32)], 255)
         th = cv2.bitwise_and(th, mask)
     _, bw = cv2.threshold(th, TOPHAT_THR, 255, cv2.THRESH_BINARY)
-    n, _, st, cen = cv2.connectedComponentsWithStats(bw, connectivity=8)
+    n, lab, st, cen = cv2.connectedComponentsWithStats(bw, connectivity=8)
     if n <= 1:
         return np.zeros((0, 2), np.float32)
     w, h, a = st[1:, 2], st[1:, 3], st[1:, 4]
     big, small = np.maximum(w, h), np.maximum(1, np.minimum(w, h))
     ok = (a >= BLOB_AREA[0]) & (a <= BLOB_AREA[1]) & (big <= BLOB_MAX_SIDE) & (big <= BLOB_MAX_RATIO * small)
     pts = cen[1:][ok].astype(np.float32)
-    if len(pts) > MAX_CANDIDATES:
-        xi = np.clip(np.round(pts[:, 0]).astype(int), 0, th.shape[1] - 1)
-        yi = np.clip(np.round(pts[:, 1]).astype(int), 0, th.shape[0] - 1)
-        pts = pts[np.argsort(-th[yi, xi], kind="stable")[:MAX_CANDIDATES]]
+    if cap is not None and len(pts) > cap:
+        # Las más blancas primero, por su punto más blanco (el centro de un balón puede caer en un panel oscuro).
+        peak = np.zeros(n, np.float32)
+        np.maximum.at(peak, lab.ravel(), th.ravel())
+        pts = pts[np.argsort(-peak[1:][ok], kind="stable")[:cap]]
     return (pts + np.array([x0, y0], np.float32)).reshape(-1, 2)
 
 
@@ -300,7 +302,8 @@ def at_feet(pts: np.ndarray, regions: np.ndarray) -> np.ndarray:
     return ((x >= r[..., 0]) & (x <= r[..., 2]) & (y >= r[..., 1]) & (y <= r[..., 3])).any(axis=1)
 
 
-def frame_features(walker: FrameWalker, frames: list[dict], venue: dict, only: set[int] | None = None, search: str = "pitch", k: float = 1.0):
+def frame_features(walker: FrameWalker, frames: list[dict], venue: dict, only: set[int] | None = None, search: str = "pitch", k: float = 1.0,
+                   cap: int | None = MAX_CANDIDATES):
     """Por cuadro procesado (o solo los de `only`): candidatos y recortes. Genera (frame, pts, patches).
 
     search: "pitch" busca en toda la cancha; "feet" solo en la zona de los pies de las cajas detectadas.
@@ -321,7 +324,7 @@ def frame_features(walker: FrameWalker, frames: list[dict], venue: dict, only: s
             break
         H = fr.get("H")
         if only is None or f in only:
-            pts = candidates(img, pitch_polygon(H, venue))
+            pts = candidates(img, pitch_polygon(H, venue), cap)
             if search == "feet":
                 pts = pts[at_feet(pts, feet_regions(fr.get("boxes"), k))]
             # El movimiento solo con el cuadro procesado justo anterior.
@@ -370,7 +373,7 @@ def collect(folders: list[Path], max_frames_per_part: int = 400, seed: int = 0, 
             if len(chosen) > max_frames_per_part:
                 chosen = sorted(rng.sample(chosen, max_frames_per_part))
             walker = FrameWalker(video_of(folder, tr["video_id"]))
-            for f, pts, P in frame_features(walker, frames, venue, set(chosen), search, k):
+            for f, pts, P in frame_features(walker, frames, venue, set(chosen), search, k, cap=None):
                 mx, my = marks[f]
                 if len(pts) == 0:
                     skipped += 1
