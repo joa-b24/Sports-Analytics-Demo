@@ -317,6 +317,7 @@ footer { color: var(--faint); font-size: 13px; display: grid; gap: 6px; }
         <li>No corras otra cosa pesada a la vez (otro proceso, el tracker de balón, un render): se reparten los núcleos y todo va varias veces más lento.</li>
       </ul>
       <p class="why"><b>Por qué de noche y en la laptop:</b> es gratis y el video no sale de la computadora. Las uniones son una propuesta conservadora: unen fragmentos solo cuando es claro; lo dudoso se resuelve en la revisión.</p>
+      <p class="pending"><b>Con GPU:</b> este paso es el <a href="#kaggle">trabajo A en Kaggle</a> (plan, aún no construido).</p>
     </article>
 
     <article class="step-card app" id="paso-7">
@@ -346,6 +347,7 @@ footer { color: var(--faint); font-size: 13px; display: grid; gap: 6px; }
       </div>
       <dl class="meta"><dt>Deja</dt><dd><code>weights/ball_model.pt</code>, <code>tracking/ball_auto_*.json</code>, <code>tracking/team_metrics_*.json</code></dd></dl>
       <p class="why"><b>Por qué solo lo seguro:</b> un balón falso contamina posesión y pases sin que se note; un hueco se ve y se completa. Con el tracker se marca a mano cerca de la mitad que sin él.</p>
+      <p class="pending"><b>Con GPU:</b> este paso es el <a href="#kaggle">trabajo B en Kaggle</a>. Va aparte del A porque necesita tu revisión del paso 7.</p>
     </article>
 
     <article class="step-card app" id="paso-9">
@@ -383,6 +385,32 @@ footer { color: var(--faint); font-size: 13px; display: grid; gap: 6px; }
         <li>Datos → Exportar respaldo al terminar cada sesión de trabajo larga.</li>
       </ol>
       <p class="why"><b>Por qué:</b> eventos, jugadas, correcciones y textos del informe viven en este navegador. Otro navegador o borrar los datos del sitio los pierde; el respaldo los lleva a otra computadora.</p>
+    </article>
+  </section>
+
+  <section class="steps" aria-labelledby="kaggle">
+    <article class="step-card term" id="kaggle">
+      <div class="step-head"><h3>Procesar con GPU en Kaggle</h3><span class="lane-tag both">Plan · aún no construido</span></div>
+      <p>Kaggle presta una GPU gratis (unas 30 horas a la semana, sesiones de hasta 12 horas). Kaggle no puede ver tu laptop: los archivos viajan con la herramienta de Kaggle para la terminal (<code>kaggle</code>, gratis), que sube datos y baja resultados. Con eso se arma un flujo de un solo comando.</p>
+      <dl class="meta">
+        <dt>Trabajo A</dt><dd><b>Tracking</b> (paso 6): propagación, biblioteca y detección de todos los tramos. Necesita anclas, tramos, colores y el video, y ninguna revisión tuya. Es el trabajo pesado y el que más gana con GPU.</dd>
+        <dt>Trabajo B</dt><dd><b>Modelos</b> (paso 8): entrenar el tracker de balón con tus <code>tracks_fixed</code> y correrlo en todas las partes. Va después de revisar el tramo de entrenamiento (paso 7); por eso se separa del A.</dd>
+      </dl>
+      <ol class="todo">
+        <li><b>Subir</b> (laptop): un comando empaca lo pequeño del partido (<code>match.yaml</code>, <code>segments.csv</code>, anclas y, para el trabajo B, los <code>tracks_fixed</code>) como un conjunto de datos privado de Kaggle. El video se baja en Kaggle desde YouTube con el enlace de <code>videos.csv</code>; si YouTube lo bloquea desde Kaggle, se sube el video una vez.</li>
+        <li><b>Correr</b> (Kaggle): el mismo comando lanza el cuaderno con GPU, que instala el paquete y corre el trabajo A o B. Es reanudable por partes, igual que en la laptop.</li>
+        <li><b>Bajar</b> (laptop): el comando espera a que termine y copia los resultados (<code>tracks_*.json</code>, <code>ball_auto_*.json</code>…) a <code>matches/&lt;id&gt;/tracking/</code>. La app los ve como si se hubieran hecho aquí.</li>
+      </ol>
+      <div class="cmdbox">
+        <div class="cmd-line"><pre>python -m sportsan.cloud.kaggle run tracking --match &lt;match_id&gt;</pre><button type="button">Copiar</button></div>
+        <div class="cmd-line"><pre>python -m sportsan.cloud.kaggle run modelos --match &lt;match_id&gt;</pre><button type="button">Copiar</button></div>
+        <p class="cmd-note">Comandos propuestos: todavía no existen.</p>
+      </div>
+      <ol class="todo">
+        <li><b>Preparar una vez:</b> cuenta de Kaggle con el teléfono verificado (sin eso no hay GPU ni internet en los cuadernos); en Kaggle → Settings → API, «Create New Token», y guardar <code>kaggle.json</code> en <code>C:\Users\joana\.kaggle\</code>; <code>pip install kaggle</code> en <code>.venv</code>.</li>
+        <li><b>Adaptar el código:</b> hoy la detección usa OpenVINO (CPU Intel); en Kaggle irá con PyTorch y CUDA, así que <code>process</code> necesita una opción de dispositivo. El código viaja como conjunto de datos privado o desde un repositorio privado de GitHub.</li>
+      </ol>
+      <p class="why"><b>¿Una base de datos?</b> Más adelante, sí: cuando los datos pasen a la nube (fase 2 de <code>architecture.md</code>, Supabase), el cuaderno podrá escribir directo en el almacenamiento y la app leer de ahí. Hasta entonces, subir y bajar archivos es más simple y no cambia nada de la app.</p>
     </article>
   </section>
 
