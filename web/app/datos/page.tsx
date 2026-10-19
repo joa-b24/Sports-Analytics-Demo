@@ -167,9 +167,7 @@ export default function Page() {
   return (
     <>
       <PageHeader
-        eyebrow="Carga de datos"
-        title="Nuevos datos"
-        subtitle="Todo se guarda en este navegador. Para pasar el trabajo a otra computadora o no perderlo, exporta un respaldo."
+        title="Datos"
       >
         <button type="button" className={btnPrimary} onClick={() => downloadText("sportsan_respaldo.json", JSON.stringify(state, null, 1), "application/json")}>
           <DownloadSimple size={15} />

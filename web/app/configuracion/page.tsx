@@ -7,11 +7,14 @@ import { Locked, LockedRow, SkBars } from "@/components/Locked";
 import { Reveal } from "@/components/motion";
 import { Card, PageHeader, btn, btnPrimary } from "@/components/Shell";
 import { VenueDiagram, VenueEditor } from "@/components/VenueEditor";
-import { mutate, uid, useStore } from "@/lib/store";
+import { LABEL_STYLES } from "@/components/PlayerMark";
+import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
+import { DEFAULT_OPP, DEFAULT_OWN, TEAM_COLORS } from "@/lib/teamColors";
 import { EVENT_KEYS, EVENT_LABELS, EVENT_TYPES, PITCH, type VenueSpec } from "@/lib/types";
 import { BUILTIN_SPECS, allVenues } from "@/lib/venue";
 
 const TABS = [
+  { id: "look", label: "Apariencia", locked: false },
   { id: "venues", label: "Sedes", locked: false },
   { id: "keys", label: "Teclas de eventos", locked: false },
   { id: "roster", label: "Plantilla", locked: true },
@@ -22,7 +25,11 @@ type TabId = (typeof TABS)[number]["id"];
 const ROSTER_FIELDS = ["Foto", "Nombre completo", "Dorsal", "Posición", "Estatura", "Peso", "Pie hábil", "FC máx.", "ID del GPS", "Carrera y semestre"];
 
 export default function Page() {
-  const [tab, setTab] = useState<TabId>("venues");
+  const [tab, setTab] = useState<TabId>("look");
+  const theme = usePref("theme", "dark");
+  const ownColor = usePref("ownColor", DEFAULT_OWN);
+  const oppColor = usePref("oppColor", DEFAULT_OPP);
+  const labelStyle = usePref("labelStyle", "oval");
   const state = useStore();
   const [editing, setEditing] = useState<{ spec: VenueSpec; isNew: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -45,7 +52,7 @@ export default function Page() {
 
   return (
     <>
-      <PageHeader eyebrow="Configuración" title={TABS.find((t) => t.id === tab)?.label ?? ""} />
+      <PageHeader title={TABS.find((t) => t.id === tab)?.label ?? ""} />
 
       <div className="enter mb-8 overflow-x-auto pb-1" style={{ "--d": "160ms" } as React.CSSProperties}>
         <div className="seg" role="group" aria-label="Sección de configuración">
@@ -63,6 +70,59 @@ export default function Page() {
           ))}
         </div>
       </div>
+
+      {tab === "look" && (
+        <div className="grid max-w-3xl gap-4">
+          <Card title="Tema">
+            <div className="seg" role="group" aria-label="Tema">
+              {(
+                [
+                  ["dark", "Oscuro"],
+                  ["light", "Claro"],
+                ] as const
+              ).map(([id, label]) => (
+                <button key={id} type="button" className="seg-opt" aria-pressed={theme === id} onClick={() => setPref("theme", id)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </Card>
+          {(
+            [
+              ["ownColor", "Nuestro equipo", ownColor, oppColor],
+              ["oppColor", "Rival", oppColor, ownColor],
+            ] as const
+          ).map(([key, title, value, other]) => (
+            <Card key={key} title={title} note={TEAM_COLORS.find((c) => c.id === value)?.label}>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={`Color: ${title}`}>
+                {TEAM_COLORS.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={value === c.id}
+                    disabled={other === c.id}
+                    title={other === c.id ? `${c.label}: lo usa el otro equipo` : c.label}
+                    onClick={() => setPref(key, c.id)}
+                    className={`grid h-10 w-10 place-items-center rounded-lg border-2 transition-colors disabled:opacity-25 ${value === c.id ? "border-ink" : "border-transparent hover:border-line-strong"}`}
+                  >
+                    <span className="h-6 w-6 rounded-full" style={{ background: c.value }} />
+                  </button>
+                ))}
+              </div>
+            </Card>
+          ))}
+          <Card title="Jugadoras sobre el video" note="Mayús + L lo cambia en la mesa">
+            <div className="seg" role="group" aria-label="Cómo se marca a cada persona">
+              {LABEL_STYLES.map((o) => (
+                <button key={o.id} type="button" className="seg-opt" aria-pressed={labelStyle === o.id} onClick={() => setPref("labelStyle", o.id)}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
 
       {tab === "venues" && editing && (
         <Card title={editing.isNew ? "Nueva sede" : `Editar · ${editing.spec.name}`} note="se guarda en este navegador">

@@ -85,9 +85,7 @@ export function MatchList() {
   return (
     <>
       <PageHeader
-        eyebrow="Partidos y videos"
-        title="Análisis con video"
-        subtitle="Nuestros partidos, los de los rivales y videos de referencia. Todos se analizan igual: tramos, eventos, jugadas e informe."
+        title="Partidos"
       >
         <button type="button" className={btnPrimary} onClick={() => openNew("own")}>
           <Plus size={15} />
@@ -109,7 +107,6 @@ export function MatchList() {
                     </button>
                   </span>
                 </div>
-                <p className="mb-4 text-xs text-muted">{COPY[k].subtitle}</p>
                 {list.length === 0 && <p className="text-sm text-faint">{COPY[k].empty}</p>}
                 <ul className="space-y-3">
                   {list.map((m, n) => {

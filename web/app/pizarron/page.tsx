@@ -79,9 +79,7 @@ function BoardsPage() {
     <>
       <div className={mode === "sheets" ? "print:hidden" : ""}>
         <PageHeader
-          eyebrow="Balón parado y jugadas"
           title="Pizarrón"
-          subtitle="Jugadas dibujadas sobre la cancha: las de balón parado que diseña el cuerpo técnico y las que pasan aquí desde un partido. Cada una se anima entre sus pasos y se imprime como láminas."
         >
           <button type="button" className={btn} onClick={create}>
             <Plus size={14} />

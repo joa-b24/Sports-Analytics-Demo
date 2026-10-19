@@ -13,9 +13,7 @@ export default function Page() {
   return (
     <>
       <PageHeader
-        eyebrow="Planificación"
-        title="Semana de entrenamiento"
-        subtitle="Planificar sesiones por bloques, dibujar ejercicios en la pizarra y recibir el cuestionario de bienestar de cada jugadora. Esta sección de la propuesta todavía no está construida."
+        title="Calendario"
       >
         <LockTag reason="dev" />
       </PageHeader>

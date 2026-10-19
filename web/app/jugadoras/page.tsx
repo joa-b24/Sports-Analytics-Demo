@@ -35,9 +35,7 @@ export default function Page() {
   return (
     <>
       <PageHeader
-        eyebrow="Análisis individual"
         title="Jugadoras"
-        subtitle="La plantilla, lo que ya se sabe de cada jugadora y lo que falta para su perfil."
       />
 
       <RosterCard />

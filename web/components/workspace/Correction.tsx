@@ -82,9 +82,7 @@ function Head({ embedded, children }: { embedded: boolean; children: React.React
   if (embedded) return <div className="mb-5 flex flex-wrap items-center gap-2">{children}</div>;
   return (
     <PageHeader
-      eyebrow="Tracking · mesa de corrección"
       title="Quién es quién"
-      subtitle="El programa detecta a las jugadoras y propone identidades; aquí se revisa: unir los trozos de una misma jugadora, separar dos que se confundieron, poner equipo y dorsal, y marcar a mano donde se perdió."
     >
       {children}
     </PageHeader>
