@@ -81,6 +81,7 @@ npm run dev
 | `python -m sportsan.clips.render --edit <edit_*.json> --profile charla\|whatsapp` | `demo/` | Exporta a MP4 un clip con sus dibujos y pausas (en `matches/<id>/clips/`). Con `--board <id>`, una jugada del pizarrón (en `clips/`). Necesita `pip install -e ".[clips]"` y ffmpeg |
 | `python -m sportsan.clips.cut_clips [--match <carpeta>] [--profile ...]` | `demo/` | Corta los clips de `clips_<match_id>.json` (los editados salen con sus dibujos) en `matches/<id>/clips/` |
 | `npm run dev` | `demo/web/` | Abre la app |
+| `python -m sportsan.tracking.process --match <id> --video v1 --test` | `demo/` | Prueba de 30 s antes de procesar: `tracking/prueba/` y su `summary.json` (también es el botón «Probar 30 s» de Tracking) |
 | `npm test`, `npx eslint .`, `npm run build` | `demo/web/` | Verificación de la app |
 
 Los comandos de Python eligen el partido así: `--match <id>` si lo pasas; si no, la variable de entorno `SPORTSAN_MATCH`; si no,
@@ -180,9 +181,10 @@ y `lib/theme.ts` los aplica (`--color-own`, `--color-opp`).
 
 ### 5.2 Los tres modos de un partido
 
-Arriba, el marcador del partido (goles etiquetados) y tres modos (`components/match/MatchHeader.tsx`): **Captura**
-(Calibración, Tramos, Tracking, Eventos), **Estudio** (Jugadas, con el editor de clips y el paso al pizarrón) y **Análisis**
-(Pantalla e Informe). Cada modo muestra sus pasos en una franja con su estado calculado en `web/lib/steps.ts` a partir de
+Los modos se eligen en la barra lateral, sección Partidos: Resumen (lista de partidos), **Captura** (Calibración,
+Tramos, Tracking, Balón, Eventos), **Estudio** (Jugadas, con el editor de clips, y Pizarrón) y **Análisis** (Pantalla e
+Informe); van al último partido abierto (`?modo=`). Arriba, una sola fila (`components/match/MatchHeader.tsx`): el
+marcador (goles etiquetados), el video, los pasos del modo y los datos del partido y del video (engrane). Cada modo muestra sus pasos en una franja con su estado calculado en `web/lib/steps.ts` a partir de
 los datos del partido y de lo que hay en su carpeta. Un partido con eventos abre en Análisis; uno sin, en Captura. Calibración y Tracking son opcionales: todo lo demás funciona solo
 con eventos.
 
@@ -201,6 +203,9 @@ con eventos.
 | Archivo | Qué contiene |
 |---|---|
 | `Shell.tsx` | Barra de iconos, `PageHeader`, `Card`, `Section` (rótulo condensado), nombres de clases de botón |
+| `workspace/ProcessPanel.tsx` | Lo que muestra Tracking cuando un video no tiene partes: ajustes del detector (se guardan en `match.yaml` con `lib/trackingSettings.ts`), prueba de 30 s (`process --test`, lee `tracking/prueba/summary.json`) y procesar en la laptop (`overnight`) o en Kaggle. Con la app en esta computadora son botones (`app/api/run`, `lib/run.ts`); en la web, comandos para copiar |
+| `workspace/KitPanel.tsx` | Colores de los uniformes (`jersey_colors`), en Calibración: gotero sobre el video y guardar en `match.yaml` |
+| `board/BoardsWorkspace.tsx` | El pizarrón: su página (`/pizarron`) y el paso Pizarrón de Estudio |
 | `PlayerMark.tsx` | Cómo se marca una persona sobre el video: caja, óvalo en el piso o flecha |
 | `match/MatchHeader.tsx` | Marcador del partido, los tres modos y la franja de pasos |
 | `VideoPlayer.tsx` | Reproductor de YouTube o de archivo local, con la misma interfaz |
