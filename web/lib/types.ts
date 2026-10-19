@@ -386,6 +386,13 @@ export interface RosterPlayer {
   number: number | null;
 }
 
+// A player of the other team, named in the quick review of the tracking. Her identity in the tracks is always
+// `R<number>`; the name is only shown.
+export interface RivalPlayer {
+  number: number;
+  name?: string;
+}
+
 export interface State {
   matches: Match[];
   events: MatchEvent[];
@@ -397,6 +404,8 @@ export interface State {
   trackEdits: TrackEdits[];
   // Our squad. Absent in backups made before it existed.
   roster: RosterPlayer[];
+  // Rival players named in the tracking, by the match id of the tracks files. Absent in older data.
+  rivals?: Record<string, RivalPlayer[]>;
   // Passes tagged by hand. Absent in backups made before they existed.
   passes: PassRow[];
   // Board plays. Absent in backups made before the board existed.

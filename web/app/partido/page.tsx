@@ -26,6 +26,7 @@ import { SegmentsTab } from "@/components/match/SegmentsTab";
 import { TagTab } from "@/components/match/TagTab";
 import { Card, DemoBadge, btn, btnPrimary, input } from "@/components/Shell";
 import { Dropdown } from "@/components/Dropdown";
+import { EdgeReveal, useFocusMode } from "@/components/FocusMode";
 import { Calibration } from "@/components/workspace/Calibration";
 import { Correction } from "@/components/workspace/Correction";
 import { SpeedControl } from "@/components/SpeedControl";
@@ -52,6 +53,7 @@ function MatchPage() {
   const linkT = Number(params.get("t"));
   const state = useStore();
   const hydrated = useHydrated();
+  const focus = useFocusMode();
   // With events, the match opens on its analysis (what the staff reads); without, on capture. A link to a moment
   // opens the events of that video.
   // The mode comes from the sidebar (?modo=captura|estudio|analisis); inside it the analyst picks the step.
@@ -247,6 +249,7 @@ function MatchPage() {
       {presentEdit && (
         <ClipEditor match={match} edit={presentEdit} startPresenting onClose={() => router.replace(`/partido?id=${encodeURIComponent(match.match_id)}`, { scroll: false })} />
       )}
+      <EdgeReveal edge="top" enabled={focus} className="bg-bg/95 px-4 pt-3 backdrop-blur md:px-8">
       <MatchHeader
         match={match}
         events={allEvents}
@@ -431,6 +434,7 @@ function MatchPage() {
           )}
         </Dropdown>
       </MatchHeader>
+      </EdgeReveal>
 
       {/* The video takes the room; the working panel keeps a fixed, narrower width (wider for the pitch animation). */}
       <div

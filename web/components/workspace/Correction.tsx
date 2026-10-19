@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Plus, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Plus, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
@@ -9,6 +9,7 @@ import { IconButton, Modal } from "@/components/Modal";
 import { Command } from "@/components/Command";
 import { ProcessPanel } from "@/components/workspace/ProcessPanel";
 import { LoadingStage } from "@/components/workspace/LoadingStage";
+import { useFocusMode } from "@/components/FocusMode";
 import { Dropdown, MenuItem } from "@/components/Dropdown";
 import { Card, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
 import { FilePicker, partLabel } from "@/components/LocalPick";
@@ -61,7 +62,7 @@ import {
   type TeamCode,
   type TracksFile,
 } from "@/lib/tracks";
-import { type TrackEdits } from "@/lib/types";
+import { type RivalPlayer, type TrackEdits } from "@/lib/types";
 import { NOBODY, PLAYERS_DONE, SAMPLE_S, applyQuick, applyQuickOnto, leftovers, namedCount, nextCheckpoint, partStatus, quickModel, sampleFrames, type QuickLabel } from "@/lib/quick";
 
 const TEAM_LABELS: Record<TeamCode, string> = { own: "Analizado", opp: "Contrario", ref: "Árbitra", unk: "Sin equipo" };
@@ -82,6 +83,18 @@ const afterDrag = { on: false };
 const TRACKS_PART = /^tracks_v\d+_\d+_\d+\.json$/;
 const asEvent = (files: File[]) => ({ target: { files, value: "" } }) as unknown as React.ChangeEvent<HTMLInputElement>;
 
+// The size of an element, kept up to date (a callback ref and its last width and height).
+function useBox() {
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const ref = useCallback((el: HTMLElement | null) => {
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setBox({ w: Math.round(e.contentRect.width), h: Math.round(e.contentRect.height) }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, box] as const;
+}
+
 function Head({ embedded, children }: { embedded: boolean; children: React.ReactNode }) {
   if (embedded) return <div className="mb-5 flex flex-wrap items-center gap-2">{children}</div>;
   return (
@@ -100,9 +113,15 @@ function Head({ embedded, children }: { embedded: boolean; children: React.React
 const SIDE_MIN_PX = 260;
 const SIDE_MAX_PX = 640;
 const SIDE_DEFAULT_PX = 336;
-const VIDEO_MIN_VH = 0.35;
-const VIDEO_MAX_VH = 0.92;
-const VIDEO_DEFAULT_VH = 0.78;
+// Height of the timeline panel (px), dragged on the bar above it.
+const BOTTOM_MIN_PX = 70;
+const BOTTOM_DEFAULT_PX = 180;
+// Room kept under the video for the modules moved there.
+const BELOW_MIN_PX = 200;
+// The panels that can go beside the video or under it (dragged by their grip).
+type ModuleId = "ball" | "pitch" | "quick" | "squad" | "person";
+const MODULE_NAMES: Record<ModuleId, string> = { ball: "Balón", pitch: "En la cancha", quick: "Revisión rápida", squad: "Plantilla", person: "Jugadora" };
+const MODULE_DRAG = "application/x-sportsan-module";
 // Held keys: an arrow plays (or rewinds) at this speed; Space held steps one processed frame every CREEP_MS.
 const FAST_RATE = 4;
 const FAST_TICK_MS = 100;
@@ -151,6 +170,19 @@ export function Correction({
   // Choosing how much of the top and bottom of the image to hide (the sky, the stands): the whole image shows meanwhile.
   const [cropping, setCropping] = useState(false);
   const [cropDraft, setCropDraft] = useState<[number, number] | null>(null);
+  // With a wide window the table fits the screen without scrolling: its height is measured from where it starts; the
+  // video takes what is left above the controls (container units), the panels scroll inside.
+  const rootEl = useRef<HTMLDivElement | null>(null);
+  const [fitH, setFitH] = useState<number | null>(null);
+  const [underH, setUnderH] = useState(56);
+  // What each part of the table needs: the width of the video column, and the height of the content of the side
+  // column, of the modules under the video and of the timeline panel.
+  const [colRef, colBox] = useBox();
+  const [sideRef, sideBox] = useBox();
+  const [belowRef, belowBox] = useBox();
+  const [bottomRef, bottomBox] = useBox();
+  // Who has a candidate on screen in the badge of suggestions.
+  const [candIdx, setCandIdx] = useState(0);
   // A player pinned (one at a time): the selected one, or a stretch of her line, joins her with J or by dragging.
   const [pinned, setPinned] = useState<number | null>(null);
   // Dragging one box onto another on the video (to join them), and what a dragged stretch is over.
@@ -214,6 +246,7 @@ export function Correction({
   const [qPicked, setQPicked] = useState<number | null>(null);
   const [qTyped, setQTyped] = useState("");
   const [qTeam, setQTeam] = useState<"own" | "opp">("own");
+  const [qRivalDraft, setQRivalDraft] = useState("");
   const qEvery = Number(usePref("quick:every", String(SAMPLE_S))) || SAMPLE_S;
   // One player at a time (stops only where she could have been swapped) or every player on sample frames.
   const qMode = usePref("quick:mode", "player") as "player" | "samples";
@@ -242,7 +275,14 @@ export function Correction({
   const listShow = usePref("correction:listShow", "named") as "named" | "all";
   // Room of each panel: the side column (px) and the share of the window's height the video may take.
   const sideW = Math.min(SIDE_MAX_PX, Math.max(SIDE_MIN_PX, Number(usePref("correction:sideW", String(SIDE_DEFAULT_PX))) || SIDE_DEFAULT_PX));
-  const videoVh = Math.min(VIDEO_MAX_VH, Math.max(VIDEO_MIN_VH, Number(usePref("correction:videoVh", String(VIDEO_DEFAULT_VH))) || VIDEO_DEFAULT_VH));
+  const bottomPref = Math.max(BOTTOM_MIN_PX, Number(usePref("correction:bottomH", String(BOTTOM_DEFAULT_PX))) || BOTTOM_DEFAULT_PX);
+  const bottomH = fitH ? Math.min(bottomPref, Math.round(fitH * 0.5)) : bottomPref;
+  // Modules placed under the video (the rest go in the side column).
+  const belowPref = usePref("correction:below", "squad");
+  const belowSet = new Set(belowPref.split(",").filter(Boolean));
+  const [dragMod, setDragMod] = useState<ModuleId | null>(null);
+  // Focus mode (sidebar and the match bar hidden until the pointer reaches the edge of the window).
+  const focus = useFocusMode();
   // Every person marked, or only the selected one (the rest faint until the pointer is over them); h switches.
   const focusSel = usePref("correction:focus", "all") === "sel";
   // How much of the top (sky) and bottom of the image is hidden, per video; nothing while it is being chosen.
@@ -953,6 +993,15 @@ export function Correction({
   };
   // The other person of the candidate being checked (the selected one is the other side).
   const peekOther = peek && sel !== null ? (peek.from === sel ? peek.to : peek.from) : null;
+  const candList = [...cand.next.map((x) => ({ verb: "sigue como", x, other: x.to })), ...cand.prev.map((x) => ({ verb: "viene de", x, other: x.from }))];
+  // The badge of suggestions shows one: the one being checked, or the one chosen with its arrow.
+  const candI = peek && candList.some((c) => c.x === peek) ? candList.findIndex((c) => c.x === peek) : Math.max(0, Math.min(candIdx, candList.length - 1));
+  const candCur = candList[candI] ?? null;
+  const nextCand = () => {
+    const next = (candI + 1) % candList.length;
+    setCandIdx(next);
+    if (peek) peekAt(candList[next].x);
+  };
   const peekNext = (after: Suggestion) => {
     const list = [...cand.next, ...cand.prev].filter((x) => x !== after);
     setPeek(null);
@@ -1019,6 +1068,31 @@ export function Correction({
     setEdits(r.edits);
     setMsg("El tramo es ahora otra persona; ella sigue igual antes y después. Ctrl + Z lo deshace.");
   };
+
+  const workspaceShown = !!data && !!fileUrl;
+  useEffect(() => {
+    const measure = () => {
+      const el = rootEl.current;
+      if (!el || window.innerWidth < 1280) return setFitH(null);
+      setFitH(Math.max(420, Math.floor(window.innerHeight - (el.getBoundingClientRect().top + window.scrollY) - 16)));
+    };
+    const raf = requestAnimationFrame(measure);
+    // Again once the bars of the focus mode have slid away.
+    const late = window.setTimeout(measure, 320);
+    window.addEventListener("resize", measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(late);
+      window.removeEventListener("resize", measure);
+    };
+  }, [workspaceShown, focus]);
+  // The controls and notices under the video: the video leaves them their room.
+  const underRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setUnderH(Math.round(e.contentRect.height)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // ---------------------------------------------------------------- joining (pinned player, drag and drop)
   // Two people into one: the one with a name keeps it (the target, when both or neither have one).
@@ -1154,6 +1228,16 @@ export function Correction({
     }
   };
   const anomDrop = (a: Anomaly) => data && a.person !== undefined && anomDone(a, dropRange(edits, data, a.person, a.frame, (a.until ?? a.frame + stride) - 1));
+  const anomDropAll = () => {
+    if (!data || selAnoms.length === 0) return;
+    let next = edits;
+    for (const a of selAnoms) if (a.person !== undefined) next = dropRange(next, data, a.person, a.frame, (a.until ?? a.frame + stride) - 1);
+    const n = selAnoms.reduce((t, a) => t + anomFrames(a), 0);
+    setEdits(next);
+    setAnomAt(null);
+    setMode(null);
+    setMsg(`Quitados ${n} cuadro(s) de ${selAnoms.length} salto(s): se rellenan al guardar. Ctrl + Z lo deshace.`);
+  };
   const anomOk = (a: Anomaly) => anomDone(a, { ...edits, anomalyOk: [...new Set([...(edits.anomalyOk ?? []), anomalyKey(a)])] });
   const anomFix = (a: Anomaly) => {
     seekFrame(a.frame);
@@ -1298,9 +1382,15 @@ export function Correction({
     const w0 = sideW;
     dragBy(e, (dx) => setPref("correction:sideW", String(Math.round(Math.min(SIDE_MAX_PX, Math.max(SIDE_MIN_PX, w0 - dx))))));
   };
-  const dragVideo = (e: React.PointerEvent<HTMLElement>) => {
-    const f0 = videoVh;
-    dragBy(e, (_dx, dy) => setPref("correction:videoVh", String(Math.min(VIDEO_MAX_VH, Math.max(VIDEO_MIN_VH, f0 + dy / window.innerHeight)).toFixed(3))));
+  const dragBottom = (e: React.PointerEvent<HTMLElement>) => {
+    const h0 = bottomH;
+    dragBy(e, (_dx, dy) => setPref("correction:bottomH", String(Math.round(Math.max(BOTTOM_MIN_PX, h0 - dy)))));
+  };
+  const moveModule = (m: ModuleId, where: "side" | "below") => {
+    const next = new Set(belowSet);
+    if (where === "below") next.add(m);
+    else next.delete(m);
+    setPref("correction:below", [...next].join(","));
   };
   // Crop: the edges of the image are dragged on the video while choosing it; kept per video.
   const dragCrop = (e: React.PointerEvent<HTMLElement>, edge: "top" | "bottom") => {
@@ -1765,7 +1855,32 @@ export function Correction({
   const qf = qMode === "player" ? pf : qFrame;
   const qRefs = useMemo(() => (data ? fileTeamRefs(data) : {}), [data]);
   const qRoster = useMemo(() => [...(state.roster ?? [])].sort((a, b) => (a.number ?? 999) - (b.number ?? 999)), [state.roster]);
-  const qNumber = new Map(qRoster.map((r) => [r.player_id, r.number]));
+  const rivalsSaved = useMemo(() => state.rivals?.[mid] ?? [], [state.rivals, mid]);
+  const rivalList = useMemo(() => {
+    const all = new Map<number, RivalPlayer>(rivalsSaved.map((r) => [r.number, r]));
+    for (const l of qLabels) if (/^R\d+$/.test(l.name) && !all.has(Number(l.name.slice(1)))) all.set(Number(l.name.slice(1)), { number: Number(l.name.slice(1)) });
+    return [...all.values()].sort((a, b) => a.number - b.number);
+  }, [rivalsSaved, qLabels]);
+  const qNumber = new Map<string, number | null>([...qRoster.map((r) => [r.player_id, r.number] as const), ...rivalList.map((r) => [`R${r.number}`, r.number] as const)]);
+  const isRival = (name: string) => /^R\d+$/.test(name);
+  // How a name is shown: dorsal and name (a rival without a name, by her dorsal).
+  const qShow = (name: string) => {
+    if (!isRival(name)) return `${qNumber.get(name) ?? ""} ${name}`.trim();
+    const r = rivalList.find((x) => `R${x.number}` === name);
+    return r?.name ? `${r.number} ${r.name}` : name;
+  };
+  // «7 Pérez» adds (or renames) the rival with dorsal 7.
+  const addRival = (text: string): boolean => {
+    const m = text.trim().match(/^(\d{1,3})\s*(.*)$/);
+    if (!m) {
+      setMsg("Escribe su dorsal y, si quieres, su nombre: «7 Pérez».");
+      return false;
+    }
+    const number = Number(m[1]);
+    const name = m[2].trim() || undefined;
+    mutate((st) => ({ ...st, rivals: { ...(st.rivals ?? {}), [mid]: [...(st.rivals?.[mid] ?? []).filter((r) => r.number !== number), { number, ...(name ? { name } : {}) }] } }));
+    return true;
+  };
   const qBoxes = qf !== null ? (byFrame.get(qf)?.boxes ?? []).filter((b) => !isDropped(droppedBoxes, b, qf)) : [];
   const qLabelAt = (track: number) => qLabels.find((l) => l.frame === qf && l.track === track);
   const qPred = (track: number) => (qf !== null ? qModel?.nameOf.get(`${qf}:${track}`) : undefined);
@@ -1802,7 +1917,7 @@ export function Correction({
     const add: QuickLabel[] = qBoxes.flatMap((b) => {
       const pred = qPred(b[0]);
       if (!pred || qLabelAt(b[0])) return [];
-      const team = qNumber.has(pred) ? "own" : pred.startsWith("R") ? "opp" : qTeam;
+      const team = isRival(pred) ? "opp" : qNumber.has(pred) ? "own" : qTeam;
       return [{ frame: qFrame, track: b[0], name: pred, team }];
     });
     qSetLabels([...qLabels, ...add], [...new Set([...qSeen, qFrame])]);
@@ -1849,11 +1964,11 @@ export function Correction({
   };
   // The next player of the squad still to do (all done: just the next one).
   const qNextPlayer = (done: string[] = []) => {
-    const names = qRoster.map((r) => r.player_id);
+    const names = qPlayerTeam === "opp" ? rivalList.map((r) => `R${r.number}`) : qRoster.map((r) => r.player_id);
     if (names.length === 0) return;
     const i = qPlayer ? names.indexOf(qPlayer) : -1;
     const order = names.map((_, k) => names[(i + 1 + k) % names.length]);
-    qPickPlayer(order.find((n) => !done.includes(n) && n !== qPlayer) ?? order[0], "own");
+    qPickPlayer(order.find((n) => !done.includes(n) && n !== qPlayer) ?? order[0], qPlayerTeam);
   };
   const qDone = edits.quick?.done ?? [];
   // Reviewed to the end of the part: counts for the part to be complete; on to the next one.
@@ -2316,7 +2431,7 @@ export function Correction({
               <PlayerMark
                 box={[b[1], b[2], b[3], b[4]]}
                 color={c}
-                label={hers || name ? (name === NOBODY ? "—" : `${name ? `${qNumber.get(name) ?? ""} ${name}` : ""}${hers && !lab ? "?" : ""}`) : undefined}
+                label={hers || name ? (name === NOBODY ? "—" : `${name ? qShow(name) : ""}${hers && !lab ? "?" : ""}`) : undefined}
                 style={labelStyle}
                 unit={dotR}
                 strong={hers}
@@ -2328,7 +2443,7 @@ export function Correction({
         const isSel = qSel === b[0];
         const team = boxTeamOf(b, qRefs);
         const c = isSel ? "#fde047" : lab ? "#ffffff" : name ? TEAM_COLORS[team] : "rgba(255,255,255,.45)";
-        const shownName = name === NOBODY ? "—" : name ? `${qNumber.get(name) ?? ""}${qNumber.has(name) ? " " : ""}${name}` : "?";
+        const shownName = name === NOBODY ? "—" : name ? qShow(name) : "?";
         return (
           <g key={b[0]} className={`cursor-pointer ${focusSel && qSel !== null && !isSel ? "mark-dim" : ""}`} opacity={b[11] ? 1 : 0.3} onClick={(e) => (e.stopPropagation(), setQPicked(b[0]))}>
             <rect x={b[1]} y={b[2]} width={b[3] - b[1]} height={b[4] - b[2]} fill="transparent" stroke="none" />
@@ -2389,9 +2504,12 @@ export function Correction({
   };
   // Where the review of the current player has got to in the part: her next stop, or the end.
   const qProgress = data && qPlayer ? Math.min(1, Math.max(0, ((qCp ? qCp.frame : data.end_frame) - data.start_frame) / span)) : 0;
-  const qDoneCount = qRoster.filter((r) => qDone.includes(r.player_id)).length;
+  // The squad of the team being named: ours from the roster, theirs as they get named here.
+  const qSquad = qTeam === "own" ? qRoster.map((r) => ({ id: r.player_id, number: r.number, name: r.player_id })) : rivalList.map((r) => ({ id: `R${r.number}`, number: r.number, name: r.name ?? "" }));
+  const qDoneCount = qSquad.filter((r) => qDone.includes(r.id)).length;
   const qShortcuts: [string, string][] = [
     ["número", "elige la jugadora por su dorsal"],
+    ["A / S", "plantilla nuestra / rival"],
     ["clic", "esa caja es ella (también para empezar)"],
     ["Enter / X", "es ella / no es ella"],
     ["← →", "1 s atrás o adelante (mantener: rápido)"],
@@ -2402,45 +2520,15 @@ export function Correction({
     <section className="rounded-lg bg-surface p-3">
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <h2 className="cond text-sm font-bold tracking-wide text-ink uppercase">Revisión rápida</h2>
-        <span className="tc text-xs text-faint">
-          {qDoneCount}/{qRoster.length} hechas
-        </span>
+        <span className="tc text-xs text-faint">{qLabels.length} nombres dados</span>
       </div>
       {qModeSwitch}
-      {/* The squad as shirt numbers: the current one filled, done ones tinted with a tick, started ones with a dot. */}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(3.4rem,1fr))] gap-1.5">
-        {qRoster.map((r) => {
-          const done = qDone.includes(r.player_id);
-          const cur = qPlayer === r.player_id;
-          const n = qPlayerCount(r.player_id);
-          return (
-            <button
-              key={r.player_id}
-              type="button"
-              title={`${r.player_id}${done ? " · hecha" : n > 0 ? ` · ${n} nombre(s) dados` : ""}`}
-              aria-pressed={cur}
-              onClick={() => qPickPlayer(r.player_id, "own")}
-              className={`relative flex flex-col items-center rounded-md px-1 pt-1.5 pb-1 transition-[background-color,transform] duration-150 active:scale-95 ${
-                cur ? "bg-own text-[var(--on-own)]" : done ? "bg-own/15 text-ink" : "bg-bg/60 text-ink-2 hover:bg-raised hover:text-ink"
-              }`}
-            >
-              <span className="num text-xl leading-none">{r.number ?? "–"}</span>
-              <span className="mt-1 w-full truncate text-center text-[10px] leading-tight opacity-80">{r.player_id}</span>
-              {done ? (
-                <Check size={10} weight="bold" className={`absolute top-1 right-1 ${cur ? "" : "text-ok"}`} />
-              ) : (
-                n > 0 && <span className={`absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full ${cur ? "bg-[var(--on-own)]" : "bg-own"}`} />
-              )}
-            </button>
-          );
-        })}
-      </div>
       {qPlayer ? (
         <div key={qPlayer} className="enter mt-3 rounded-lg bg-bg/60 p-3">
           <div className="flex items-center gap-3">
-            <span className="num text-3xl leading-none text-own">{qNumber.get(qPlayer) ?? "–"}</span>
+            <span className={`num text-3xl leading-none ${isRival(qPlayer) ? "text-opp" : "text-own"}`}>{qNumber.get(qPlayer) ?? "–"}</span>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-ink">{qPlayer}</div>
+              <div className="truncate text-sm font-medium text-ink">{isRival(qPlayer) ? (rivalList.find((r) => `R${r.number}` === qPlayer)?.name ?? qPlayer) : qPlayer}</div>
               <div className="text-[11px] text-faint">{qDone.includes(qPlayer) ? "hecha en esta parte" : `${qPlayerCount(qPlayer)} nombre(s) dados`}</div>
             </div>
             <IconButton
@@ -2499,7 +2587,7 @@ export function Correction({
           )}
         </div>
       ) : (
-        <p className="mt-3 text-sm text-faint">Elige una jugadora: su dorsal en el teclado o clic arriba.</p>
+        <p className="mt-3 text-sm text-faint">Elige una jugadora: su dorsal en el teclado o clic en la plantilla.</p>
       )}
       {qPlayer && qMine.length > 0 && (
         <details className="mt-2 rounded-lg bg-bg/40 px-3 py-2 text-xs text-muted">
@@ -2522,11 +2610,11 @@ export function Correction({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <select className={`${input} min-w-0 flex-1`} value={qMoveTo} aria-label="Pasar todos a otra jugadora" onChange={(e) => setQMoveTo(e.target.value)}>
               <option value="">Pasar todos a…</option>
-              {qRoster
-                .filter((r) => r.player_id !== qPlayer)
+              {(isRival(qPlayer) ? rivalList.map((r) => ({ id: `R${r.number}`, number: r.number, name: r.name ?? "" })) : qRoster.map((r) => ({ id: r.player_id, number: r.number, name: r.player_id })))
+                .filter((r) => r.id !== qPlayer)
                 .map((r) => (
-                  <option key={r.player_id} value={r.player_id}>
-                    {r.number ?? "–"} {r.player_id}
+                  <option key={r.id} value={r.id}>
+                    {r.number ?? "–"} {r.name}
                   </option>
                 ))}
             </select>
@@ -2560,76 +2648,141 @@ export function Correction({
       </button>
     </section>
   );
+  const qSampleShortcuts: [string, string][] = [
+    ["número", "nombra la caja amarilla (dos cifras, o Enter); la siguiente sin nombre se elige sola"],
+    ["Enter", "confirma lo que propone el modelo (nombres con «?») y pasa a la siguiente muestra"],
+    ["−", "esa caja no es nadie que interese (duplicada, fuera de la cancha)"],
+    ["Supr", "quita el nombre de la caja elegida · clic en una caja para elegirla"],
+    ["Tab", "la siguiente caja sin nombre"],
+    ["A / S", "plantilla nuestra / rival"],
+    ["← →", "muestra anterior / siguiente sin confirmar"],
+  ];
   const quickSamplesPanel = (
-    <Card title="Revisión rápida" note={qFrame !== null ? `muestra ${qIdx + 1} de ${qSamples.length} · ${fmtT(qFrame / fps)}` : undefined}>
+    <section className="rounded-lg bg-surface p-3">
+      <div className="mb-3 flex items-baseline justify-between gap-2">
+        <h2 className="cond text-sm font-bold tracking-wide text-ink uppercase">Revisión rápida</h2>
+        <span className="tc text-xs text-faint">{qFrame !== null ? `muestra ${qIdx + 1}/${qSamples.length} · ${fmtT(qFrame / fps)}` : ""}</span>
+      </div>
       {qModeSwitch}
-      <div className="flex items-center gap-2">
-        <button type="button" className={btn} disabled={qIdx === 0} onClick={() => qGo(qIdx - 1)}>
-          ← <kbd className="kbd">←</kbd>
-        </button>
-        <div className="relative h-2 flex-1 rounded-full bg-surface">
-          <span className="absolute inset-y-0 left-0 rounded-full bg-accent/60" style={{ width: `${(100 * qSeen.length) / Math.max(1, qSamples.length)}%` }} />
+      <div className="rounded-lg bg-bg/60 p-3">
+        <div className="h-1 overflow-hidden rounded-full bg-line" title="Muestras revisadas">
+          <span className="block h-full rounded-full bg-own transition-[width] duration-300" style={{ width: `${(100 * qSeen.length) / Math.max(1, qSamples.length)}%` }} />
         </div>
-        <button type="button" className={btnPrimary} onClick={qConfirm} title="Lo que propone el modelo en este cuadro está bien: siguiente muestra">
-          Confirmar <kbd className="kbd">Enter</kbd>
-        </button>
-      </div>
-      <div className="mt-3 seg w-full" role="group" aria-label="Equipo que se nombra">
-        {(["own", "opp"] as const).map((t) => (
-          <button key={t} type="button" aria-pressed={qTeam === t} className="seg-opt flex-1" onClick={() => setQTeam(t)}>
-            {t === "own" ? "Analizado" : "Contrario"} <kbd className="kbd ml-1">{t === "own" ? "A" : "S"}</kbd>
+        <p className="mt-3 text-sm text-pretty text-ink-2">
+          {qSel !== null ? "Nombra la caja amarilla: su dorsal o clic en la plantilla." : "Todas las cajas de este cuadro tienen nombre: confirma y sigue."}
+        </p>
+        <div className="mt-3 grid grid-cols-[auto_1fr] gap-1.5">
+          <button type="button" className={`${btn} justify-center`} disabled={qIdx === 0} onClick={() => qGo(qIdx - 1)} aria-label="Muestra anterior">
+            ←
           </button>
-        ))}
+          <button type="button" className={`${btnPrimary} justify-center`} onClick={qConfirm} title="Lo que propone el modelo en este cuadro está bien: siguiente muestra">
+            <Check size={14} /> Confirmar <kbd className="kbd">Enter</kbd>
+          </button>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-faint">
+          <span>{qModel ? new Set(qModel.segments.filter((x) => x.name).map((x) => x.name)).size : 0} jugadoras con nombre</span>
+          {qModel && qModel.conflicts.length > 0 && <span className="text-warn">{qModel.conflicts.length} choques</span>}
+          <label className="ml-auto flex items-center gap-1.5">
+            Cada
+            <select className={`${input} !py-0.5`} value={qEvery} onChange={(e) => (setPref("quick:every", e.target.value), qGo(0))}>
+              {[2, 3, 5].map((v) => (
+                <option key={v} value={v}>
+                  {v} s
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
-      {qTeam === "own" && qRoster.length > 0 && (
-        <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
-          {qRoster.map((r) => (
-            <button key={r.player_id} type="button" disabled={qSel === null} onClick={() => qGive(r.player_id)}
-              className="flex items-center gap-1.5 rounded-xl border border-line px-2 py-1 text-left text-xs text-ink-2 transition-colors hover:border-accent disabled:opacity-40">
-              <span className="tc w-5 text-right text-faint">{r.number ?? "–"}</span>
-              <span className="min-w-0 flex-1 truncate">{r.player_id}</span>
+      <details className="mt-2 rounded-lg px-3 py-1.5 text-xs text-muted">
+        <summary className="cursor-pointer text-faint hover:text-ink-2">Atajos</summary>
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
+          {qSampleShortcuts.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt>
+                <kbd className="kbd">{k}</kbd>
+              </dt>
+              <dd>{v}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
+      <button
+        type="button"
+        className={`${btnPrimary} mt-3 w-full justify-center`}
+        disabled={!qModel || qLabels.length === 0}
+        onClick={qApplyAsk}
+        title="Cada nombre se extiende por su track; si un track recibe dos nombres, se corta en el cruce más probable entre las dos muestras. Los trozos con el mismo nombre se unen y los huecos de hasta 3 s se rellenan al guardar. Medido con dos partes corregidas, nombrando cada 3 s: 80–95 % de sus cajas con el nombre correcto, menos del 1 % mal."
+      >
+        <Check size={15} /> Aplicar a la mesa
+      </button>
+    </section>
+  );
+  // The squad as shirt numbers, ours or theirs (A / S). By player: a click picks who is followed (the current one
+  // filled, done ones tinted with a tick, started ones with a dot). By samples: a click names the yellow box. Rivals are
+  // added here with their dorsal and, if known, their name.
+  const squadPanel = (
+    <section className="rounded-lg bg-surface p-3">
+      <div className="mb-2.5 flex flex-wrap items-center gap-2">
+        <div className="seg" role="group" aria-label="Plantilla">
+          {(["own", "opp"] as const).map((t) => (
+            <button key={t} type="button" aria-pressed={qTeam === t} className="seg-opt inline-flex items-center gap-1.5" onClick={() => setQTeam(t)}>
+              <span className={`h-2 w-2 rounded-full ${t === "own" ? "bg-own" : "bg-opp"}`} />
+              {t === "own" ? "Nuestras" : "Rivales"} <kbd className="kbd">{t === "own" ? "A" : "S"}</kbd>
             </button>
           ))}
         </div>
-      )}
-      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-muted">
-        {[
-          ["número", "nombra la caja amarilla (dos cifras seguidas, o Enter); la siguiente sin nombre se elige sola"],
-          ["Enter", "confirma lo que propone el modelo (nombres con «?») y pasa a la siguiente muestra"],
-          ["−", "esa caja no es nadie que interese (duplicada, fuera de la cancha)"],
-          ["Supr", "quita el nombre de la caja elegida · clic en una caja para elegirla · Tab: la siguiente sin nombre"],
-          ["← →", "muestra anterior / siguiente sin confirmar"],
-        ].map(([k, v]) => (
-          <div key={k} className="contents">
-            <dt><kbd className="kbd">{k}</kbd></dt>
-            <dd>{v}</dd>
-          </div>
-        ))}
-      </dl>
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-        <span>{qLabels.length} nombres dados</span>
-        <span>{qModel ? new Set(qModel.segments.filter((x) => x.name).map((x) => x.name)).size : 0} jugadoras</span>
-        {qModel && qModel.conflicts.length > 0 && <span className="text-warn">{qModel.conflicts.length} choques (un nombre en dos sitios)</span>}
-        <label className="ml-auto flex items-center gap-1.5">
-          Cada
-          <select className={input} value={qEvery} onChange={(e) => (setPref("quick:every", e.target.value), qGo(0))}>
-            {[2, 3, 5].map((v) => (
-              <option key={v} value={v}>{v} s</option>
-            ))}
-          </select>
-        </label>
+        <span className="tc ml-auto text-xs text-faint">{qMode === "player" ? `${qDoneCount}/${qSquad.length} hechas` : qSel !== null ? "clic: nombra la caja amarilla" : ""}</span>
       </div>
-      <button type="button" className={`${btnPrimary} mt-4 w-full`} disabled={!qModel || qLabels.length === 0} onClick={qApplyAsk}>
-        <Check size={15} /> Aplicar a la mesa
-      </button>
-      <p className="mt-2 text-[11px] text-pretty text-faint">
-        Cada nombre se extiende por su track. Si un track recibe dos nombres, se corta en el cruce más probable entre las dos muestras; si
-        sigue a la vista en una muestra y no se confirmó, también. Los trozos con el mismo nombre se unen y los huecos de hasta 3 s se
-        rellenan al guardar. Medido con tus dos partes corregidas, nombrando solo a las nuestras cada 3 s: 40–70 números por minuto de
-        video, el 80–95 % de sus cajas con el nombre correcto, menos del 1 % mal (el resto sin nombre). Aplicar reemplaza las
-        correcciones de esta parte (Ctrl + Z las recupera).
-      </p>
-    </Card>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(3.6rem,1fr))] gap-1.5">
+        {qSquad.map((r) => {
+          const done = qDone.includes(r.id);
+          const cur = qMode === "player" && qPlayer === r.id;
+          const n = qPlayerCount(r.id);
+          const opp = qTeam === "opp";
+          return (
+            <button
+              key={r.id}
+              type="button"
+              title={`${r.number ?? ""} ${r.name}${done ? " · hecha" : n > 0 ? ` · ${n} nombre(s) dados` : ""}${opp ? " · para cambiar su nombre, vuelve a escribir su dorsal con el nuevo" : ""}`}
+              aria-pressed={cur}
+              disabled={qMode === "samples" && qSel === null}
+              onClick={() => (qMode === "player" ? qPickPlayer(r.id, qTeam) : qGive(r.id))}
+              className={`relative flex flex-col items-center rounded-md px-1 pt-1.5 pb-1 transition-[background-color,transform] duration-150 active:scale-95 disabled:opacity-40 ${
+                cur ? (opp ? "bg-opp text-black" : "bg-own text-[var(--on-own)]") : done ? (opp ? "bg-opp/15 text-ink" : "bg-own/15 text-ink") : "bg-bg/60 text-ink-2 hover:bg-raised hover:text-ink"
+              }`}
+            >
+              <span className="num text-xl leading-none">{r.number ?? "–"}</span>
+              <span className="mt-1 w-full truncate text-center text-[10px] leading-tight opacity-80">{r.name || "—"}</span>
+              {done ? (
+                <Check size={10} weight="bold" className={`absolute top-1 right-1 ${cur ? "" : "text-ok"}`} />
+              ) : (
+                n > 0 && <span className={`absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full ${cur ? "bg-current" : opp ? "bg-opp" : "bg-own"}`} />
+              )}
+            </button>
+          );
+        })}
+        {qTeam === "opp" && (
+          <form
+            className="col-span-2 flex items-center"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (addRival(qRivalDraft)) setQRivalDraft("");
+            }}
+          >
+            <input
+              className={`${input} h-full w-full text-xs`}
+              placeholder="+ 7 Pérez"
+              aria-label="Añadir una rival: dorsal y nombre"
+              title="Dorsal y, si lo sabes, su nombre (Enter). Su identidad es R y el dorsal; el nombre solo se muestra."
+              value={qRivalDraft}
+              onChange={(e) => setQRivalDraft(e.target.value)}
+            />
+          </form>
+        )}
+      </div>
+      {qTeam === "own" && qRoster.length === 0 && <p className="mt-2 text-xs text-faint">Sin plantilla: añádela en Jugadoras.</p>}
+    </section>
   );
   const quickPanel = qMode === "player" ? quickPlayerPanel : quickSamplesPanel;
 
@@ -2706,6 +2859,292 @@ export function Correction({
               {!row?.H && pitchShow !== "named" && <p className="mt-1 text-[11px] text-warn">Este cuadro no tiene calibración: no hay posiciones.</p>}
             </Card>
   );
+  // The panel of the selected player (or the ones to check), with the pinned one under it.
+  const personModule = (
+    <div className="space-y-3">
+                {blocked && (
+                  <div role="alert" className="enter mb-3 rounded-2xl bg-warn-900/70 px-3 py-2.5 text-xs text-warn">
+                    <div className="flex items-start gap-2">
+                      <Warning size={14} className="mt-0.5 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        No las uní: {label(personById.get(blocked.into), blocked.into)} y {label(personById.get(blocked.from), blocked.from)} aparecen a la
+                        vez y en sitios distintos en {blocked.frames.length} cuadro(s), así que no pueden ser la misma persona.
+                        {blocked.same > 0 && ` (En otros ${blocked.same} sí coinciden en el mismo sitio.)`}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex gap-1 pl-5">
+                      <IconButton label="Ver el primer cuadro donde coinciden" onClick={() => seekFrame(blocked.frames[0])}>
+                        <Eye size={14} />
+                      </IconButton>
+                      <IconButton
+                        label="Unir de todos modos: donde están separadas quedarán dos cajas y habrá que elegir cuál es ella"
+                        tone="accent"
+                        onClick={() => tryMerge(blocked.into, blocked.from, true)}
+                      >
+                        <ArrowsMerge size={14} />
+                      </IconButton>
+                      <IconButton label="Cancelar" onClick={() => setBlocked(null)}>
+                        <X size={14} />
+                      </IconButton>
+                    </div>
+                  </div>
+                )}
+                {notice && (
+                  <div role="status" className="enter mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-warn-900/70 px-3 py-2 text-xs text-warn">
+                    <span className="min-w-0 flex-1">{notice}</span>
+                    <IconButton label="Deshacer (Ctrl + Z)" onClick={undo}>
+                      <ArrowCounterClockwise size={14} />
+                    </IconButton>
+                    <IconButton label="Está bien (Enter)" tone="accent" onClick={() => setNotice(null)}>
+                      <Check size={14} />
+                    </IconButton>
+                  </div>
+                )}
+              {selected ? (
+                  <div className="space-y-2 rounded-lg bg-surface p-3">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                      <ul className="min-w-0 flex-1 basis-72">{renderRow(selected)}</ul>
+                      <span className="flex items-center gap-1">
+                        <IconButton label="Unir con… (u): clic en la caja o fila de la misma jugadora" tone={mode === "merge" ? "accent" : "default"} onClick={() => setMode(mode === "merge" ? null : "merge")}>
+                          <ArrowsMerge size={16} />
+                        </IconButton>
+                        <IconButton
+                          label={
+                            canSplit
+                              ? "Partir aquí: desde este cuadro es otra persona. s selecciona el segundo tramo; Shift + S deja seleccionado el primero"
+                              : "Partir aquí (s): colócate entre su primera y su última aparición"
+                          }
+                          disabled={!canSplit}
+                          onClick={() => splitHere()}
+                        >
+                          <ArrowsSplit size={16} />
+                        </IconButton>
+                        <IconButton label="Marcar a mano (p): clic en sus pies" tone={mode === "manual" ? "accent" : "default"} onClick={() => setMode(mode === "manual" ? null : "manual")}>
+                          <HandPointing size={16} />
+                        </IconButton>
+                        {manualHere.some((m) => m.identity === selected.id) && pf !== null && (
+                          <IconButton label="Quitar la marca a mano de este cuadro" onClick={() => setEdits(removeManual(edits, selected.id, pf))}>
+                            <Eraser size={16} />
+                          </IconButton>
+                        )}
+                        <IconButton label="No es jugadora (Supr)" tone="danger" onClick={removeSelected}>
+                          <Prohibit size={16} />
+                        </IconButton>
+                        <IconButton
+                          label={pinned === selected.id ? "Soltarla (k)" : "Fijarla (k): luego, con otra seleccionada, J la une a ella; también puedes arrastrarle tramos de la línea"}
+                          tone={pinned === selected.id ? "accent" : "default"}
+                          onClick={togglePin}
+                        >
+                          <PushPin size={16} weight={pinned === selected.id ? "fill" : "regular"} />
+                        </IconButton>
+                        <IconButton label="Soltar la selección (Esc)" onClick={() => setSel(null)}>
+                          <X size={16} />
+                        </IconButton>
+                      </span>
+                    </div>
+                    {/* Notices about her, in one row of chips. */}
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      {candCur && (
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-xl py-0.5 pr-0.5 pl-2 ${peek === candCur.x ? "bg-warn-900/70 text-warn" : "bg-bg/60 text-ink-2"}`}
+                          title={`¿${candCur.verb} ${label(personById.get(candCur.other), candCur.other)}? Ordenadas por dónde debería estar según cómo se movía; la primera acierta un tercio de las veces.`}
+                        >
+                          <span className="text-faint">{candCur.verb}</span>
+                          <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLORS[personById.get(candCur.other)?.team ?? "unk"] }} />
+                          <span className="tc">{label(personById.get(candCur.other), candCur.other)}</span>
+                          <span className="tc text-faint">
+                            {candCur.x.gapS.toFixed(1)} s · {candCur.x.distM.toFixed(0)} m
+                          </span>
+                          <IconButton label="Ver en el video (n)" tone={peek === candCur.x ? "accent" : "default"} onClick={() => peekAt(candCur.x)}>
+                            <Eye size={13} />
+                          </IconButton>
+                          <IconButton label="Es ella: unir" onClick={() => joinCandidate(candCur.x)}>
+                            <Check size={13} />
+                          </IconButton>
+                          <IconButton label="No es ella (no se vuelve a proponer)" tone="danger" onClick={() => rejectCandidate(candCur.x)}>
+                            <X size={13} />
+                          </IconButton>
+                          {candList.length > 1 && (
+                            <>
+                              <span className="tc pl-1 text-faint">
+                                {candI + 1}/{candList.length}
+                              </span>
+                              <IconButton label="Otra candidata" onClick={nextCand}>
+                                <SkipForward size={13} />
+                              </IconButton>
+                            </>
+                          )}
+                        </span>
+                      )}
+                      {(() => {
+                        // One badge for all her changes of shirt: c goes from one to the next; the scissors cut the one on screen.
+                        const hs = hintsByPerson.get(selected.id) ?? [];
+                        if (hs.length === 0) return null;
+                        const here = hs.find((h) => Math.abs(h.frame - frame) <= 1.5 * fps);
+                        return (
+                          <span className="inline-flex items-center gap-1 rounded-xl bg-warn-900/50 py-0.5 pr-0.5 pl-2 text-warn" title={here ? hintText(here) : "Cambios de camiseta: c va al siguiente"}>
+                            <TShirt size={13} weight="fill" />
+                            {hs.length} cambio(s) de camiseta
+                            <IconButton label="Ir al siguiente (c)" onClick={() => nextOf(hs.map((h) => Math.max(data?.start_frame ?? 0, h.frame - Math.round(fps))))}>
+                              <SkipForward size={13} />
+                            </IconButton>
+                            <IconButton label={here ? "Cortar aquí: de este punto en adelante es otra persona" : "Ve a un cambio (c) para cortarlo"} tone="accent" disabled={!here} onClick={() => here && fixHint(here)}>
+                              <Scissors size={13} />
+                            </IconButton>
+                          </span>
+                        );
+                      })()}
+                      {absorbForSel.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-xl bg-accent-900/40 py-0.5 pr-0.5 pl-2 text-ink-2">
+                          <MagicWand size={13} />
+                          {absorbForSel.length} trozo(s) corto(s) suyos
+                          {absorbForSel.some((a) => a.adds > 0) && ` (+${absorbForSel.reduce((n, a) => n + a.adds, 0)} cuadros)`}
+                          <IconButton label="Añadírselos" tone="accent" onClick={() => absorb(absorbForSel)}>
+                            <Plus size={13} />
+                          </IconButton>
+                        </span>
+                      )}
+                      {selected.conflicts.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-xl bg-warn-900/60 py-0.5 pr-0.5 pl-2 text-warn" title="Haz clic en la caja que sí es ella en esos cuadros, o deja una donde están en el mismo sitio">
+                          <Warning size={13} />
+                          dos cajas en {selected.conflicts.length} cuadro(s)
+                          <IconButton label="Ir al primero" onClick={() => seekFrame(selected.conflicts[0])}>
+                            <Eye size={13} />
+                          </IconButton>
+                          <IconButton label="Dejar una donde están en el mismo sitio (m)" tone="accent" onClick={unifySelf}>
+                            <MagicWand size={13} />
+                          </IconButton>
+                        </span>
+                      )}
+                      {selAnoms.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-xl bg-danger/15 py-0.5 pr-0.5 pl-2 text-danger" title="Movimientos que nadie puede correr: casi siempre la caja perdió sus pies un momento. Recuadro rojo en su línea.">
+                          <Warning size={13} weight="fill" />
+                          {selAnoms.length} salto(s) imposible(s)
+                          <IconButton label="Revisarlos uno a uno (a)" onClick={() => anomStep(1)}>
+                            <SkipForward size={13} />
+                          </IconButton>
+                          <IconButton label="Quitar los cuadros de todos (se rellenan al guardar)" tone="danger" onClick={anomDropAll}>
+                            <Eraser size={13} />
+                          </IconButton>
+                        </span>
+                      )}
+                      {selGaps.length > 0 ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-xl bg-danger/15 py-0.5 pr-0.5 pl-2 text-danger"
+                          title={`Huecos por revisar (rojo en la línea): se perdió en medio de la imagen durante más de ${FIX_GAP_S} s. Con «g» vas a 1 s de donde se perdió y avanzas de segundo en segundo. Si en el hueco hay otra caja que es ella, únela; si el detector no la vio, márcala a mano (p). Los huecos donde salió de cuadro no cuentan: al guardar se rellenan con una recta.`}
+                        >
+                          {selGaps.length} hueco(s) por revisar · el más largo {(Math.max(...selGaps.map(([a, b]) => b - a)) / fps).toFixed(1)} s
+                          <IconButton label="Ir al siguiente hueco (g)" onClick={nextGap}>
+                            <SkipForward size={13} />
+                          </IconButton>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-xl bg-ok/15 px-2 py-0.5 text-ok" title="No le quedan huecos en medio de la imagen; los de fuera de cuadro se rellenan al guardar">
+                          <Check size={13} weight="bold" /> Sin huecos por revisar
+                        </span>
+                      )}
+                      {selOffCamera.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-xl bg-bg/60 px-2 py-0.5 text-faint" title="Huecos donde salió de cuadro (estaba en el borde de la imagen al perderla o al encontrarla): gris en la línea; se rellenan al guardar">
+                          {selOffCamera.length} fuera de cuadro
+                        </span>
+                      )}
+                    </div>
+                  </div>
+              ) : (
+                <div className="rounded-lg bg-surface p-3">
+                  <p className="text-sm text-ink-2">Clic sobre una jugadora en el video.</p>
+                  {namedToCheck.length > 0 && (
+                    <>
+                      <div className="mt-3 mb-1 text-xs text-faint">Con nombre, por verificar</div>
+                      <ul className="space-y-0.5">{namedToCheck.slice(0, 8).map((p) => renderRow(p))}</ul>
+                    </>
+                  )}
+                  {shortIds.length > 0 && (
+                    <button type="button" className="btn btn-ghost mt-2 !px-0 text-xs" onClick={() => setModal("cleanup")}>
+                      <BroomIcon size={14} />
+                      Limpieza rápida · {shortIds.length} trozos de menos de 1 s
+                    </button>
+                  )}
+                </div>
+              )}
+              {pinnedP && (
+        <div
+          {...dropOn(pinnedP.id)}
+          className={`enter flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${dropOver === pinnedP.id ? "bg-accent/25" : "bg-surface"}`}
+        >
+          <PushPin size={15} weight="fill" className="shrink-0 text-accent" />
+          <button
+            type="button"
+            className="min-w-0 flex-1 truncate text-left text-ink hover:underline"
+            title="Seleccionarla"
+            onClick={() => {
+              setSel(pinnedP.id);
+              setMode(null);
+            }}
+          >
+            <span className="text-xs text-faint">Fijada · </span>
+            {label(pinnedP, pinnedP.id)}
+          </button>
+          {selected && selected.id !== pinnedP.id && (
+            <button type="button" className="btn !px-2 !py-1 text-xs" title={`${label(selected, selected.id)} pasa a ser ${label(pinnedP, pinnedP.id)} (j)`} onClick={joinToPinned}>
+              <ArrowsMerge size={13} /> Unir <kbd className="kbd">J</kbd>
+            </button>
+          )}
+          <IconButton label="Soltar la fijada (k sobre ella)" onClick={() => setPinned(null)}>
+            <X size={14} />
+          </IconButton>
+        </div>
+      )}
+    </div>
+  );
+  // Which modules this view has, where each one goes, and the grip that moves it.
+  const viewModules: ModuleId[] = view === "ball" ? ["ball", "pitch"] : view === "quick" ? ["quick", "squad"] : ["pitch", "person"];
+  const moduleNode: Record<ModuleId, React.ReactNode> = { ball: ballBar, pitch: pitchCard, quick: quickPanel, squad: squadPanel, person: personModule };
+  const sideMods = viewModules.filter((m) => !belowSet.has(m));
+  const belowMods = viewModules.filter((m) => belowSet.has(m));
+  // With the table fitting the window, the window is a limit, not a size: the video as large as fits above its controls
+  // (and the modules under it), each panel as tall as its content, and nothing stretched to fill.
+  const hasBelow = belowMods.length > 0 || dragMod !== null;
+  const bottomUse = view === "players" ? bottomH : Math.min(bottomH, bottomBox.h + 24);
+  const avail = fitH ? fitH - 16 - bottomUse : 0;
+  const belowNeed = hasBelow ? Math.min(Math.max(belowBox.h, 120), BELOW_MIN_PX) + 12 : 0;
+  const stageW = fitH && colBox.w ? Math.max(240, Math.min(colBox.w, (avail - underH - 12 - belowNeed) * aspect)) : null;
+  const mainH =
+    fitH && stageW ? Math.min(avail, Math.max(stageW / aspect + underH + 12 + (hasBelow ? belowBox.h + 12 : 0), sideMods.length > 0 ? sideBox.h : 0)) : null;
+  const zoneDrop = (where: "side" | "below") => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (e.dataTransfer.types.includes(MODULE_DRAG)) e.preventDefault();
+    },
+    onDrop: (e: React.DragEvent) => {
+      const m = e.dataTransfer.getData(MODULE_DRAG) as ModuleId;
+      setDragMod(null);
+      if (!MODULE_NAMES[m]) return;
+      e.preventDefault();
+      moveModule(m, where);
+    },
+  });
+  const moduleBox = (m: ModuleId, where: "side" | "below") => (
+    <div key={m} className="group/mod relative min-w-0">
+      {moduleNode[m]}
+      <button
+        type="button"
+        draggable
+        className="absolute -top-2 -right-1 z-10 grid h-6 w-6 cursor-grab place-items-center rounded-full bg-raised text-faint opacity-0 shadow ring-1 ring-line transition-opacity group-hover/mod:opacity-100 hover:text-ink focus-visible:opacity-100 active:cursor-grabbing"
+        aria-label={`Mover «${MODULE_NAMES[m]}» ${where === "side" ? "bajo el video" : "al panel lateral"}`}
+        title={`Arrastra «${MODULE_NAMES[m]}» ${where === "side" ? "bajo el video" : "al panel lateral"} (o clic para moverlo)`}
+        onClick={() => moveModule(m, where === "side" ? "below" : "side")}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(MODULE_DRAG, m);
+          e.dataTransfer.effectAllowed = "move";
+          setDragMod(m);
+        }}
+        onDragEnd={() => setDragMod(null)}
+      >
+        <DotsSixVertical size={13} weight="bold" />
+      </button>
+    </div>
+  );
+
   // What the full screen shows on top: in the quick review, who is being named; in the ball view, how much has a ball;
   // in the players view, the warnings of the selected player at this moment, or her tick.
   const fullHud = (() => {
@@ -2722,7 +3161,7 @@ export function Correction({
     const items: React.ReactNode[] = [];
     if (view === "quick") {
       if (qMode === "player" && qPlayer) {
-        items.push(pill(`${qNumber.get(qPlayer) ?? ""} ${qPlayer}`.trim(), "plain", "who"));
+        items.push(pill(qShow(qPlayer), "plain", "who"));
         if (qCp) items.push(pill(CP_TEXT[qCp.kind].split(":")[0].split(".")[0], qCp.kind === "lost" ? "warn" : "plain", "cp"));
       } else if (qMode === "samples") items.push(pill(`Muestra ${Math.min(qIdx + 1, qSamples.length)} de ${qSamples.length}`, "plain", "who"));
       else items.push(pill("Elige una jugadora", "warn", "who"));
@@ -2824,6 +3263,13 @@ export function Correction({
               </span>
             )}
             <span className="ml-auto flex items-center gap-2">
+              <IconButton
+                label={focus ? "Salir del modo enfoque" : "Modo enfoque: oculta el menú y la barra del partido (vuelven al llevar el cursor arriba o a la izquierda)"}
+                tone={focus ? "accent" : "default"}
+                onClick={() => setPref("focus", focus ? "off" : "on")}
+              >
+                {focus ? <CornersIn size={17} /> : <CornersOut size={17} />}
+              </IconButton>
               <button
                 type="button"
                 className={`${btnPrimary} min-w-[8.5rem] justify-center transition-[background-color,border-color,color] duration-200 ${
@@ -3089,13 +3535,16 @@ export function Correction({
         </Card>
       ) : (
         <>
-          <div className="enter grid gap-4 xl:grid-cols-[minmax(0,1fr)_var(--side-w)]" style={{ "--side-w": `${sideW}px` } as React.CSSProperties}>
-            <div className="min-w-0">
-              <div className="space-y-3 xl:sticky xl:top-4">
+          <div ref={rootEl} className="enter flex flex-col xl:-mb-12">
+          <div
+            className={`grid min-h-0 gap-4 ${sideMods.length > 0 || dragMod ? "xl:grid-cols-[minmax(0,1fr)_var(--side-w)]" : ""}`}
+            style={{ "--side-w": `${sideW}px`, ...(mainH ? { height: mainH } : {}) } as React.CSSProperties}
+          >
+            <div ref={colRef} className="flex min-h-0 min-w-0 flex-col gap-3">
                 <div
                   ref={stageRef}
-                  className={isFull ? "relative flex h-full w-full items-center justify-center overflow-hidden bg-black" : "relative mx-auto w-full overflow-hidden rounded-2xl bg-black"}
-                  style={isFull ? undefined : { maxWidth: `calc(${videoVh} * 100vh * ${aspect})` }}
+                  className={isFull ? "relative flex h-full w-full items-center justify-center overflow-hidden bg-black" : "relative mx-auto w-full shrink-0 overflow-hidden rounded-2xl bg-black"}
+                  style={isFull || !stageW ? undefined : { width: stageW }}
                 >
                   {/* What is shown: the image less its crop. The zoom moves the image inside it. */}
                   <div
@@ -3290,6 +3739,7 @@ export function Correction({
                   {isFull && fullHud}
                 </div>
 
+                <div ref={underRef} className="shrink-0 space-y-3">
                 <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-bg/85 py-1 backdrop-blur-sm">
                   <button type="button" className={`${btn} h-9 w-9 !p-0`} title="−1 s" aria-label="Retroceder 1 segundo" onClick={() => seekFrame(frame - Math.round(fps))}>
                     <Rewind size={16} />
@@ -3403,6 +3853,11 @@ export function Correction({
                       </>
                     )}
                     <span className="flex items-center gap-0.5">
+                      {selAnoms.length > 1 && (
+                        <button type="button" className="btn btn-ghost !px-2 text-xs hover:text-danger" onClick={anomDropAll} title="Quita los cuadros de todos sus saltos imposibles de una vez (se rellenan al guardar)">
+                          Quitar todos
+                        </button>
+                      )}
                       <span className="tc mr-1 text-xs text-faint">
                         {anomCur ? selAnoms.indexOf(anomCur) + 1 : "–"}/{selAnoms.length}
                       </span>
@@ -3462,11 +3917,19 @@ export function Correction({
                       : `Marcando a ${label(selected ?? undefined, sel ?? 0)} a mano: haz clic en el video donde están sus pies en este cuadro. Esc para terminar.`}
                   </div>
                 )}
-              </div>
-
+                </div>
+                {hasBelow && (
+                  <div {...zoneDrop("below")} className={`min-h-0 flex-1 overflow-y-auto rounded-lg ${dragMod ? "outline-2 outline-offset-2 outline-dashed outline-line-strong" : ""}`}>
+                    <div ref={belowRef} className="grid auto-rows-min gap-3 [grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))]">
+                      {belowMods.map((m) => moduleBox(m, "below"))}
+                      {belowMods.length === 0 && <p className="grid h-32 place-items-center text-xs text-faint">Suelta aquí para ponerlo bajo el video</p>}
+                    </div>
+                  </div>
+                )}
             </div>
 
-            <div className="relative min-w-0">
+            {(sideMods.length > 0 || dragMod) && (
+            <div className="relative min-h-0 min-w-0">
             <div
               role="separator"
               aria-orientation="vertical"
@@ -3478,257 +3941,35 @@ export function Correction({
             >
               <span className="mx-auto block h-full w-px rounded-full transition-colors group-hover:bg-line-strong" />
             </div>
-            {view === "ball" ? (
-              <div className="space-y-3 xl:sticky xl:top-4">
-                {ballBar}
-                {pitchCard}
+            <div
+              className={`${fitH ? "absolute inset-0" : ""} overflow-y-auto rounded-lg pr-1 ${dragMod ? "outline-2 outline-offset-2 outline-dashed outline-line-strong" : ""}`}
+              {...zoneDrop("side")}
+            >
+              <div ref={sideRef} className="space-y-3">
+                {sideMods.map((m) => moduleBox(m, "side"))}
+                {sideMods.length === 0 && <p className="grid h-40 place-items-center text-xs text-faint">Suelta aquí para ponerlo al lado</p>}
               </div>
-            ) : view === "quick" ? (
-              <div className="space-y-4 xl:sticky xl:top-4">{quickPanel}</div>
-            ) : (
-            <div className="space-y-3 xl:sticky xl:top-4">
-              {pinnedP && (
-                <div
-                  {...dropOn(pinnedP.id)}
-                  className={`enter flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${dropOver === pinnedP.id ? "bg-accent/25" : "bg-surface"}`}
-                >
-                  <PushPin size={15} weight="fill" className="shrink-0 text-accent" />
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 truncate text-left text-ink hover:underline"
-                    title="Seleccionarla"
-                    onClick={() => {
-                      setSel(pinnedP.id);
-                      setMode(null);
-                    }}
-                  >
-                    <span className="text-xs text-faint">Fijada · </span>
-                    {label(pinnedP, pinnedP.id)}
-                  </button>
-                  {selected && selected.id !== pinnedP.id && (
-                    <button type="button" className="btn !px-2 !py-1 text-xs" title={`${label(selected, selected.id)} pasa a ser ${label(pinnedP, pinnedP.id)} (j)`} onClick={joinToPinned}>
-                      <ArrowsMerge size={13} /> Unir <kbd className="kbd">J</kbd>
-                    </button>
-                  )}
-                  <IconButton label="Soltar la fijada (k sobre ella)" onClick={() => setPinned(null)}>
-                    <X size={14} />
-                  </IconButton>
-                </div>
-              )}
-              {pitchCard}
-                {blocked && (
-                  <div role="alert" className="enter mb-3 rounded-2xl bg-warn-900/70 px-3 py-2.5 text-xs text-warn">
-                    <div className="flex items-start gap-2">
-                      <Warning size={14} className="mt-0.5 shrink-0" />
-                      <span className="min-w-0 flex-1">
-                        No las uní: {label(personById.get(blocked.into), blocked.into)} y {label(personById.get(blocked.from), blocked.from)} aparecen a la
-                        vez y en sitios distintos en {blocked.frames.length} cuadro(s), así que no pueden ser la misma persona.
-                        {blocked.same > 0 && ` (En otros ${blocked.same} sí coinciden en el mismo sitio.)`}
-                      </span>
-                    </div>
-                    <div className="mt-1 flex gap-1 pl-5">
-                      <IconButton label="Ver el primer cuadro donde coinciden" onClick={() => seekFrame(blocked.frames[0])}>
-                        <Eye size={14} />
-                      </IconButton>
-                      <IconButton
-                        label="Unir de todos modos: donde están separadas quedarán dos cajas y habrá que elegir cuál es ella"
-                        tone="accent"
-                        onClick={() => tryMerge(blocked.into, blocked.from, true)}
-                      >
-                        <ArrowsMerge size={14} />
-                      </IconButton>
-                      <IconButton label="Cancelar" onClick={() => setBlocked(null)}>
-                        <X size={14} />
-                      </IconButton>
-                    </div>
-                  </div>
-                )}
-                {notice && (
-                  <div role="status" className="enter mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-warn-900/70 px-3 py-2 text-xs text-warn">
-                    <span className="min-w-0 flex-1">{notice}</span>
-                    <IconButton label="Deshacer (Ctrl + Z)" onClick={undo}>
-                      <ArrowCounterClockwise size={14} />
-                    </IconButton>
-                    <IconButton label="Está bien (Enter)" tone="accent" onClick={() => setNotice(null)}>
-                      <Check size={14} />
-                    </IconButton>
-                  </div>
-                )}
-              {selected ? (
-                  <div className="space-y-2 rounded-lg bg-surface p-3">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                      <ul className="min-w-0 flex-1 basis-72">{renderRow(selected)}</ul>
-                      <span className="flex items-center gap-1">
-                        <IconButton label="Unir con… (u): clic en la caja o fila de la misma jugadora" tone={mode === "merge" ? "accent" : "default"} onClick={() => setMode(mode === "merge" ? null : "merge")}>
-                          <ArrowsMerge size={16} />
-                        </IconButton>
-                        <IconButton
-                          label={
-                            canSplit
-                              ? "Partir aquí: desde este cuadro es otra persona. s selecciona el segundo tramo; Shift + S deja seleccionado el primero"
-                              : "Partir aquí (s): colócate entre su primera y su última aparición"
-                          }
-                          disabled={!canSplit}
-                          onClick={() => splitHere()}
-                        >
-                          <ArrowsSplit size={16} />
-                        </IconButton>
-                        <IconButton label="Marcar a mano (p): clic en sus pies" tone={mode === "manual" ? "accent" : "default"} onClick={() => setMode(mode === "manual" ? null : "manual")}>
-                          <HandPointing size={16} />
-                        </IconButton>
-                        {manualHere.some((m) => m.identity === selected.id) && pf !== null && (
-                          <IconButton label="Quitar la marca a mano de este cuadro" onClick={() => setEdits(removeManual(edits, selected.id, pf))}>
-                            <Eraser size={16} />
-                          </IconButton>
-                        )}
-                        <IconButton label="No es jugadora (Supr)" tone="danger" onClick={removeSelected}>
-                          <Prohibit size={16} />
-                        </IconButton>
-                        <IconButton
-                          label={pinned === selected.id ? "Soltarla (k)" : "Fijarla (k): luego, con otra seleccionada, J la une a ella; también puedes arrastrarle tramos de la línea"}
-                          tone={pinned === selected.id ? "accent" : "default"}
-                          onClick={togglePin}
-                        >
-                          <PushPin size={16} weight={pinned === selected.id ? "fill" : "regular"} />
-                        </IconButton>
-                        <IconButton label="Soltar la selección (Esc)" onClick={() => setSel(null)}>
-                          <X size={16} />
-                        </IconButton>
-                      </span>
-                    </div>
-                    {/* Notices about her, in one row of chips. */}
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                      {[...cand.next.map((x) => ["sigue como", x, x.to] as const), ...cand.prev.map((x) => ["viene de", x, x.from] as const)].map(([verb, x, other]) => (
-                        <span
-                          key={`${x.from}-${x.to}`}
-                          className={`inline-flex items-center gap-1 rounded-xl py-0.5 pr-0.5 pl-2 ${peek === x ? "bg-warn-900/70 text-warn" : "bg-bg/60 text-ink-2"}`}
-                          title={`¿${verb} ${label(personById.get(other), other)}? Ordenadas por dónde debería estar según cómo se movía; la primera acierta un tercio de las veces.`}
-                        >
-                          <span className="text-faint">{verb}</span>
-                          <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLORS[personById.get(other)?.team ?? "unk"] }} />
-                          <span className="tc">{label(personById.get(other), other)}</span>
-                          <span className="tc text-faint">
-                            {x.gapS.toFixed(1)} s · {x.distM.toFixed(0)} m
-                          </span>
-                          <IconButton label="Ver en el video (n)" tone={peek === x ? "accent" : "default"} onClick={() => peekAt(x)}>
-                            <Eye size={13} />
-                          </IconButton>
-                          <IconButton label="Es ella: unir" onClick={() => joinCandidate(x)}>
-                            <Check size={13} />
-                          </IconButton>
-                          <IconButton label="No es ella (no se vuelve a proponer)" tone="danger" onClick={() => rejectCandidate(x)}>
-                            <X size={13} />
-                          </IconButton>
-                        </span>
-                      ))}
-                      {(() => {
-                        // One badge for all her changes of shirt: c goes from one to the next; the scissors cut the one on screen.
-                        const hs = hintsByPerson.get(selected.id) ?? [];
-                        if (hs.length === 0) return null;
-                        const here = hs.find((h) => Math.abs(h.frame - frame) <= 1.5 * fps);
-                        return (
-                          <span className="inline-flex items-center gap-1 rounded-xl bg-warn-900/50 py-0.5 pr-0.5 pl-2 text-warn" title={here ? hintText(here) : "Cambios de camiseta: c va al siguiente"}>
-                            <TShirt size={13} weight="fill" />
-                            {hs.length} cambio(s) de camiseta
-                            <IconButton label="Ir al siguiente (c)" onClick={() => nextOf(hs.map((h) => Math.max(data.start_frame, h.frame - Math.round(fps))))}>
-                              <SkipForward size={13} />
-                            </IconButton>
-                            <IconButton label={here ? "Cortar aquí: de este punto en adelante es otra persona" : "Ve a un cambio (c) para cortarlo"} tone="accent" disabled={!here} onClick={() => here && fixHint(here)}>
-                              <Scissors size={13} />
-                            </IconButton>
-                          </span>
-                        );
-                      })()}
-                      {absorbForSel.length > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-accent-900/40 py-0.5 pr-0.5 pl-2 text-ink-2">
-                          <MagicWand size={13} />
-                          {absorbForSel.length} trozo(s) corto(s) suyos
-                          {absorbForSel.some((a) => a.adds > 0) && ` (+${absorbForSel.reduce((n, a) => n + a.adds, 0)} cuadros)`}
-                          <IconButton label="Añadírselos" tone="accent" onClick={() => absorb(absorbForSel)}>
-                            <Plus size={13} />
-                          </IconButton>
-                        </span>
-                      )}
-                      {selected.conflicts.length > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-warn-900/60 py-0.5 pr-0.5 pl-2 text-warn" title="Haz clic en la caja que sí es ella en esos cuadros, o deja una donde están en el mismo sitio">
-                          <Warning size={13} />
-                          dos cajas en {selected.conflicts.length} cuadro(s)
-                          <IconButton label="Ir al primero" onClick={() => seekFrame(selected.conflicts[0])}>
-                            <Eye size={13} />
-                          </IconButton>
-                          <IconButton label="Dejar una donde están en el mismo sitio (m)" tone="accent" onClick={unifySelf}>
-                            <MagicWand size={13} />
-                          </IconButton>
-                        </span>
-                      )}
-                      {selAnoms.length > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-danger/15 py-0.5 pr-0.5 pl-2 text-danger" title="Movimientos que nadie puede correr: casi siempre la caja perdió sus pies un momento. Recuadro rojo en su línea.">
-                          <Warning size={13} weight="fill" />
-                          {selAnoms.length} salto(s) imposible(s)
-                          <IconButton label="Revisarlos (a)" onClick={() => anomStep(1)}>
-                            <SkipForward size={13} />
-                          </IconButton>
-                        </span>
-                      )}
-                      {selGaps.length > 0 ? (
-                        <span
-                          className="inline-flex items-center gap-1 rounded-xl bg-danger/15 py-0.5 pr-0.5 pl-2 text-danger"
-                          title={`Huecos por revisar (rojo en la línea): se perdió en medio de la imagen durante más de ${FIX_GAP_S} s. Con «g» vas a 1 s de donde se perdió y avanzas de segundo en segundo. Si en el hueco hay otra caja que es ella, únela; si el detector no la vio, márcala a mano (p). Los huecos donde salió de cuadro no cuentan: al guardar se rellenan con una recta.`}
-                        >
-                          {selGaps.length} hueco(s) por revisar · el más largo {(Math.max(...selGaps.map(([a, b]) => b - a)) / fps).toFixed(1)} s
-                          <IconButton label="Ir al siguiente hueco (g)" onClick={nextGap}>
-                            <SkipForward size={13} />
-                          </IconButton>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-ok/15 px-2 py-0.5 text-ok" title="No le quedan huecos en medio de la imagen; los de fuera de cuadro se rellenan al guardar">
-                          <Check size={13} weight="bold" /> Sin huecos por revisar
-                        </span>
-                      )}
-                      {selOffCamera.length > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-xl bg-bg/60 px-2 py-0.5 text-faint" title="Huecos donde salió de cuadro (estaba en el borde de la imagen al perderla o al encontrarla): gris en la línea; se rellenan al guardar">
-                          {selOffCamera.length} fuera de cuadro
-                        </span>
-                      )}
-                    </div>
-                  </div>
-              ) : (
-                <div className="rounded-lg bg-surface p-3">
-                  <p className="text-sm text-ink-2">Clic sobre una jugadora en el video.</p>
-                  {namedToCheck.length > 0 && (
-                    <>
-                      <div className="mt-3 mb-1 text-xs text-faint">Con nombre, por verificar</div>
-                      <ul className="space-y-0.5">{namedToCheck.slice(0, 8).map((p) => renderRow(p))}</ul>
-                    </>
-                  )}
-                  {shortIds.length > 0 && (
-                    <button type="button" className="btn btn-ghost mt-2 !px-0 text-xs" onClick={() => setModal("cleanup")}>
-                      <BroomIcon size={14} />
-                      Limpieza rápida · {shortIds.length} trozos de menos de 1 s
-                    </button>
-                  )}
-                </div>
-              )}
+            </div>
             </div>
             )}
-            </div>
           </div>
 
-          {/* Between the video and the timeline: dragged, the video takes more or less of the window. */}
+          {/* Between the video and the timeline: dragged, the timeline panel gets taller or shorter. */}
           <div
             role="separator"
             aria-orientation="horizontal"
-            aria-label="Alto del video (arrastra; doble clic: el de siempre)"
-            title="Arrastra para cambiar el alto del video · doble clic: el de siempre"
-            className="group mt-2 hidden h-3 cursor-row-resize touch-none items-center justify-center xl:flex"
-            onPointerDown={dragVideo}
-            onDoubleClick={() => setPref("correction:videoVh", String(VIDEO_DEFAULT_VH))}
+            aria-label="Alto de la línea de tiempo (arrastra; doble clic: el de siempre)"
+            title="Arrastra para cambiar el alto de la línea de tiempo · doble clic: el de siempre"
+            className="group hidden h-4 shrink-0 cursor-row-resize touch-none items-center justify-center xl:flex"
+            onPointerDown={dragBottom}
+            onDoubleClick={() => setPref("correction:bottomH", String(BOTTOM_DEFAULT_PX))}
           >
             <span className="h-1 w-14 rounded-full bg-line transition-colors group-hover:bg-line-strong" />
           </div>
 
           {/* The timeline of the part, full width under both columns. */}
-          <div className="mt-2 space-y-2 rounded-lg bg-surface p-3">
+          <div className="shrink-0 overflow-y-auto rounded-lg bg-surface p-3" style={fitH ? { height: bottomUse } : undefined}>
+          <div ref={bottomRef} className="space-y-2">
                 {/* Whole part on one bar: click to jump. */}
                 <div className="flex items-center gap-3">
                   <span className="tc w-14 text-xs text-faint">{fmtT(data.start_frame / fps)}</span>
@@ -3789,6 +4030,8 @@ export function Correction({
                   />
             )}
             {view === "players" && !selected && <p className="text-xs text-faint">La línea de cada jugadora aparece aquí al seleccionarla.</p>}
+          </div>
+          </div>
           </div>
         </>
       )}

@@ -24,6 +24,7 @@ import { revealRef } from "@/components/motion";
 import { setPref, usePref, useStore } from "@/lib/store";
 import { useThemeSync } from "@/lib/theme";
 import { useRosterFromFile } from "@/components/RosterCard";
+import { EdgeReveal, useFocusMode } from "@/components/FocusMode";
 
 type NavItem = { href: string; label: string; icon: Icon; locked?: string; disabled?: string; active: boolean };
 
@@ -166,12 +167,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
   useRosterFromFile();
   useThemeSync();
   const path = usePathname();
+  const focus = useFocusMode();
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
-      <Suspense fallback={<aside className="shrink-0 border-r border-line md:h-screen md:w-14" />}>
-        <Sidebar />
-      </Suspense>
+      <EdgeReveal edge="left" enabled={focus}>
+        <Suspense fallback={<aside className="shrink-0 border-r border-line md:h-screen md:w-14" />}>
+          <Sidebar />
+        </Suspense>
+      </EdgeReveal>
 
       <main className="relative min-w-0 flex-1 px-4 pt-5 pb-16 md:px-8 print:p-0">
         {/* Keyed by route so each screen starts from the top state. */}
