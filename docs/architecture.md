@@ -40,16 +40,16 @@ video YouTube (original, no se edita)
    ▼
 matches/<id>/video/v1.mp4 ──► segments.csv ──► segments/s01.mp4 ...
    │                                   │
-   │  app web · Calibración            │  tracking en píxeles (YOLO + ByteTrack; Colab o CPU en clips cortos)
+   │  app web · Calibración            │  detección y seguimiento (YOLO + BoT-SORT, OpenVINO en la laptop)
    ▼                                   ▼
 anclas (puntos de referencia        detecciones y tracks (px, py)
 por cuadro, a mano)                    │
    │  propagación entre anclas         │
    └──────────────┬────────────────────┘
                   ▼
-     posiciones en metros → corrección manual en la app → parquets validados
+     posiciones en la cancha (process) → revisión rápida y corrección en la app (+ tracker de balón)
                   ▼
-     métricas (funciones puras) y keyframes medidos para la animación
+     tracks_fixed → análisis, informe por niveles, jugadas, clips y pizarrón
 ```
 
 El etiquetado manual y el tracking son caminos independientes que comparten el tiempo del video original (`t_video`). La app funciona completa sin tracking.
@@ -96,13 +96,14 @@ Tablas de Postgres previstas (se fijan en el contrato v2): `teams`, `players`, `
 
 - **Calibración por anclas** (2026-10-09): una persona marca puntos de referencia en algunos cuadros y la homografía se propaga entre ellos siguiendo el movimiento de la cámara. Sustituye al detector automático de puntos de cancha de `roboflow/sports`, que no sirve en canchas con líneas de varios deportes. La homografía se calcula en el navegador (`web/lib/homography.ts`).
 - **Cada sede tiene su modelo de referencia** con medidas reales (`web/lib/venue.ts`). Las posiciones se guardan normalizadas a 105x68; las medidas reales sirven para convertir distancias y velocidades.
-- **Python produce píxeles; la app produce metros** (2026-10-09). El pipeline entrega detecciones y tracks en píxeles; la calibración y las correcciones se hacen en la app.
+- **Python produce píxeles; la app produce metros** (2026-10-09). El pipeline entrega detecciones y tracks en píxeles; la calibración y las correcciones se hacen en la app. *Cambió el 2026-10-14:* con la biblioteca de calibración, `process` ya calcula las posiciones en la cancha; la app sigue siendo donde se corrige y se nombra.
 - **Un partido por carpeta** (2026-10-09), con uno o más videos por partido.
 - **Posiciones en parquet, lo relacional en Postgres** (2026-10-09). Ver arriba.
-- Detección y seguimiento con YOLO (Ultralytics) + `supervision==0.27.0`; cómputo en Colab/Kaggle. El detector concreto de jugadoras se decide en el paso A4 del roadmap.
+- Detección y seguimiento con YOLO (Ultralytics) + BoT-SORT, en la laptop con OpenVINO (CPU). Con cámaras amplias, modelo mediano por trozos y solo en la franja de la cancha (`detector` en `match.yaml`). Colab o Kaggle quedan como opción para acelerar (necesitaría PyTorch con CUDA en vez de OpenVINO).
 - Lo que no se ve en cuadro no está ausente: las métricas declaran siempre qué parte de la cancha era visible. Se prefiere `NaN` a una posición falsa.
 - `track_id` es local al segmento; el equipo se decide por apariencia y la identidad (`player_id`) se asigna a mano.
-- Sin modelo de IA local.
+- Sin servicios de IA de pago. Solo modelos pequeños que corren en la laptop: el detector de jugadoras y el tracker de balón (`sportsan.tracking.ball`, 2026-10-18), entrenado con las marcas a mano del propio proyecto.
+- **Lo automático solo marca cuando está muy seguro** (2026-10-18): el tracker de balón y la revisión rápida dejan huecos que la analista completa, y un detector de movimientos imposibles (`web/lib/anomalies.ts`) señala lo que se coló. Un error silencioso es peor que un hueco.
 - Etiquetado manual de eventos obligatorio en el MVP.
 - Todo gratuito. No se aloja video: YouTube embebido o archivo local.
 - **Interfaz en Next.js (`web/`), no en Streamlit** (2026-10-04).
@@ -111,4 +112,4 @@ Tablas de Postgres previstas (se fijan en el contrato v2): `teams`, `players`, `
 
 ## Fuera de alcance por ahora
 
-Multiusuario y autenticación (fase 2), redes de pase automáticas, reconocimiento de jugadoras por rostro, detección automática del balón.
+Multiusuario y autenticación (fase 2), reconocimiento de jugadoras por rostro. (Las redes de pase y el balón ya salen del tracking, con revisión a mano.)

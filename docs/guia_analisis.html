@@ -1,0 +1,420 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Guía de análisis de partido</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Inter:wght@400;500;600&family=Barlow+Condensed:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: una hoja de ruta de partido. Arriba el recorrido en dos carriles (App | Terminal); debajo, una ficha por paso. */
+:root {
+  --bg: #f5f6fb;
+  --surface: #ffffff;
+  --raised: #eef1f8;
+  --ink: #111633;
+  --muted: #485270;
+  --faint: #6a7390;
+  --line: #d6dbe8;
+  --app: #2442b0;
+  --app-soft: #e3e9ff;
+  --term: #8a4f0c;
+  --term-soft: #fbefdc;
+  --ok: #1b7a43;
+  --font-display: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-label: "Barlow Condensed", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161826; --surface: #1f2130; --raised: #2a2d3e; --ink: #e9e9ef; --muted: #b6bacd; --faint: #9195aa; --line: #363a4c;
+    --app: #9db3ff; --app-soft: #1c2759; --term: #e8b06a; --term-soft: #3a2c1c; --ok: #6fcf97; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161826; --surface: #1f2130; --raised: #2a2d3e; --ink: #e9e9ef; --muted: #b6bacd; --faint: #9195aa; --line: #363a4c;
+  --app: #9db3ff; --app-soft: #1c2759; --term: #e8b06a; --term-soft: #3a2c1c; --ok: #6fcf97; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+  margin: 0;
+}
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 48px;
+}
+.wrap > *, .steps > *, .step-card > * { min-width: 0; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 46px); line-height: 1.05; letter-spacing: -0.01em; }
+h2 { font-size: 24px; line-height: 1.15; }
+h3 { font-size: 19px; line-height: 1.2; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--app); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--app); outline-offset: 2px; }
+.eyebrow {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+code, .cmd { font-family: var(--font-mono); font-size: 13px; }
+code { background: var(--raised); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+
+/* ---------- encabezado ---------- */
+header { display: grid; gap: 14px; }
+header p { color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 13px; color: var(--muted); }
+.lane-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-label); font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 9px; border-radius: 999px;
+}
+.lane-tag.app { background: var(--app-soft); color: var(--app); }
+.lane-tag.term { background: var(--term-soft); color: var(--term); }
+.lane-tag.both { background: var(--raised); color: var(--muted); }
+
+/* ---------- diagrama ---------- */
+.flow-box { overflow-x: auto; }
+.flow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 28px;
+  min-width: 0;
+}
+.flow .lane-head {
+  font-family: var(--font-label); font-weight: 600; font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase;
+  padding-bottom: 10px; border-bottom: 2px solid currentColor; margin-bottom: 6px;
+}
+.flow .lane-head.app { color: var(--app); }
+.flow .lane-head.term { color: var(--term); }
+.row { display: contents; }
+.cell { position: relative; padding-block: 18px; min-width: 0; }
+/* Conector vertical: del centro del recuadro al siguiente paso. */
+.cell.step::after {
+  content: ""; position: absolute; left: 22px; top: calc(100% - 18px); height: 36px;
+  border-left: 2px dashed var(--line);
+}
+.cell.last::after { display: none; }
+.node {
+  display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: start;
+  text-decoration: none; color: inherit;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.node:hover { border-color: var(--app); transform: translateY(-1px); }
+.term .node:hover, .node.term:hover { border-color: var(--term); }
+.num {
+  grid-row: span 2;
+  font-family: var(--font-display); font-weight: 700; font-size: 19px; line-height: 1;
+  width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+  font-variant-numeric: tabular-nums;
+}
+.node.app .num { background: var(--app-soft); color: var(--app); }
+.node.term .num { background: var(--term-soft); color: var(--term); }
+.node strong { font-weight: 600; font-size: 15px; }
+.node span.sub { font-size: 13px; color: var(--muted); grid-column: 2; }
+.parallel {
+  grid-column: 1 / -1; font-family: var(--font-label); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--faint); text-align: center; margin-top: -6px;
+}
+.optional { border-style: dashed; }
+
+/* ---------- pasos ---------- */
+.steps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+.step-card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 22px clamp(16px, 3vw, 28px); display: grid; gap: 14px; scroll-margin-top: 16px;
+}
+.step-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.step-head .n {
+  font-family: var(--font-display); font-weight: 700; font-size: 30px; line-height: 1; font-variant-numeric: tabular-nums;
+}
+.step-card.app .n { color: var(--app); }
+.step-card.term .n { color: var(--term); }
+.step-card.both .n { color: var(--muted); }
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 14px; }
+.meta dt { font-family: var(--font-label); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); font-size: 13px; padding-top: 1px; }
+.meta dd { margin: 0; min-width: 0; color: var(--ink); }
+ol.todo, ul.notes { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 72ch; }
+ul.notes { color: var(--muted); font-size: 14px; }
+.why { border-left: 3px solid var(--line); padding-left: 12px; color: var(--muted); font-size: 14px; }
+.why b { color: var(--ink); font-weight: 600; }
+.cmdbox { display: grid; gap: 8px; }
+.cmd-line {
+  display: flex; gap: 8px; align-items: stretch; min-width: 0;
+  background: var(--raised); border-radius: 8px; padding: 4px 4px 4px 12px;
+}
+.cmd-line pre { margin: 0; flex: 1; min-width: 0; overflow-x: auto; padding: 7px 0; font-family: var(--font-mono); font-size: 13px; white-space: pre; }
+.cmd-line button {
+  flex: none; font-family: var(--font-label); font-weight: 600; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase;
+  background: var(--surface); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; cursor: pointer;
+}
+.cmd-line button:hover { color: var(--ink); }
+.cmd-line button.done { color: var(--ok); border-color: var(--ok); }
+.cmd-note { font-size: 13px; color: var(--faint); }
+.pending {
+  font-size: 14px; color: var(--muted); background: var(--raised); border-radius: 8px; padding: 10px 12px;
+}
+.pending b { color: var(--ink); }
+footer { color: var(--faint); font-size: 13px; display: grid; gap: 6px; }
+
+@media (max-width: 720px) {
+  .flow { grid-template-columns: 1fr; }
+  .flow .lane-head { display: none; }
+  .cell.empty { display: none; }
+  .parallel { text-align: left; }
+}
+@media (prefers-reduced-motion: reduce) { .node { transition: none; } .node:hover { transform: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Rendimiento · fútbol femenil · cómo se analiza un partido</span>
+    <h1>Guía de análisis de partido</h1>
+    <p>Todo el recorrido con las herramientas de hoy: de bajar el video a entregar el informe, los clips y las láminas del pizarrón.
+      Cada paso dice dónde se hace, qué deja en la carpeta del partido y por qué existe. Clic en un paso del diagrama para ir a su ficha.</p>
+    <div class="legend">
+      <span><span class="lane-tag app">App</span> en el navegador, <code>http://localhost:3000</code> (se abre con <code>npm run dev</code> desde <code>demo/web</code>)</span>
+      <span><span class="lane-tag term">Terminal</span> desde <code>demo/</code> con <code>.venv</code> activado</span>
+    </div>
+  </header>
+
+  <section aria-labelledby="mapa">
+    <h2 id="mapa" style="margin-bottom:18px">El recorrido</h2>
+    <div class="flow-box">
+      <div class="flow">
+        <div class="lane-head app">App · a mano</div>
+        <div class="lane-head term">Terminal · cómputo</div>
+
+        <div class="cell empty"></div>
+        <div class="cell step term"><a class="node term" href="#paso-1"><span class="num">1</span><strong>Descargar el video</strong><span class="sub">videos.csv y download_videos</span></a></div>
+
+        <div class="cell step"><a class="node app" href="#paso-2"><span class="num">2</span><strong>Configurar el partido</strong><span class="sub">carpeta, sede, plantilla, uniformes</span></a></div>
+        <div class="cell empty"></div>
+
+        <div class="cell step"><a class="node app" href="#paso-3"><span class="num">3</span><strong>Calibrar</strong><span class="sub">anclas en un barrido de cámara</span></a></div>
+        <div class="cell empty"></div>
+
+        <div class="cell step"><a class="node app" href="#paso-4"><span class="num">4</span><strong>Marcar los tramos</strong><span class="sub">juego, pausa, no medible</span></a></div>
+        <div class="cell empty"></div>
+
+        <div class="parallel">a la vez: tú etiquetas mientras la laptop procesa de noche</div>
+        <div class="cell step"><a class="node app" href="#paso-5"><span class="num">5</span><strong>Etiquetar eventos</strong><span class="sub">tres pasadas · no necesita tracking</span></a></div>
+        <div class="cell step term"><a class="node term" href="#paso-6"><span class="num">6</span><strong>Overnight</strong><span class="sub">propagación, biblioteca, detección y uniones</span></a></div>
+
+        <div class="cell step"><a class="node app" href="#paso-7"><span class="num">7</span><strong>Tramo de entrenamiento</strong><span class="sub">revisar a fondo un tramo mediano</span></a></div>
+        <div class="cell empty"></div>
+
+        <div class="cell empty"></div>
+        <div class="cell step term"><a class="node term" href="#paso-8"><span class="num">8</span><strong>Correr los modelos</strong><span class="sub">tracker de balón, forma de los equipos</span></a></div>
+
+        <div class="cell step"><a class="node app" href="#paso-9"><span class="num">9</span><strong>Revisar el tracking</strong><span class="sub">jugadoras, balón y anomalías</span></a></div>
+        <div class="cell empty"></div>
+
+        <div class="cell step"><a class="node app" href="#paso-10"><span class="num">10</span><strong>Informe, clips y pizarrón</strong><span class="sub">notas, correcciones, dibujos, láminas</span></a></div>
+        <div class="cell step term"><a class="node term optional" href="#paso-10"><span class="num">10</span><strong>Exportar clips</strong><span class="sub">MP4 para la charla o WhatsApp</span></a></div>
+
+        <div class="cell step last"><a class="node app" href="#paso-11"><span class="num">11</span><strong>Respaldo</strong><span class="sub">tus datos viven en este navegador</span></a></div>
+        <div class="cell empty"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="steps" aria-label="Pasos">
+
+    <article class="step-card term" id="paso-1">
+      <div class="step-head"><span class="n">1</span><h3>Descargar el video</h3><span class="lane-tag term">Terminal</span></div>
+      <ol class="todo">
+        <li>Añade una fila por cada parte del video a <code>matches/videos.csv</code>: <code>match_id</code> (la carpeta, <code>aaaa_mm_dd_local_vs_visitante</code>), <code>kind</code> (<code>own</code>, <code>rival</code> o <code>reference</code>), fecha, equipos, <code>video_id</code> (<code>v1</code>, <code>v2</code>… en orden de juego), <code>period</code> (1 o 2), <code>label</code> y la <code>url</code>.</li>
+        <li>Corre la descarga. Baja lo que falte a <code>video/vN.mp4</code>, mide su fps exacto y lo añade a <code>match.yaml</code> (crea la carpeta si el partido es nuevo).</li>
+      </ol>
+      <div class="cmdbox">
+        <div class="cmd-line"><pre>python -m sportsan.ingest.download_videos --list</pre><button type="button">Copiar</button></div>
+        <div class="cmd-line"><pre>python -m sportsan.ingest.download_videos --match &lt;match_id&gt;</pre><button type="button">Copiar</button></div>
+      </div>
+      <dl class="meta"><dt>Deja</dt><dd><code>matches/&lt;id&gt;/video/v1.mp4</code>, <code>match.yaml</code> con la lista de videos</dd></dl>
+      <p class="why"><b>Por qué:</b> todo se mide sobre el archivo original sin recortar: los tiempos de eventos, jugadas y tracks son tiempos de ese video. Un tiempo puede venir en varias partes; cada una es un <code>video_id</code>.</p>
+    </article>
+
+    <article class="step-card app" id="paso-2">
+      <div class="step-head"><span class="n">2</span><h3>Configurar el partido</h3><span class="lane-tag app">App</span></div>
+      <ol class="todo">
+        <li><b>Partido</b>: Análisis con video → Nuevo (o ábrelo) y enlázalo a su carpeta. Añade los videos de cada parte.</li>
+        <li><b>Sede</b>: Configuración → sedes. Medidas reales (largo y ancho) medidas sobre la imagen satelital; si la cancha tiene líneas de otro deporte, la rejilla. Quedan en <code>match.yaml</code> como <code>pitch_length_m</code> y <code>pitch_width_m</code>.</li>
+        <li><b>Plantilla</b>: Jugadoras → pega la lista con números. Sin ella no hay dorsales en clips ni en el informe «Sin nombres».</li>
+        <li><b>Uniformes</b>: pestaña Tracking → Uniformes → elige sobre el video el color de cada equipo, porteras y árbitra (<code>jersey_colors</code>). Nunca asumas que el azul es el nuestro: el Tec tiene tres uniformes.</li>
+      </ol>
+      <ul class="notes">
+        <li>Cámara amplia (jugadoras de 15 a 40 px): en <code>match.yaml</code>, <code>detector: {model: yolo11s_1280_openvino_model, tiles: 2, band: auto}</code>. Detecta mejor y tarda más.</li>
+      </ul>
+      <p class="why"><b>Por qué:</b> las posiciones se guardan en una cancha normalizada de 105 × 68 para comparar sedes; la medida real convierte distancias y velocidades a metros de verdad. El equipo de cada caja sale del color de la camiseta.</p>
+    </article>
+
+    <article class="step-card app" id="paso-3">
+      <div class="step-head"><span class="n">3</span><h3>Calibrar</h3><span class="lane-tag app">App · pestaña Calibración</span></div>
+      <ol class="todo">
+        <li>Busca un momento en que la cámara barra de lado a lado.</li>
+        <li>En varios cuadros de ese barrido, marca los puntos de la sede que se vean (esquinas de áreas, círculo, cruces de la rejilla). Mejor muchos y repartidos que pocos juntos.</li>
+        <li>Exportar: escribe las anclas en <code>tracking/</code> de la carpeta del partido. Una vez por video.</li>
+      </ol>
+      <dl class="meta"><dt>Deja</dt><dd><code>tracking/anchors_&lt;partido&gt;_&lt;video&gt;.json</code></dd></dl>
+      <p class="why"><b>Por qué a mano:</b> el detector automático de puntos de cancha falló en campos con líneas de varios deportes. Con un barrido calibrado, la biblioteca (paso 6) ubica cualquier otro cuadro del video comparándolo con ese barrido.</p>
+    </article>
+
+    <article class="step-card app" id="paso-4">
+      <div class="step-head"><span class="n">4</span><h3>Marcar los tramos</h3><span class="lane-tag app">App · pestaña Tramos</span></div>
+      <ol class="todo">
+        <li>Con el video corriendo: <code>G</code> empieza juego, <code>P</code> pausa, <code>X</code> no medible (repetición, cámara fuera de la cancha), <code>E</code> fin.</li>
+        <li>Se guarda solo como <code>segments.csv</code> en la carpeta del partido (uno para todos sus videos).</li>
+      </ol>
+      <dl class="meta"><dt>Deja</dt><dd><code>matches/&lt;id&gt;/segments.csv</code></dd></dl>
+      <p class="why"><b>Por qué:</b> el tracking solo procesa tiempo de juego (cada tramo es una parte), el etiquetado salta las pausas solo y los minutos del informe cuentan solo juego.</p>
+    </article>
+
+    <article class="step-card app" id="paso-5">
+      <div class="step-head"><span class="n">5</span><h3>Etiquetar eventos</h3><span class="lane-tag app">App · pestaña Etiquetado</span></div>
+      <ol class="todo">
+        <li><b>Pasada 1, identificar</b>: con el video corriendo, una tecla por evento (tipo y equipo). <code>J</code> guarda el momento como jugada.</li>
+        <li><b>Pasada 2, revisar</b>: uno por uno, posición, jugadora, resultado, detalle y nota.</li>
+        <li><b>Pasada 3, ejecución</b>: a dónde fueron tiros (portería), centros y córners (cancha). Un tiro bloqueado no lo pide.</li>
+      </ol>
+      <ul class="notes">
+        <li>Un gol se marca como gol y, si hubo tiro, también el tiro (y el penal si lo fue): cuentan un tiro y un gol. Un gol sin tiro (autogol, desvío) suma gol pero no tiro.</li>
+        <li>Los pases ya no se etiquetan: salen del tracking (pasos 8 y 9).</li>
+      </ul>
+      <p class="why"><b>Por qué en paralelo:</b> la app funciona completa solo con eventos (nivel N1 del informe). El tracking añade posiciones encima, pero no hace falta esperarlo para analizar.</p>
+    </article>
+
+    <article class="step-card term" id="paso-6">
+      <div class="step-head"><span class="n">6</span><h3>Overnight</h3><span class="lane-tag term">Terminal · de noche</span></div>
+      <ol class="todo">
+        <li>Primero el plan: dice qué falta en cada video y cuánto tardará.</li>
+        <li>Luego, a correr. Para cada video con anclas y tramos: <b>propagación</b> de las anclas, <b>biblioteca</b> de calibración y <b>process</b> (detección, calibración de cada cuadro, equipos por color y uniones de fragmentos), una parte por tramo de juego. Es reanudable.</li>
+        <li>Al día siguiente, comprueba en Calibración → «De la carpeta» que la cancha calza sobre una parte.</li>
+      </ol>
+      <div class="cmdbox">
+        <div class="cmd-line"><pre>python -m sportsan.tracking.overnight --plan --match &lt;match_id&gt;</pre><button type="button">Copiar</button></div>
+        <div class="cmd-line"><pre>python -m sportsan.tracking.overnight --match &lt;match_id&gt;</pre><button type="button">Copiar</button></div>
+      </div>
+      <dl class="meta">
+        <dt>Deja</dt><dd><code>calib_*.json</code>, <code>library_vN.npz</code>, y por parte <code>tracks_vN_ini_fin.json</code> y su parquet</dd>
+        <dt>Tarda</dt><dd>unas 3.5 h de cálculo por hora de juego con el detector pequeño; más con el de cámara amplia. Cada parte se escribe al terminarla</dd>
+      </dl>
+      <ul class="notes">
+        <li>No corras otra cosa pesada a la vez (otro proceso, el tracker de balón, un render): se reparten los núcleos y todo va varias veces más lento.</li>
+      </ul>
+      <p class="why"><b>Por qué de noche y en la laptop:</b> es gratis y el video no sale de la computadora. Las uniones son una propuesta conservadora: unen fragmentos solo cuando es claro; lo dudoso se resuelve en la revisión.</p>
+    </article>
+
+    <article class="step-card app" id="paso-7">
+      <div class="step-head"><span class="n">7</span><h3>Revisar a fondo un tramo de entrenamiento</h3><span class="lane-tag app">App · pestaña Tracking</span></div>
+      <ol class="todo">
+        <li>Elige un tramo mediano, de 1 a 3 minutos de juego, con movimientos de cámara típicos, los dos equipos y algún balón parado. Uno por cámara: si el partido se grabó con otra cámara o en otra sede, ese partido necesita el suyo.</li>
+        <li>Jugadoras: revisión rápida, aplicar a la mesa, «Anomalías» y verificar.</li>
+        <li>Balón: márcalo a mano en todo el tramo (clic en el video o en «En la cancha»; <code>i</code> para balones por alto; <code>k</code> para saques).</li>
+        <li>Guardar: escribe <code>tracks_fixed_*.json</code>, que es de donde aprenden los modelos.</li>
+      </ol>
+      <p class="why"><b>Por qué:</b> los modelos aprenden de tu revisión. El tracker de balón se entrena con todas tus marcas a mano y en toda la cancha; se probó entrenar solo con el balón a los pies y salió mucho peor (medias y botines blancos).</p>
+      <p class="pending"><b>Todavía no:</b> un modelo de identidades que aprenda de este tramo y de la formación (4-3-3 con nombres) para nombrar solo. Hoy las identidades se nombran con la revisión rápida.</p>
+    </article>
+
+    <article class="step-card term" id="paso-8">
+      <div class="step-head"><span class="n">8</span><h3>Correr los modelos</h3><span class="lane-tag term">Terminal</span></div>
+      <ol class="todo">
+        <li>Entrena el tracker de balón con todas las partes guardadas (unos 10 minutos).</li>
+        <li>Córrelo sobre las partes del partido: marca el balón solo donde está muy seguro (acierta cerca del 94 %) y deja apuntado dónde necesita una marca tuya.</li>
+        <li>La forma de los equipos para Análisis.</li>
+      </ol>
+      <div class="cmdbox">
+        <div class="cmd-line"><pre>python -m sportsan.tracking.ball train</pre><button type="button">Copiar</button></div>
+        <div class="cmd-line"><pre>python -m sportsan.tracking.ball run --match &lt;match_id&gt;</pre><button type="button">Copiar</button></div>
+        <div class="cmd-line"><pre>python -m sportsan.metrics.report --match &lt;match_id&gt; --own-attacks right</pre><button type="button">Copiar</button></div>
+        <p class="cmd-note"><code>--accept 0.95</code> en <code>ball run</code>: menos balones y más seguros; <code>--own-attacks left</code> si el equipo analizado ataca a la izquierda en ese video.</p>
+      </div>
+      <dl class="meta"><dt>Deja</dt><dd><code>weights/ball_model.pt</code>, <code>tracking/ball_auto_*.json</code>, <code>tracking/team_metrics_*.json</code></dd></dl>
+      <p class="why"><b>Por qué solo lo seguro:</b> un balón falso contamina posesión y pases sin que se note; un hueco se ve y se completa. Con el tracker se marca a mano cerca de la mitad que sin él.</p>
+    </article>
+
+    <article class="step-card app" id="paso-9">
+      <div class="step-head"><span class="n">9</span><h3>Revisar el tracking</h3><span class="lane-tag app">App · pestaña Tracking</span></div>
+      <ol class="todo">
+        <li>Abre cada parte. <b>Revisión rápida</b> (por jugadora) → «Aplicar a la mesa».</li>
+        <li><b>Anomalías</b>: jugadoras que saltan más de lo que se corre (su nombre pasó a otra tras un barrido de cámara), cuadros con la calibración mal (muchas saltan a la vez) y balones imposibles. Clic lleva al momento.</li>
+        <li><b>Jugadoras</b>: verifica al menos 10 (✓); une, parte o marca a mano donde se pierden. Indica hacia dónde ataca el equipo en ese video.</li>
+        <li><b>Balón</b>: los anillos discontinuos son del tracker (<code>Supr</code> quita uno malo). <code>n</code> lleva a donde pide marca, <code>a</code> al siguiente salto imposible, <code>k</code> mantiene el balón quieto (saques de meta y de esquina), <code>i</code> traza una recta (balón por alto), clic en «En la cancha» marca en el suelo.</li>
+        <li><b>Guardar</b> cada parte. Queda «completa» con 10 verificadas y balón en el 95 % del juego.</li>
+      </ol>
+      <dl class="meta"><dt>Deja</dt><dd><code>tracking/tracks_fixed_*.json</code> y <code>labels_*.json</code>; Análisis e Informe leen de ahí</dd></dl>
+      <p class="why"><b>Por qué en capas:</b> <code>tracks_*.json</code> nunca se modifica; tus correcciones se aplican encima y todo se puede deshacer (Ctrl+Z, o «Restablecer…»).</p>
+    </article>
+
+    <article class="step-card both" id="paso-10">
+      <div class="step-head"><span class="n">10</span><h3>Informe, clips y pizarrón</h3><span class="lane-tag app">App</span><span class="lane-tag term">Terminal, opcional</span></div>
+      <ol class="todo">
+        <li><b>Análisis</b>: revisa que las cifras tengan sentido; si algo no, corrige el evento en Etiquetado. «Pases leídos del tracking» dice qué tramos tienen pases completos.</li>
+        <li><b>Informe</b>: el nivel (N1 a N4) dice con qué datos se hizo. Escribe resumen, fortalezas, debilidades, balón parado y plan o conclusiones. «Sin nombres» si sale del cuerpo técnico. Imprimir o guardar PDF.</li>
+        <li><b>Jugadas</b>: «Dibujar sobre el clip» en las clave (resaltar, flechas, zonas, pausas con <code>p</code>) y «Presentar» en la charla de video. El «ver» del informe abre el clip editado.</li>
+        <li><b>Pizarrón</b>: ABP propias o «Pasar al pizarrón» desde una jugada; animación y láminas para imprimir.</li>
+        <li><b>MP4</b> (opcional): un clip editado para WhatsApp, o todos los del informe.</li>
+      </ol>
+      <div class="cmdbox">
+        <div class="cmd-line"><pre>python -m sportsan.clips.render --edit matches/&lt;id&gt;/edits/edit_&lt;edit_id&gt;.json --profile whatsapp</pre><button type="button">Copiar</button></div>
+        <div class="cmd-line"><pre>python -m sportsan.clips.cut_clips --match &lt;match_id&gt;</pre><button type="button">Copiar</button></div>
+      </div>
+      <p class="why"><b>Por qué por niveles:</b> cada sección pide su fuente; sin ella dice qué le falta en vez de mostrar una cifra débil. Los dibujos se guardan en metros de la cancha, así el mismo dibujo sirve en el pizarrón y sobre el video.</p>
+    </article>
+
+    <article class="step-card app" id="paso-11">
+      <div class="step-head"><span class="n">11</span><h3>Respaldo</h3><span class="lane-tag app">App · Datos</span></div>
+      <ol class="todo">
+        <li>Datos → Exportar respaldo al terminar cada sesión de trabajo larga.</li>
+      </ol>
+      <p class="why"><b>Por qué:</b> eventos, jugadas, correcciones y textos del informe viven en este navegador. Otro navegador o borrar los datos del sitio los pierde; el respaldo los lleva a otra computadora.</p>
+    </article>
+  </section>
+
+  <footer>
+    <span>Qué hace cada archivo y por qué está así: <code>docs/mapa_del_repo.md</code>. Formato de cada archivo: <code>docs/data_contract.md</code>.</span>
+    <span>Actualizado el 18 de octubre de 2026.</span>
+  </footer>
+</div>
+
+<script>
+document.querySelectorAll(".cmd-line button").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var pre = btn.parentElement.querySelector("pre");
+    var text = pre.textContent;
+    function done() {
+      btn.textContent = "Copiado";
+      btn.classList.add("done");
+      setTimeout(function () { btn.textContent = "Copiar"; btn.classList.remove("done"); }, 1600);
+    }
+    function select() {
+      var r = document.createRange();
+      r.selectNodeContents(pre);
+      var s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      btn.textContent = "Ctrl+C";
+    }
+    try {
+      navigator.clipboard.writeText(text).then(done, select);
+    } catch (e) {
+      select();
+    }
+  });
+});
+</script>
