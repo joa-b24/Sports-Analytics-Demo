@@ -59,3 +59,20 @@ test("balón: un teletransporte de ida y vuelta es una anomalía; los eventos no
   assert.equal(one.length, 1);
   assert.equal(one[0].until, undefined);
 });
+
+test("pierde los pies: se va y vuelve en poco tiempo, una sola anomalía con dónde vuelve", () => {
+  // Track 2 walks along y = 20; in frames 30-36 her box loses the feet and she shows 8 m off, then is back.
+  const f = file([1, 2], (t, frame) => (t === 2 ? [30 + frame * 0.02, frame >= 30 && frame <= 36 ? 28 : 20] : [10, 40]));
+  const a = playerAnomalies(f, emptyEdits("k"));
+  assert.deepEqual(a.map((x) => [x.kind, x.person, x.frame, x.until]), [["player", 2, 30, 39]]);
+});
+
+test("una marca a mano de los pies reemplaza a su caja: con los cuadros corregidos ya no hay salto", () => {
+  // H = identity: a pixel is a point of the pitch (scaled to the normalised 105 x 68, here the same).
+  const H = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const f = file([2], (t, frame) => [30, frame === 30 ? 28 : 20]);
+  for (const fr of f.frames) fr.H = H;
+  assert.equal(playerAnomalies(f, emptyEdits("k")).length, 1);
+  const edits = { ...emptyEdits("k"), manual: [{ identity: 2, frame: 30, px: 30, py: 20 }] };
+  assert.deepEqual(playerAnomalies(f, edits), []);
+});

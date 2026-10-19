@@ -363,6 +363,8 @@ export interface TrackEdits {
   ballRejected?: number[];
   // Ball review by samples: every how many seconds, and the sample frames already gone through (ball marked or not seen).
   ballReview?: { every: number; seen: number[] };
+  // Impossible movements the analyst looked at and found fine (anomalyKey of lib/anomalies.ts).
+  anomalyOk?: string[];
 }
 
 // A pass tagged by hand (pass 4 of the tagging): who to whom. to_id is null when it did not reach a teammate.

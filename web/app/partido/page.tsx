@@ -11,6 +11,7 @@ import {
   SkipBack,
   SkipForward,
   X,
+  YoutubeLogo,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -24,6 +25,7 @@ import { ReportTab } from "@/components/match/ReportTab";
 import { SegmentsTab } from "@/components/match/SegmentsTab";
 import { TagTab } from "@/components/match/TagTab";
 import { Card, DemoBadge, btn, btnPrimary, input } from "@/components/Shell";
+import { Dropdown } from "@/components/Dropdown";
 import { Calibration } from "@/components/workspace/Calibration";
 import { Correction } from "@/components/workspace/Correction";
 import { SpeedControl } from "@/components/SpeedControl";
@@ -80,7 +82,6 @@ function MatchPage() {
   const [ytDraft, setYtDraft] = useState<string | null>(null);
   const [rate, setRate] = useState(1);
   const [playing, setPlaying] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   // Where the tagging tab puts its events table: under the video, where there is room for it.
   const [tableSlot, setTableSlot] = useState<HTMLDivElement | null>(null);
   // Over the video and right under its controls: the tagging tab draws its live tags and its timeline there.
@@ -265,138 +266,170 @@ function MatchPage() {
         }
       >
         {match.is_demo && <DemoBadge />}
-        <details className="relative">
-          <summary className="btn cursor-pointer list-none" aria-label="Datos del partido y del video" title="Datos del partido y del video">
-            <GearSix size={16} />
-          </summary>
-          <div className="absolute right-0 z-30 mt-2 flex max-h-[80vh] w-96 flex-col gap-2 overflow-y-auto rounded-lg bg-raised p-4 text-xs text-muted shadow-xl">
-            <label className="flex flex-col gap-1">
-              Nombre
-              <input className={input} value={match.name} onChange={(e) => patch({ name: e.target.value })} />
-            </label>
-            <label className="flex flex-col gap-1">
-              Equipo analizado
-              <input className={input} value={match.focus_team} onChange={(e) => patch({ focus_team: e.target.value })} />
-            </label>
-            <label className="flex flex-col gap-1">
-              Contrario
-              <input className={input} value={match.other_team} onChange={(e) => patch({ other_team: e.target.value })} />
-            </label>
-            <label className="flex flex-col gap-1">
-              Fecha
-              <input className={input} type="date" value={match.date} onChange={(e) => patch({ date: e.target.value })} />
-            </label>
-            <label className="flex flex-col gap-1">
-              Carpeta (matches/…)
-              <input className={`${input} tc`} placeholder="2026_09_25_up_vs_rival" value={match.folder ?? ""} onChange={(e) => patch({ folder: e.target.value.trim() || undefined })} />
-              {match.folder && !isFolderName(match.folder) && (
-                <span className="text-warn">
-                  No sigue la convención {FOLDER_RULE}. Se renombra con <code>python -m sportsan.ingest.rename_match {match.folder} &lt;nuevo&gt;</code>
-                </span>
-              )}
-            </label>
-            <span className="text-faint">
-              {allEvents.length} eventos · {allPlays.length} jugadas
-            </span>
-            <div className="mt-2 border-t border-line pt-3 text-xs text-muted">
-              <div className="mb-2 font-medium text-ink-2">Video {video.video_id}</div>
-            {videos.length > 1 && (
-              <span className="flex flex-wrap items-center gap-2 text-[11px] text-faint">
-                <input className={`${input} w-32`} aria-label="Nombre de este video" value={video.label} onChange={(e) => patchVideo({ label: e.target.value })} />
-                <select
-                  className={input}
-                  aria-label="Tiempo del partido de este video"
-                  title="A qué tiempo pertenece este video: un tiempo puede venir en varias partes"
-                  value={video.period ?? (videoIndex === 0 ? 1 : 2)}
-                  onChange={(e) => patchVideo({ period: Number(e.target.value) as 1 | 2 })}
+        <Dropdown label="Datos del partido y del video" trigger={<GearSix size={16} />} panelClass="w-[min(26rem,calc(100vw-2rem))] max-h-[80vh] overflow-y-auto">
+          {() => (
+            <div className="text-xs text-muted">
+              <section className="p-4">
+                <div className="mb-3 flex items-baseline justify-between gap-2">
+                  <h3 className="cond text-sm font-bold tracking-wide text-ink uppercase">Partido</h3>
+                  <span className="tc text-faint">
+                    {allEvents.length} eventos · {allPlays.length} jugadas
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                  <label className="col-span-2 flex flex-col gap-1">
+                    Nombre
+                    <input className={input} value={match.name} onChange={(e) => patch({ name: e.target.value })} />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-own" aria-hidden />
+                      Analizado
+                    </span>
+                    <input className={input} value={match.focus_team} onChange={(e) => patch({ focus_team: e.target.value })} />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-opp" aria-hidden />
+                      Contrario
+                    </span>
+                    <input className={input} value={match.other_team} onChange={(e) => patch({ other_team: e.target.value })} />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    Fecha
+                    <input className={input} type="date" value={match.date} onChange={(e) => patch({ date: e.target.value })} />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    Carpeta
+                    <input
+                      className={`${input} tc`}
+                      placeholder="aaaa_mm_dd_local_vs_visita"
+                      value={match.folder ?? ""}
+                      onChange={(e) => patch({ folder: e.target.value.trim() || undefined })}
+                    />
+                  </label>
+                  {match.folder && !isFolderName(match.folder) && (
+                    <span className="col-span-2 text-pretty text-warn">
+                      No sigue la convención {FOLDER_RULE}. Se renombra con <code>python -m sportsan.ingest.rename_match {match.folder} &lt;nuevo&gt;</code>
+                    </span>
+                  )}
+                </div>
+              </section>
+              <section className="border-t border-line p-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h3 className="cond text-sm font-bold tracking-wide text-ink uppercase">
+                    Video <span className="tc text-own">{video.video_id}</span>
+                  </h3>
+                  {videoIndex > 0 && usedBy(video.video_id) === 0 && (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-faint transition-colors hover:text-danger"
+                      title="Solo se puede quitar un video sin eventos, jugadas ni tramos"
+                      onClick={() => {
+                        setVideos(videos.filter((v) => v.video_id !== video.video_id));
+                        pickVideo(videos[0].video_id);
+                      }}
+                    >
+                      <X size={12} />
+                      Quitar este video
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-2.5">
+                  {videos.length > 1 && (
+                    <div className="grid grid-cols-[1fr_auto] gap-2">
+                      <input className={input} aria-label="Nombre de este video" value={video.label} onChange={(e) => patchVideo({ label: e.target.value })} />
+                      <select
+                        className={input}
+                        aria-label="Tiempo del partido de este video"
+                        title="A qué tiempo pertenece este video: un tiempo puede venir en varias partes"
+                        value={video.period ?? (videoIndex === 0 ? 1 : 2)}
+                        onChange={(e) => patchVideo({ period: Number(e.target.value) as 1 | 2 })}
+                      >
+                        <option value={1}>1.er tiempo</option>
+                        <option value={2}>2.º tiempo</option>
+                      </select>
+                    </div>
+                  )}
+                  <label className="flex flex-col gap-1">
+                    <span className="flex items-center gap-1.5">
+                      <YoutubeLogo size={13} />
+                      Enlace de YouTube
+                    </span>
+                    <input
+                      className={input}
+                      placeholder="https://youtube.com/…"
+                      value={ytInput}
+                      onChange={(e) => {
+                        setYtDraft(e.target.value);
+                        const parsed = parseYouTubeId(e.target.value);
+                        if (parsed || e.target.value.trim() === "") patchVideo({ youtube_id: parsed });
+                      }}
+                    />
+                  </label>
+                  {ytDraft !== null && ytDraft.trim() !== "" && !parseYouTubeId(ytDraft) && (
+                    <p className="text-danger">No reconozco ese enlace. Pega la URL completa del video de YouTube.</p>
+                  )}
+                  <div className="flex items-center gap-2 rounded-lg bg-bg/60 px-3 py-2">
+                    <FolderOpen size={15} className="shrink-0 text-faint" />
+                    <span
+                      className="min-w-0 flex-1 truncate"
+                      title="El video original completo (sin recortar), para que los tiempos coincidan con YouTube. No se sube a ningún lado."
+                    >
+                      {fileUrls.has(fileKey) ? "Archivo local abierto" : "Sin archivo local"}
+                    </span>
+                    {fileUrls.has(fileKey) && (
+                      <button
+                        type="button"
+                        className="text-faint transition-colors hover:text-ink"
+                        onClick={() => {
+                          const old = fileUrls.get(fileKey) as string;
+                          if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+                          fileUrls.delete(fileKey);
+                          bump((n) => n + 1);
+                        }}
+                      >
+                        quitar
+                      </button>
+                    )}
+                    <label className="btn btn-ghost relative cursor-pointer !px-2 !py-1 text-xs has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400">
+                      {fileUrls.has(fileKey) ? "Cambiar" : "Abrir"}
+                      <input
+                        type="file"
+                        accept="video/*"
+                        className="sr-only"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+                          const old = fileUrls.get(fileKey);
+                          if (old) URL.revokeObjectURL(old);
+                          fileUrls.set(fileKey, URL.createObjectURL(f));
+                          bump((n) => n + 1);
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {videos.length > 1 && <p className="text-[11px] text-faint">Cada video tiene sus propios tiempos, tramos, eventos y jugadas; Análisis e Informe los juntan.</p>}
+                </div>
+              </section>
+              <div className="border-t border-line p-2">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-2 transition-colors hover:bg-line-strong hover:text-ink"
+                  title="Un partido puede venir en varios videos, por ejemplo uno por tiempo"
+                  onClick={() => {
+                    const v = nextVideo(videos);
+                    setVideos([...videos, v]);
+                    pickVideo(v.video_id);
+                  }}
                 >
-                  <option value={1}>1.er tiempo</option>
-                  <option value={2}>2.º tiempo</option>
-                </select>
-                {videoIndex > 0 && usedBy(video.video_id) === 0 && (
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 transition-colors hover:text-danger"
-                    title="Solo se puede quitar un video sin eventos, jugadas ni tramos"
-                    onClick={() => {
-                      setVideos(videos.filter((v) => v.video_id !== video.video_id));
-                      pickVideo(videos[0].video_id);
-                    }}
-                  >
-                    <X size={12} />
-                    quitar
-                  </button>
-                )}
-              </span>
-            )}
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-            <input
-              className={`${input} min-w-0 flex-1`}
-              placeholder={`Pega aquí el enlace de YouTube de ${video.label.toLowerCase()}`}
-              value={ytInput}
-              onChange={(e) => {
-                setYtDraft(e.target.value);
-                const parsed = parseYouTubeId(e.target.value);
-                if (parsed || e.target.value.trim() === "") patchVideo({ youtube_id: parsed });
-              }}
-            />
-            <label className={`${btn} relative cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`}>
-              <FolderOpen size={15} />
-              Abrir archivo local
-              <input
-                type="file"
-                accept="video/*"
-                className="sr-only"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  const old = fileUrls.get(fileKey);
-                  if (old) URL.revokeObjectURL(old);
-                  fileUrls.set(fileKey, URL.createObjectURL(f));
-                  bump((n) => n + 1);
-                }}
-              />
-            </label>
-            {fileUrls.has(fileKey) && (
-              <button
-                type="button"
-                className="link"
-                onClick={() => {
-                  const old = fileUrls.get(fileKey) as string;
-                  if (old.startsWith("blob:")) URL.revokeObjectURL(old);
-                  fileUrls.delete(fileKey);
-                  bump((n) => n + 1);
-                }}
-              >
-                quitar archivo
-              </button>
-            )}
-          </div>
-          {ytDraft !== null && ytDraft.trim() !== "" && !parseYouTubeId(ytDraft) && (
-            <p className="text-xs text-danger">No reconozco ese enlace. Pega la URL completa del video de YouTube.</p>
-          )}
-          <p className="text-xs text-faint">
-            El archivo local debe ser el video original completo (sin recortar), para que los tiempos coincidan con YouTube. No se sube a
-            ningún lado.
-            {videos.length > 1 && " Cada video tiene sus propios tiempos, tramos, eventos y jugadas; Análisis e Informe los juntan."}
-          </p>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              title="Un partido puede venir en varios videos, por ejemplo uno por tiempo"
-              onClick={() => {
-                const v = nextVideo(videos);
-                setVideos([...videos, v]);
-                pickVideo(v.video_id);
-              }}
-            >
-              <Plus size={14} />
-              Añadir video
-            </button>
+                  <Plus size={14} />
+                  Añadir otro video al partido
+                </button>
+              </div>
             </div>
-
-          </div>
-        </details>
+          )}
+        </Dropdown>
       </MatchHeader>
 
       {/* The video takes the room; the working panel keeps a fixed, narrower width (wider for the pitch animation). */}
@@ -568,35 +601,6 @@ function MatchPage() {
       {/* Full width, under both columns: the events table of the tagging tab is drawn here. */}
       <div ref={setTableSlot} className={tab === "tag" ? "mt-6" : "hidden"} />
 
-      <div className="mt-12 text-xs text-faint print:hidden">
-        {confirmDelete ? (
-          <span>
-            ¿Borrar este partido con sus {allEvents.length} eventos y {allPlays.length} jugadas?{" "}
-            <button
-              type="button"
-              className="font-medium text-danger underline"
-              onClick={() =>
-                mutate((s) => ({
-                  ...s,
-                  matches: s.matches.filter((m) => m.match_id !== match.match_id),
-                  events: s.events.filter((e) => e.match_id !== match.match_id),
-                  plays: s.plays.filter((p) => p.match_id !== match.match_id),
-                  segments: s.segments.filter((g) => g.match_id !== match.match_id),
-                }))
-              }
-            >
-              Sí, borrar
-            </button>{" "}
-            <button type="button" className="underline" onClick={() => setConfirmDelete(false)}>
-              cancelar
-            </button>
-          </span>
-        ) : (
-          <button type="button" className="underline" onClick={() => setConfirmDelete(true)}>
-            Borrar partido
-          </button>
-        )}
-      </div>
     </div>
   );
 }

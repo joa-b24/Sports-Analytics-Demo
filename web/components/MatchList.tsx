@@ -1,13 +1,14 @@
 "use client";
 
-import { ArrowRight, Plus, X, YoutubeLogo } from "@phosphor-icons/react";
+import { ArrowRight, Plus, Trash, X, YoutubeLogo } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Modal } from "@/components/Modal";
 import { Reveal } from "@/components/motion";
 import { DemoBadge, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
 import { parseYouTubeId } from "@/lib/format";
 import { mutate, uid, useStore } from "@/lib/store";
-import { EMPTY_REPORT, type MatchKind } from "@/lib/types";
+import { EMPTY_REPORT, type Match, type MatchKind } from "@/lib/types";
 
 const COPY: Record<MatchKind, { title: string; subtitle: string; focus: string; other: string; empty: string }> = {
   own: {
@@ -38,6 +39,18 @@ const ORDER: MatchKind[] = ["own", "rival", "reference"];
 export function MatchList() {
   const { matches, events, plays } = useStore();
   const [kind, setKind] = useState<MatchKind>("own");
+  // A match about to be deleted, waiting for the confirmation.
+  const [toDelete, setToDelete] = useState<Match | null>(null);
+  const remove = (id: string) => {
+    mutate((s) => ({
+      ...s,
+      matches: s.matches.filter((m) => m.match_id !== id),
+      events: s.events.filter((e) => e.match_id !== id),
+      plays: s.plays.filter((p) => p.match_id !== id),
+      segments: s.segments.filter((g) => g.match_id !== id),
+    }));
+    setToDelete(null);
+  };
   // The form opens as a dialog over the list.
   const [adding, setAdding] = useState(false);
   useEffect(() => {
@@ -113,7 +126,7 @@ export function MatchList() {
                     const nEvents = events.filter((e) => e.match_id === m.match_id).length;
                     const nPlays = plays.filter((p) => p.match_id === m.match_id).length;
                     return (
-                      <Reveal as="li" key={m.match_id} delay={Math.min(n, 6) * 60}>
+                      <Reveal as="li" key={m.match_id} delay={Math.min(n, 6) * 60} className="group/item relative">
                         <Link href={`/partido?id=${m.match_id}`} className="card card-link group flex flex-wrap items-center gap-x-8 gap-y-3">
                           <div className="min-w-0 flex-1 basis-60">
                             <div className="flex flex-wrap items-center gap-2">
@@ -140,6 +153,15 @@ export function MatchList() {
                             <ArrowRight size={18} className="mb-5 text-faint transition-[transform,color] group-hover:translate-x-1 group-hover:text-accent-300" />
                           </div>
                         </Link>
+                        <button
+                          type="button"
+                          className="absolute top-2 right-2 grid h-8 w-8 place-items-center rounded-md text-faint opacity-0 transition-[opacity,color,background-color] group-hover/item:opacity-100 hover:bg-danger/15 hover:text-danger focus-visible:opacity-100"
+                          aria-label={`Borrar ${m.name}`}
+                          title="Borrar el partido"
+                          onClick={() => setToDelete(m)}
+                        >
+                          <Trash size={15} />
+                        </button>
                       </Reveal>
                     );
                   })}
@@ -150,6 +172,24 @@ export function MatchList() {
         </div>
 
       </div>
+      {toDelete && (
+        <Modal title="Borrar partido" onClose={() => setToDelete(null)}>
+          <p className="text-sm text-pretty text-muted">
+            ¿Borrar <strong className="text-ink">{toDelete.name}</strong> con sus {events.filter((e) => e.match_id === toDelete.match_id).length} eventos y{" "}
+            {plays.filter((p) => p.match_id === toDelete.match_id).length} jugadas? Solo se borra de este navegador: la carpeta del partido y sus archivos no se
+            tocan. No se puede deshacer (salvo con un respaldo de Datos).
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" className={btn} onClick={() => setToDelete(null)}>
+              Cancelar
+            </button>
+            <button type="button" className="btn !border-danger !bg-danger text-white" onClick={() => remove(toDelete.match_id)}>
+              <Trash size={15} />
+              Borrar
+            </button>
+          </div>
+        </Modal>
+      )}
       {adding && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-bg/70 p-4 backdrop-blur-sm" role="presentation" onClick={() => setAdding(false)}>
           <div

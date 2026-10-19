@@ -71,15 +71,17 @@ export function PlayerMark({ box, color, label, style, unit, strong = false, das
   // Oval: on the ground, a little wider than the body, flattened by the camera angle.
   const rx = Math.max(unit * 1.6, w * 0.75);
   const ry = rx * 0.32;
-  const tx = rx + unit * 0.9;
-  const ty = ry + font + unit * 0.3;
+  // The name follows a much flatter arc under the oval: on a tight curve the tops of the letters crowd together.
+  const small = unit * (strong ? 2.4 : 2.1);
+  const ty = ry + unit * 0.45 + small * 0.75;
+  const tx = ty / 0.42;
   return (
     <g pointerEvents="none">
       <ellipse cx={cx} cy={y2} rx={rx} ry={ry} fill={strong ? "rgba(255,255,255,.12)" : "rgba(0,0,0,.12)"} stroke={color} strokeWidth={stroke} strokeDasharray={dash} />
       {label && (
         <>
           <path id={id} d={`M${cx - tx} ${y2} A${tx} ${ty} 0 0 0 ${cx + tx} ${y2}`} fill="none" stroke="none" />
-          <text style={text} textAnchor="middle">
+          <text style={{ ...text, fontSize: small, letterSpacing: unit * 0.12, strokeWidth: unit / 9 }} textAnchor="middle">
             <textPath href={`#${id}`} startOffset="50%">
               {label}
             </textPath>

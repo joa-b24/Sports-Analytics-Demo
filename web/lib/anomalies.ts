@@ -5,8 +5,8 @@
 //   ball     the ball would have to fly faster than any shot, or it goes somewhere and comes straight back: a mark on a
 //            ball in the air (taken to the pitch as if it were on the ground, it lands far away) or a wrong detection.
 // Distances are in real meters of the venue: the normalised pitch (105 x 68) is not the real size.
-import type { BallPoint } from "./parts.ts";
-import { JUMP_MIN_M, JUMP_SPEED_MS, series } from "./cuts.ts";
+import { pixelToPitch, type BallPoint } from "./parts.ts";
+import { JUMP_MIN_M, JUMP_SPEED_MS, series, type Obs } from "./cuts.ts";
 import type { TracksFile } from "./tracks.ts";
 import { PITCH, type TrackEdits } from "./types.ts";
 
@@ -46,34 +46,69 @@ const scaleOf = (file: Pick<TracksFile, "venue">): [number, number] => [
 ];
 
 // Players and camera. Jumps of people with a name come first (they matter for the analysis), then the camera ones.
+// Feet marked by hand replace the position of her box in that frame. A player who jumps out and comes back within
+// DETOUR_S (the box lost her feet, or took somebody else for a moment) is one anomaly, with `until` where she is back.
 export function playerAnomalies(file: TracksFile, edits: TrackEdits): Anomaly[] {
   const fps = file.fps;
   const names = new Map(Object.entries(edits.people).map(([k, v]) => [Number(k), v.player_id ?? null]));
-  const all = series(file, edits);
+  const all = withManual(file, edits, series(file, edits));
   // Who is seen in each frame, to tell a camera jump from a player's.
   const seenAt = new Map<number, number>();
-  const jumps: { person: number; frame: number; meters: number; speed: number }[] = [];
+  type Jump = { person: number; frame: number; meters: number; speed: number; before: Obs; after: Obs };
+  const jumps: Jump[] = [];
   for (const [person, obs] of all) {
     for (const o of obs) seenAt.set(o.frame, (seenAt.get(o.frame) ?? 0) + 1);
     for (let i = 1; i < obs.length; i++) {
       const dt = (obs[i].frame - obs[i - 1].frame) / fps;
       const d = Math.hypot(obs[i].x - obs[i - 1].x, obs[i].y - obs[i - 1].y);
-      if (dt > 0 && dt <= PAIR_MAX_S && d > JUMP_MIN_M && d / dt > JUMP_SPEED_MS) jumps.push({ person, frame: obs[i].frame, meters: d, speed: d / dt });
+      if (dt > 0 && dt <= PAIR_MAX_S && d > JUMP_MIN_M && d / dt > JUMP_SPEED_MS) jumps.push({ person, frame: obs[i].frame, meters: d, speed: d / dt, before: obs[i - 1], after: obs[i] });
     }
   }
   const out: Anomaly[] = [];
-  const byFrame = new Map<number, typeof jumps>();
+  const byFrame = new Map<number, Jump[]>();
   for (const j of jumps) byFrame.set(j.frame, [...(byFrame.get(j.frame) ?? []), j]);
+  const own: Jump[] = [];
   for (const [frame, js] of byFrame) {
     const seen = seenAt.get(frame) ?? js.length;
     if (js.length >= CAMERA_MIN_PEOPLE && js.length >= CAMERA_SHARE * seen) {
       out.push({ kind: "camera", frame, people: js.length, meters: median(js.map((j) => j.meters)), speed: median(js.map((j) => j.speed)) });
       continue;
     }
-    for (const j of js) out.push({ kind: "player", frame, person: j.person, name: names.get(j.person) ?? null, meters: j.meters, speed: j.speed });
+    own.push(...js);
+  }
+  // Out and back: her next jump, soon, lands where she could have got to from before the first one.
+  own.sort((a, b) => a.person - b.person || a.frame - b.frame);
+  for (let i = 0; i < own.length; i++) {
+    const j = own[i];
+    const back = own[i + 1];
+    const dt = back ? (back.after.frame - j.before.frame) / fps : 0;
+    const returns =
+      back !== undefined && back.person === j.person && (back.frame - j.frame) / fps <= DETOUR_S && Math.hypot(back.after.x - j.before.x, back.after.y - j.before.y) <= JUMP_SPEED_MS * dt + JUMP_MIN_M;
+    out.push({ kind: "player", frame: j.frame, person: j.person, name: names.get(j.person) ?? null, meters: j.meters, speed: j.speed, ...(returns ? { until: back.frame } : {}) });
+    if (returns) i++;
   }
   return out.sort((a, b) => rank(a) - rank(b) || a.frame - b.frame);
 }
+
+// The positions of each person with her feet marked by hand in place of (or besides) her box.
+function withManual(file: TracksFile, edits: TrackEdits, all: Map<number, Obs[]>): Map<number, Obs[]> {
+  if (edits.manual.length === 0) return all;
+  const [sx, sy] = scaleOf(file);
+  const H = new Map(file.frames.map((f) => [f.frame, f.H]));
+  const removed = new Set(edits.removed);
+  for (const m of edits.manual) {
+    if (removed.has(m.identity)) continue;
+    const p = pixelToPitch(file, H.get(m.frame), m.px, m.py);
+    if (!p) continue;
+    const obs = (all.get(m.identity) ?? []).filter((o) => o.frame !== m.frame);
+    obs.push({ frame: m.frame, x: p[0] * sx, y: p[1] * sy, team: obs[0]?.team ?? "unk" });
+    all.set(m.identity, obs.sort((a, b) => a.frame - b.frame));
+  }
+  return all;
+}
+
+// What identifies an anomaly marked as fine by the analyst (TrackEdits.anomalyOk).
+export const anomalyKey = (a: Pick<Anomaly, "kind" | "frame" | "person">) => `${a.kind}:${a.person ?? ""}:${a.frame}`;
 const rank = (a: Anomaly) => (a.kind === "player" ? (a.name ? 0 : 2) : 1);
 const median = (v: number[]) => [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)];
 

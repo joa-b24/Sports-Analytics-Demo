@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Plus, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Plus, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
@@ -8,13 +8,15 @@ import { LABEL_STYLES, PlayerMark, type LabelStyle } from "@/components/PlayerMa
 import { IconButton, Modal } from "@/components/Modal";
 import { Command } from "@/components/Command";
 import { ProcessPanel } from "@/components/workspace/ProcessPanel";
+import { LoadingStage } from "@/components/workspace/LoadingStage";
+import { Dropdown, MenuItem } from "@/components/Dropdown";
 import { Card, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
 import { FilePicker, partLabel } from "@/components/LocalPick";
-import { PersonTimeline } from "@/components/workspace/PersonTimeline";
+import { PersonTimeline, RANGE_DRAG, type JoinTarget } from "@/components/workspace/PersonTimeline";
 import { SpeedControl } from "@/components/SpeedControl";
 import { downloadText, fmtT, isTyping } from "@/lib/format";
 import { BALL_FILL_S, autoBall, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, metersPerUnit, pitchToPixel, pixelToPitch, type BallAuto, type Part } from "@/lib/parts";
-import { ballAnomalies, playerAnomalies, type Anomaly } from "@/lib/anomalies";
+import { anomalyKey, ballAnomalies, playerAnomalies, type Anomaly } from "@/lib/anomalies";
 import { applyHint, applyTeamCuts, cutHints, type CutHint } from "@/lib/cuts";
 import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
 import { buildLabels, labelsName } from "@/lib/labels";
@@ -75,6 +77,8 @@ type Mode = null | "merge" | "manual" | "ball";
 type WritableHandle = { getFile(): Promise<File>; createWritable(): Promise<{ write(t: string): Promise<void>; close(): Promise<void> }> };
 
 // The handlers below take the event of a file input; a file read from the match folder goes through them too.
+// The click that ends a drag between two boxes is not a click on a box.
+const afterDrag = { on: false };
 const TRACKS_PART = /^tracks_v\d+_\d+_\d+\.json$/;
 const asEvent = (files: File[]) => ({ target: { files, value: "" } }) as unknown as React.ChangeEvent<HTMLInputElement>;
 
@@ -91,16 +95,25 @@ function Head({ embedded, children }: { embedded: boolean; children: React.React
 
 // Correction table of the tracks of one match. Inside a match (embedded) its folder and the match of the app (for
 // the tagged events used as ball positions) come from the match.
-// Width of the people column (px): dragged on the divider, within these limits; the video never gets narrower than VIDEO_MIN_PX.
-const LIST_MIN_PX = 352;
+// Width of the side column (px), dragged on its edge; the video takes a share of the height of the window, dragged on
+// the bar above the timeline.
+const SIDE_MIN_PX = 260;
+const SIDE_MAX_PX = 640;
+const SIDE_DEFAULT_PX = 336;
+const VIDEO_MIN_VH = 0.35;
+const VIDEO_MAX_VH = 0.92;
+const VIDEO_DEFAULT_VH = 0.78;
+// Held keys: an arrow plays (or rewinds) at this speed; Space held steps one processed frame every CREEP_MS.
+const FAST_RATE = 4;
+const FAST_TICK_MS = 100;
+const HOLD_MS = 260;
+const CREEP_MS = 170;
 // A person with less than this share of her boxes on the pitch is somebody off it (bench, stands, coaches).
 const OFF_PITCH_SHARE = 0.1;
 // How long a notice stays on screen (ms).
 const MSG_MS = 6000;
 // A hole in the middle of the image longer than this (s) is worth a look in the table.
 const FIX_GAP_S = 2;
-const LIST_MAX_PX = 900;
-const VIDEO_MIN_PX = 520;
 
 export function Correction({
   folder,
@@ -129,12 +142,29 @@ export function Correction({
   const [sel, setSel] = useState<number | null>(null);
   const [mode, setMode] = useState<Mode>(null);
   const [goTo, setGoTo] = useState("");
-  const [showShort, setShowShort] = useState(false);
-  const [teamFilter, setTeamFilter] = useState<TeamCode | "all">("all");
-  const [hideDone, setHideDone] = useState(true);
+  const [showShort] = useState(false);
+  const [teamFilter] = useState<TeamCode | "all">("all");
+  const [hideDone] = useState(true);
   // Referees are not useful for the analysis: hidden (and left out of what is exported) unless asked for.
-  const [showRefs, setShowRefs] = useState(false);
+  const [showRefs] = useState(false);
   const [playing, setPlaying] = useState(false);
+  // Choosing how much of the top and bottom of the image to hide (the sky, the stands): the whole image shows meanwhile.
+  const [cropping, setCropping] = useState(false);
+  const [cropDraft, setCropDraft] = useState<[number, number] | null>(null);
+  // A player pinned (one at a time): the selected one, or a stretch of her line, joins her with J or by dragging.
+  const [pinned, setPinned] = useState<number | null>(null);
+  // Dragging one box onto another on the video (to join them), and what a dragged stretch is over.
+  const [dragLine, setDragLine] = useState<{ from: [number, number]; to: [number, number]; target: number | null } | null>(null);
+  const [dropOver, setDropOver] = useState<number | null>(null);
+  // The impossible jump of the selected player being reviewed (its person and first frame).
+  const [anomAt, setAnomAt] = useState<{ person: number; frame: number } | null>(null);
+  // The save button tells by itself how the save went; the details of the cleaning go in its tooltip.
+  const [save, setSave] = useState<{ state: "idle" | "saving" | "saved" | "downloaded" | "error"; note: string }>({ state: "idle", note: "" });
+  useEffect(() => {
+    if (save.state !== "saved" && save.state !== "downloaded") return;
+    const t = setTimeout(() => setSave((x) => ({ ...x, state: "idle" })), 2400);
+    return () => clearTimeout(t);
+  }, [save.state]);
   // Kit whose colour is being taken from the video with a click.
   const [pickKit, setPickKit] = useState<JerseyKey | null>(null);
   // Used for the kit colours while no tracks file (which names its match) is loaded.
@@ -206,10 +236,20 @@ export function Correction({
   // A candidate being checked on the video ("does she go on as …?").
   const [peek, setPeek] = useState<Suggestion | null>(null);
   // Rows of the list drawn (the list of a long part has thousands of pieces).
-  const [listLimit, setListLimit] = useState(80);
-  const [onlyShirt, setOnlyShirt] = useState(false);
+  
+  const [onlyShirt] = useState(false);
   // The list shows the people with a name (the players being corrected) unless asked for everybody.
   const listShow = usePref("correction:listShow", "named") as "named" | "all";
+  // Room of each panel: the side column (px) and the share of the window's height the video may take.
+  const sideW = Math.min(SIDE_MAX_PX, Math.max(SIDE_MIN_PX, Number(usePref("correction:sideW", String(SIDE_DEFAULT_PX))) || SIDE_DEFAULT_PX));
+  const videoVh = Math.min(VIDEO_MAX_VH, Math.max(VIDEO_MIN_VH, Number(usePref("correction:videoVh", String(VIDEO_DEFAULT_VH))) || VIDEO_DEFAULT_VH));
+  // Every person marked, or only the selected one (the rest faint until the pointer is over them); h switches.
+  const focusSel = usePref("correction:focus", "all") === "sel";
+  // How much of the top (sky) and bottom of the image is hidden, per video; nothing while it is being chosen.
+  const cropKey = `correction:crop:${folder ?? matchIdText}:${video}`;
+  const [cropTopPref, cropBottomPref] = usePref(cropKey, "0,0").split(",").map((v) => Math.min(0.45, Math.max(0, Number(v) || 0)));
+  const cropTop = cropping ? 0 : (cropDraft?.[0] ?? cropTopPref);
+  const cropBottom = cropping ? 0 : (cropDraft?.[1] ?? cropBottomPref);
 
   const fps = data?.fps ?? 29.97002997;
   const frame = Math.round(time * fps);
@@ -264,14 +304,17 @@ export function Correction({
     if (videoRef.current) videoRef.current.playbackRate = rate;
   }, [rate, fileUrl, ready]);
 
+  // With a part loaded, the video stays inside it: its detections start and end there.
+  const lo = data ? data.start_frame : 0;
+  const hi = data ? data.end_frame - 1 : Number.POSITIVE_INFINITY;
   const seekFrame = useCallback(
     (f: number) => {
       const v = videoRef.current;
       if (!v) return;
       v.pause();
-      v.currentTime = Math.max(0, (f + 0.5) / fps);
+      v.currentTime = Math.max(0, (Math.min(hi, Math.max(lo, f)) + 0.5) / fps);
     },
-    [fps],
+    [fps, lo, hi],
   );
   const stride = data?.stride ?? 3;
   // Play / pause. A second press while play() is still starting must not leave the video in between.
@@ -282,7 +325,50 @@ export function Correction({
     else v.pause();
   }, []);
 
+  const rateRef = useRef(rate);
   useEffect(() => {
+    rateRef.current = rate;
+  }, [rate]);
+  // Keys held down: an arrow plays fast (or rewinds) until it is let go; Space pressed and let go plays or pauses,
+  // held it steps one processed frame at a time.
+  const hold = useRef({ dir: 0, timer: 0, space: false, creeping: false, creep: 0 });
+  const stopFast = useCallback(() => {
+    const h = hold.current;
+    if (h.dir === 0) return;
+    window.clearInterval(h.timer);
+    const v = videoRef.current;
+    if (h.dir > 0 && v) {
+      v.pause();
+      v.playbackRate = rateRef.current;
+    }
+    h.dir = 0;
+  }, []);
+  const stopCreep = useCallback(() => {
+    const h = hold.current;
+    window.clearTimeout(h.creep);
+    window.clearInterval(h.creep);
+    h.space = false;
+    const was = h.creeping;
+    h.creeping = false;
+    return was;
+  }, []);
+  useEffect(() => {
+    const startFast = (dir: 1 | -1) => {
+      const h = hold.current;
+      const v = videoRef.current;
+      if (!v || h.dir === dir) return;
+      stopFast();
+      h.dir = dir;
+      if (dir > 0) {
+        v.playbackRate = FAST_RATE;
+        void v.play().catch(() => undefined);
+      } else {
+        h.timer = window.setInterval(() => {
+          const vv = videoRef.current;
+          if (vv) seekFrame(Math.round((vv.currentTime - (FAST_RATE * FAST_TICK_MS) / 1000) * fps));
+        }, FAST_TICK_MS);
+      }
+    };
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (isTyping(el)) return;
@@ -290,18 +376,31 @@ export function Correction({
       if (!v) return;
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
         e.preventDefault();
-        const step = (e.shiftKey ? Math.round(fps) : stride) * (e.key === "ArrowRight" ? 1 : -1);
+        const dir = e.key === "ArrowRight" ? 1 : -1;
+        if (e.repeat) return startFast(dir);
+        const step = (e.shiftKey ? Math.round(fps) : stride) * dir;
         seekFrame(Math.round(v.currentTime * fps - 0.5) + step);
       } else if (e.key === " ") {
         e.preventDefault();
-        if (e.repeat) return;
-        togglePlay();
+        const h = hold.current;
+        if (e.repeat || h.space) return;
+        h.space = true;
+        h.creep = window.setTimeout(() => {
+          h.creeping = true;
+          const tick = () => {
+            const vv = videoRef.current;
+            if (vv) seekFrame(Math.round(vv.currentTime * fps - 0.5) + stride);
+          };
+          tick();
+          h.creep = window.setInterval(tick, CREEP_MS);
+        }, HOLD_MS);
       } else if (e.key === "Escape") {
         setMode((m) => {
           if (m === null) setSel(null);
           return null;
         });
         setPickKit(null);
+        setCropping(false);
       } else if ((e.ctrlKey || e.metaKey) && e.key === "z") {
         e.preventDefault();
         undoRef.current();
@@ -311,20 +410,48 @@ export function Correction({
       else if (e.key === "b" && viewRef.current === "players") setMode((m) => (m === "ball" ? null : "ball"));
       else if (e.key === "z") setPref("correction:zoom", String((Number(getPref("correction:zoom", "2")) % 3) + 1));
       else if (e.key === "f") toggleFull();
+      else if (e.key === "h" && viewRef.current !== "ball") setPref("correction:focus", getPref("correction:focus", "all") === "sel" ? "all" : "sel");
+      else if (/^[0-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && Number.isFinite(hi)) {
+        e.preventDefault();
+        seekFrame(Math.round(lo + (Number(e.key) / 10) * (hi + 1 - lo)));
+      }
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") stopFast();
+      else if (e.key === " " && hold.current.space && !stopCreep() && !isTyping(e.target)) togglePlay();
+    };
+    const onBlur = () => {
+      stopFast();
+      stopCreep();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [fps, stride, seekFrame, togglePlay, toggleFull]);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("blur", onBlur);
+      onBlur();
+    };
+  }, [fps, stride, seekFrame, togglePlay, toggleFull, stopFast, stopCreep, lo, hi]);
 
   // The processed parts of this video in the folder (null: no access to the folder, as on the web).
   const [partNames, setPartNames] = useState<string[] | null>(null);
+  // Until the folder answers, the loading animation shows instead of the «how to start» card.
+  const [listing, setListing] = useState(embedded && !!folder);
+  // A part being opened (its name), while the file is read.
+  const [opening, setOpening] = useState<string | null>(null);
   const relist = useCallback(() => {
     if (!embedded || !folder) return;
     void listLocal(`matches/${folder}/tracking`).then(async (files) => {
       // No tracking/ yet in a folder that exists: nothing processed. No folder at all: no access (the web).
-      if (!files) return setPartNames((await listLocal(`matches/${folder}`)) ? [] : null);
+      if (!files) {
+        setPartNames((await listLocal(`matches/${folder}`)) ? [] : null);
+        return setListing(false);
+      }
       const names = tracksParts(files, video).sort((a, b) => Number(a.split("_")[2]) - Number(b.split("_")[2]));
       setPartNames(names);
+      setListing(false);
     });
   }, [embedded, folder, video]);
   useEffect(relist, [relist]);
@@ -369,6 +496,8 @@ export function Correction({
     } catch {
       setData(null);
       setMsg("Ese archivo no es una parte de tracking (se espera tracks_<video>_<inicio>_<fin>.json).");
+    } finally {
+      setOpening(null);
     }
   };
 
@@ -494,11 +623,16 @@ export function Correction({
   };
   // Impossible movements of this part (lib/anomalies.ts): a player whose name jumped to someone else, a frame whose
   // calibration is off (many jump at once) and a ball that would fly faster than any shot (a mark on a ball in the air).
-  const anomalies = useMemo(() => (data ? [...playerAnomalies(data, edits), ...ballAnomalies(ball, data)] : []), [data, edits, ball]);
+  const anomalies = useMemo(() => {
+    if (!data) return [];
+    const ok = new Set(edits.anomalyOk ?? []);
+    return [...playerAnomalies(data, edits), ...ballAnomalies(ball, data)].filter((a) => !ok.has(anomalyKey(a)));
+  }, [data, edits, ball]);
   const ballOdd = anomalies.filter((a) => a.kind === "ball").sort((a, b) => a.frame - b.frame);
   const goAnomaly = (a: Anomaly) => {
-    seekFrame(Math.max(data?.start_frame ?? 0, a.frame - stride));
+    seekFrame(a.kind === "player" ? a.frame : Math.max(data?.start_frame ?? 0, a.frame - stride));
     if (a.person !== undefined) setSel(a.person);
+    if (a.kind === "player" && a.person !== undefined) setAnomAt({ person: a.person, frame: a.frame });
     if (a.kind === "ball" && view !== "ball") {
       setView("ball");
       setMode("ball");
@@ -593,6 +727,7 @@ export function Correction({
   useEffect(() => {
     bKeys.current = (e: KeyboardEvent) => {
       if (view !== "ball" || isTyping(e.target) || e.ctrlKey || e.metaKey) return;
+      if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && e.repeat) return;
       // Arrows: one step (the interval chosen); Alt + arrows: one processed frame; Tab: two steps (Shift + Tab back).
       if (e.key === "Enter") bNotSeen();
       else if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && e.altKey) seekFrame(frame + (e.key === "ArrowRight" ? stride : -stride));
@@ -647,6 +782,7 @@ export function Correction({
   };
 
   const onOverlayClick = (e: React.MouseEvent) => {
+    if (afterDrag.on) return;
     if (pickKit) return sampleKit(e.clientX, e.clientY);
     if (mode === "ball" && pf !== null) {
       const b = toPixels(e);
@@ -658,6 +794,11 @@ export function Correction({
     if (!p) return;
     videoRef.current?.pause();
     setEdits(setManual(edits, sel, pf, Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10));
+    if (anomCur && pf >= anomCur.frame - stride) {
+      const end = anomCur.until ?? anomCur.frame + stride;
+      if (pf + stride < end) seekFrame(pf + stride);
+      else setMode(null);
+    }
   };
   const selTwiceHere = sel !== null && shown.filter((x) => x.id === sel).length > 1;
   // Identities drawn more than once in this frame, whoever is selected.
@@ -700,7 +841,7 @@ export function Correction({
   };
   const pickBox = (id: number, track?: number) => {
     // In the ball view a click is for the ball, never for a player.
-    if (view === "ball") return;
+    if (view === "ball" || afterDrag.on) return;
     if (track !== undefined && id === sel && selTwiceHere && mode === null) return keepOnly(track);
     if (mode === "merge" && sel !== null && id !== sel) {
       tryMerge(sel, id);
@@ -797,12 +938,12 @@ export function Correction({
     const prev = (edits.ball ?? []).filter((b) => b.frame <= pf && pf - b.frame <= 3 * fps).sort((a, b) => b.frame - a.frame)[0];
     return prev ? [prev.px, prev.py] : null;
   })();
-  // translate(t) scale(z) puts a point p at z * p + t: the point goes to the middle, without showing past the edges.
+  // translate(t) scale(z) puts a point p at z * p + t: the point goes to the middle of what is shown (the image less
+  // its crop), without showing past the edges of the image.
   const zoomTo = (center: [number, number] | null): string | undefined => {
-    if (zoom <= 1 || !center || !dims) return undefined;
-    const clamp = (v: number) => Math.min(0, Math.max((1 - zoom) * 100, v));
-    const tx = clamp((0.5 - (zoom * center[0]) / dims.w) * 100);
-    const ty = clamp((0.5 - (zoom * center[1]) / dims.h) * 100);
+    if (zoom <= 1 || !center || !dims || cropping) return undefined;
+    const tx = Math.min(0, Math.max(1 - zoom, 0.5 - (zoom * center[0]) / dims.w)) * 100;
+    const ty = Math.min(cropTop, Math.max(1 - cropBottom - zoom, (1 - cropTop - cropBottom) / 2 + cropTop - (zoom * center[1]) / dims.h)) * 100;
     return `translate(${tx}%, ${ty}%) scale(${zoom})`;
   };
   const peekAt = (s: Suggestion) => {
@@ -878,12 +1019,167 @@ export function Correction({
     setEdits(r.edits);
     setMsg("El tramo es ahora otra persona; ella sigue igual antes y después. Ctrl + Z lo deshace.");
   };
-  const splitAt = (f: number) => {
-    if (!data || sel === null) return;
-    const r = splitPerson(edits, sel, f, data);
-    if (!r) return setMsg("Para partir hace falta que tenga algo antes y después de ese punto.");
-    setEdits(r.edits);
+
+  // ---------------------------------------------------------------- joining (pinned player, drag and drop)
+  // Two people into one: the one with a name keeps it (the target, when both or neither have one).
+  const joinPeople = (from: number, to: number) => {
+    if (from === to) return;
+    const [into, other] = !personById.get(to)?.player_id && personById.get(from)?.player_id ? [from, to] : [to, from];
+    if (!tryMerge(into, other)) return;
+    if (sel === other) setSel(into);
+    if (pinned === other) setPinned(into);
+    setMsg(`Unidas en ${label(personById.get(into), into)}. Ctrl + Z lo deshace.`);
   };
+  // A stretch of somebody's line goes to another person: to fill a hole without cutting and joining by hand.
+  const joinRange = (person: number, from: number, to: number, target: number) => {
+    if (!data || person === target) return;
+    const r = separateRange(edits, data, person, from, to);
+    if (r.identity === null) return setMsg("No hay cajas suyas en ese tramo.");
+    const c = clash(data, r.edits, target, r.identity);
+    if (c.apart.length > 0) {
+      return setMsg(`No se unió: ${label(personById.get(target), target)} ya está en otro sitio en ${c.apart.length} cuadro(s) de ese tramo.`);
+    }
+    setEdits(merge(dropBoxes(r.edits, c.drop), target, r.identity));
+    setMsg(`${fmtT(from / fps)}–${fmtT((to + stride) / fps)} pasa a ${label(personById.get(target), target)}. Ctrl + Z lo deshace.`);
+  };
+  const pinnedP = pinned !== null ? (personById.get(pinned) ?? null) : null;
+  const pinnedLine = useMemo(() => (data && pinned !== null && pinned !== sel ? personTimeline(data, edits, pinned).map((x) => x.frame) : []), [data, edits, pinned, sel]);
+  // k pins (or lets go) the selected player; j joins the selected one to the pinned one.
+  const togglePin = () => {
+    if (sel === null) return;
+    setPinned(pinned === sel ? null : sel);
+  };
+  const joinToPinned = () => {
+    if (sel === null || pinned === null || sel === pinned) return;
+    const from = sel;
+    joinPeople(from, pinned);
+    setSel(null);
+  };
+  // The box under a point of the video (pixels), other than `except`.
+  const boxAt = (pt: [number, number], except?: number): number | null => {
+    const pad = dotR;
+    const hit = shown.filter(({ b, id }) => id !== except && pt[0] >= b[1] - pad && pt[0] <= b[3] + pad && pt[1] >= b[2] - pad && pt[1] <= b[4] + pad);
+    // The nearest feet, if several boxes overlap there.
+    hit.sort((u, v) => Math.hypot((u.b[1] + u.b[3]) / 2 - pt[0], u.b[4] - pt[1]) - Math.hypot((v.b[1] + v.b[3]) / 2 - pt[0], v.b[4] - pt[1]));
+    return hit[0]?.id ?? null;
+  };
+  // Pressing on a box and letting go on another joins them.
+  const startBoxDrag = (e: React.PointerEvent, id: number, b: (typeof shown)[number]["b"]) => {
+    if (e.button !== 0 || mode !== null || pickKit || view !== "players") return;
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const from: [number, number] = [(b[1] + b[3]) / 2, b[4]];
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 8) return;
+      if (!moved) videoRef.current?.pause();
+      moved = true;
+      const pt = toPixels(ev);
+      if (pt) setDragLine({ from, to: pt, target: boxAt(pt, id) });
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      setDragLine(null);
+      if (!moved) return;
+      afterDrag.on = true;
+      window.setTimeout(() => (afterDrag.on = false), 0);
+      const pt = toPixels(ev);
+      const target = pt ? boxAt(pt, id) : null;
+      if (target !== null) joinPeople(id, target);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+  };
+  // A stretch of the timeline dropped on a person (a box of the video, a row, the pinned one).
+  const readRange = (e: React.DragEvent) => {
+    try {
+      const r = JSON.parse(e.dataTransfer.getData(RANGE_DRAG)) as { person: number; from: number; to: number };
+      return Number.isFinite(r.person) && Number.isFinite(r.from) && Number.isFinite(r.to) ? r : null;
+    } catch {
+      return null;
+    }
+  };
+  const dropOn = (target: number | null) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (target === null || !e.dataTransfer.types.includes(RANGE_DRAG)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDropOver(target);
+    },
+    onDragLeave: () => setDropOver(null),
+    onDrop: (e: React.DragEvent) => {
+      setDropOver(null);
+      const r = readRange(e);
+      if (!r || target === null) return;
+      e.preventDefault();
+      joinRange(r.person, r.from, r.to, target);
+    },
+  });
+  // The named people a stretch can go to, in the order of the squad.
+  const qOrder = new Map((state.roster ?? []).map((r) => [r.player_id, r.number ?? 999]));
+  const joinTargets: JoinTarget[] = ppl
+    .filter((p) => p.player_id && !refIds.has(p.id))
+    .sort((a, b) => (qOrder.get(a.player_id) ?? 999) - (qOrder.get(b.player_id) ?? 999) || a.player_id.localeCompare(b.player_id))
+    .map((p) => ({ id: p.id, label: label(p, p.id), color: TEAM_COLORS[p.team] }));
+
+  // ---------------------------------------------------------------- impossible jumps of the selected player
+  // Marked on her line; reviewed one by one: leave the frames out (the box lost her feet: they are filled on save),
+  // mark her feet by hand, or say it is fine.
+  const selAnoms = sel === null ? [] : anomalies.filter((a) => a.kind === "player" && a.person === sel).sort((a, b) => a.frame - b.frame);
+  const anomOn = anomAt !== null && anomAt.person === sel && view === "players";
+  const anomCur = anomOn ? (selAnoms.find((a) => a.frame === anomAt.frame) ?? null) : null;
+  const anomFrames = (a: Anomaly) => Math.max(1, Math.round(((a.until ?? a.frame + stride) - a.frame) / stride));
+  const anomGo = (a: Anomaly) => {
+    if (a.person === undefined) return;
+    setAnomAt({ person: a.person, frame: a.frame });
+    setMode(null);
+    seekFrame(a.frame);
+  };
+  const anomStep = (dir: 1 | -1) => {
+    if (selAnoms.length === 0) return setMsg("No le quedan saltos imposibles por revisar.");
+    const from = anomOn ? anomAt.frame : frame;
+    const next = dir > 0 ? (selAnoms.find((a) => a.frame > from) ?? selAnoms[0]) : ([...selAnoms].reverse().find((a) => a.frame < from) ?? selAnoms[selAnoms.length - 1]);
+    anomGo(next);
+  };
+  // After one is solved, on to her next one (the list still holds the solved one).
+  const anomDone = (a: Anomaly, next: TrackEdits) => {
+    setEdits(next);
+    const rest = selAnoms.filter((x) => x !== a);
+    const after = rest.find((x) => x.frame > a.frame) ?? rest[0];
+    if (after) anomGo(after);
+    else {
+      setAnomAt(null);
+      setMode(null);
+      setMsg("No le quedan saltos imposibles por revisar. Ctrl + Z deshace el último cambio.");
+    }
+  };
+  const anomDrop = (a: Anomaly) => data && a.person !== undefined && anomDone(a, dropRange(edits, data, a.person, a.frame, (a.until ?? a.frame + stride) - 1));
+  const anomOk = (a: Anomaly) => anomDone(a, { ...edits, anomalyOk: [...new Set([...(edits.anomalyOk ?? []), anomalyKey(a)])] });
+  const anomFix = (a: Anomaly) => {
+    seekFrame(a.frame);
+    setMode("manual");
+  };
+  // While a jump is under review: Q leaves its frames out, Enter says it is fine, A / Shift + A next / previous, Esc
+  // closes the review (the player stays selected). P (mark by hand) is the table's own key.
+  const anomKeys = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  useEffect(() => {
+    anomKeys.current = (e: KeyboardEvent) => {
+      if (!anomOn || isTyping(e.target) || e.ctrlKey || e.metaKey || e.altKey || peek) return;
+      const k = e.key.toLowerCase();
+      if (k === "q" && anomCur) anomDrop(anomCur);
+      else if (k === "enter" && anomCur && mode === null) anomOk(anomCur);
+      else if (k === "a") anomStep(e.shiftKey ? -1 : 1);
+      else if (k === "escape" && mode === null) setAnomAt(null);
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => anomKeys.current(e);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // Places where a person is probably two: impossible jumps, short excursions to somebody else, changes of shirt.
   // Measured on the first corrected part: the changes of shirt were real changes of person 5 times out of 6; the big
@@ -892,7 +1188,6 @@ export function Correction({
   const hints = allCutHints.filter((h) => h.kind === "team");
   const hintsByPerson = new Map<number, CutHint[]>();
   for (const h of hints) hintsByPerson.set(h.person, [...(hintsByPerson.get(h.person) ?? []), h]);
-  const listed = listedAll.slice(0, listLimit);
   const hintText = (h: CutHint) =>
     h.kind === "excursion"
       ? `se va ${h.seconds?.toFixed(1)} s a ${h.meters?.toFixed(0)} m y vuelve`
@@ -904,7 +1199,6 @@ export function Correction({
     setEdits(applyHint(edits, data, h));
     setMsg(h.kind === "excursion" ? "Trozo separado: ahora es otra persona, y ella sigue igual antes y después. Ctrl + Z lo deshace." : "Cortada en ese punto. Ctrl + Z lo deshace.");
   };
-  const doneCount = ppl.filter((p) => p.done).length;
   // Fragments of under a second that nobody has named: candidates to throw away in one go.
   const shortIds = ppl.filter((p) => p.frames.length < minFrames && !p.player_id && !p.done).map((p) => p.id);
   const shortDuplicates = useMemo(
@@ -943,11 +1237,8 @@ export function Correction({
     if (sel !== null && ids.includes(sel)) setSel(null);
     setMsg(`${ids.length} ${what} descartados. Se puede deshacer con Ctrl + Z.`);
   };
-  const hiddenShort = ppl.length - ppl.filter((p) => p.frames.length >= minFrames).length;
   // A few people worth a look without the whole list: named and not yet verified, the longest first.
   const namedToCheck = ppl.filter((p) => p.player_id && !p.done && !refIds.has(p.id)).sort((a, b) => b.frames.length - a.frames.length);
-  const count = (t: TeamCode) => ppl.filter((p) => p.team === t).length;
-  const withConflicts = ppl.filter((p) => p.conflicts.length > 0).length;
 
   // Only the kits that have a colour: an empty one would be read as a colour by nobody.
   const defaultLabel = (id: number) => (id >= LOOSE_ID ? `s${id - LOOSE_ID}` : `#${id}`);
@@ -988,25 +1279,49 @@ export function Correction({
   // Path of every person on the pitch, as measured: detections inside the pitch plus hand marks.
   const paths = useMemo(() => (data ? measuredPaths(data, edits) : new Map<number, TrackPoint[]>()), [data, edits]);
 
-  const listW = Math.min(LIST_MAX_PX, Math.max(LIST_MIN_PX, Number(usePref("correction:listW", "496")) || 496));
-  const layoutRef = useRef<HTMLDivElement>(null);
-  const dragDivider = (e: React.PointerEvent<HTMLDivElement>) => {
-    const box = layoutRef.current?.getBoundingClientRect();
-    if (!box) return;
+  // Dragging a divider: `apply` gets how far the pointer moved (px) since it was pressed.
+  const dragBy = (e: React.PointerEvent<HTMLElement>, apply: (dx: number, dy: number) => void) => {
     e.preventDefault();
     const el = e.currentTarget;
     el.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      // The video keeps at least VIDEO_MIN_PX; the list between LIST_MIN_PX and LIST_MAX_PX.
-      const w = Math.round(box.right - ev.clientX);
-      setPref("correction:listW", String(Math.min(LIST_MAX_PX, box.width - VIDEO_MIN_PX, Math.max(LIST_MIN_PX, w))));
-    };
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const move = (ev: PointerEvent) => apply(ev.clientX - x0, ev.clientY - y0);
     const up = () => {
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
     };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
+  };
+  const dragSide = (e: React.PointerEvent<HTMLElement>) => {
+    const w0 = sideW;
+    dragBy(e, (dx) => setPref("correction:sideW", String(Math.round(Math.min(SIDE_MAX_PX, Math.max(SIDE_MIN_PX, w0 - dx))))));
+  };
+  const dragVideo = (e: React.PointerEvent<HTMLElement>) => {
+    const f0 = videoVh;
+    dragBy(e, (_dx, dy) => setPref("correction:videoVh", String(Math.min(VIDEO_MAX_VH, Math.max(VIDEO_MIN_VH, f0 + dy / window.innerHeight)).toFixed(3))));
+  };
+  // Crop: the edges of the image are dragged on the video while choosing it; kept per video.
+  const dragCrop = (e: React.PointerEvent<HTMLElement>, edge: "top" | "bottom") => {
+    const box = e.currentTarget.parentElement?.getBoundingClientRect();
+    if (!box) return;
+    const base: [number, number] = [cropTopPref, cropBottomPref];
+    let last = base;
+    const el = e.currentTarget;
+    dragBy(e, (_dx, dy) => {
+      const y = (edge === "top" ? base[0] * box.height : box.height - base[1] * box.height) + dy;
+      last = edge === "top" ? [Math.min(0.45, Math.max(0, y / box.height)), base[1]] : [base[0], Math.min(0.3, Math.max(0, 1 - y / box.height))];
+      setCropDraft(last);
+    });
+    el.addEventListener(
+      "pointerup",
+      () => {
+        setPref(cropKey, `${last[0].toFixed(3)},${last[1].toFixed(3)}`);
+        setCropDraft(null);
+      },
+      { once: true },
+    );
   };
   const ballHere = pf !== null ? (ball.find((b) => b.frame === pf) ?? null) : null;
   const ballMarkHere = pf !== null ? ((edits.ball ?? []).find((b) => b.frame === pf) ?? null) : null;
@@ -1062,7 +1377,6 @@ export function Correction({
   const gapsOf = (p: Person) => (data ? p.gaps.filter((g) => (g[1] - g[0]) / fps > FIX_GAP_S && !offCamera(data, edits, p.id, g)) : []);
   const selGaps = selected ? gapsOf(selected) : [];
   const selOffCamera = selected && data ? selected.gaps.filter((g) => (g[1] - g[0]) / fps >= 0.5 && offCamera(data, edits, selected.id, g)) : [];
-  const withGaps = ppl.filter((p) => p.frames.length >= minFrames && p.gaps.length > 0 && gapsOf(p).length > 0).length;
   // The next open hole of the selected person after the current frame (from the start again after the last one).
   // g: inside a hole, one second further; otherwise one second into the next hole (from the start again after the
   // last). Lands where she should be: join the box that is her there, or mark her feet by hand (p).
@@ -1144,6 +1458,9 @@ export function Correction({
       else if (k === "v") toggleChecked();
       // m: where her two boxes sit in the same place, keep one (the more confident).
       else if (k === "m") unifySelf();
+      else if (k === "a") anomStep(e.shiftKey ? -1 : 1);
+      else if (k === "k") togglePin();
+      else if (k === "j" && pinned !== null) joinToPinned();
       else if (e.key === "Delete") removeSelected();
       else return;
       e.preventDefault();
@@ -1155,16 +1472,6 @@ export function Correction({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Pieces near the selected person: who she could go on as or come from, and pieces without a name of her team (or
-  // without team) that are seen during her holes to check. The ones worth joining.
-  const nearSel = (() => {
-    if (!selected) return [] as Person[];
-    const ids = new Set([...cand.next.map((x) => x.to), ...cand.prev.map((x) => x.from)]);
-    for (const [a, b] of selGaps)
-      for (const p of ppl)
-        if (!p.player_id && p.id !== selected.id && (p.team === selected.team || p.team === "unk") && p.first < b && p.last > a && !refIds.has(p.id)) ids.add(p.id);
-    return [...ids].flatMap((id) => (personById.get(id) ? [personById.get(id) as Person] : [])).slice(0, 12);
-  })();
 
   const exportFixed = () => {
     if (!data) return;
@@ -1206,15 +1513,24 @@ export function Correction({
       // (filled inside a short hole; never a measurement). `raw` is the measured position when smoothing moved it.
       frames: data.frames.map((fr) => ({ frame: fr.frame, positions: byFrameOut.get(fr.frame) ?? [] })),
     };
-    void saveFixed(`tracks_fixed_${data.video_id}_${data.start_frame}_${data.end_frame}.json`, JSON.stringify(out)).then(
-      (ok) => ok && setMsg((m) => `${m} Guardado también en matches/${mid}/tracking/.`),
-    );
-    void saveLabels(data, edits);
-    setMsg(
-      smoothOn
-        ? `Guardado con suavizado: ${totals.outliers} microsalto(s) quitado(s), ${totals.filled} posición(es) rellenada(s) en huecos cortos y ${totals.openGaps} hueco(s) dejado(s) vacío(s).`
-        : "Guardado tal como se midió, sin suavizar ni rellenar.",
-    );
+    const note = smoothOn
+      ? `Suavizado: ${totals.outliers} microsalto(s) quitado(s), ${totals.filled} posición(es) rellenada(s), ${totals.openGaps} hueco(s) vacío(s).`
+      : "Tal como se midió, sin suavizar ni rellenar.";
+    void Promise.all([saveFixed(`tracks_fixed_${data.video_id}_${data.start_frame}_${data.end_frame}.json`, JSON.stringify(out)), saveLabels(data, edits)])
+      .then(([ok]) => setSave({ state: ok ? "saved" : "downloaded", note: ok ? `Guardado en matches/${mid}/tracking/. ${note}` : `Descargado (no hay acceso a la carpeta). ${note}` }))
+      .catch(() => setSave({ state: "error", note: "No se pudo guardar." }));
+  };
+  // The spinner shows before the (slow) cleaning of every path starts.
+  const saveNow = () => {
+    if (!data || save.state === "saving") return;
+    setSave({ state: "saving", note: "" });
+    window.setTimeout(() => {
+      try {
+        exportFixed();
+      } catch {
+        setSave({ state: "error", note: "No se pudo guardar." });
+      }
+    }, 40);
   };
 
   // Several parts of the video in one file: this one plus the ones loaded for it, each with its own corrections.
@@ -1305,8 +1621,9 @@ export function Correction({
     return (
       <li
         key={p.id}
+        {...dropOn(isSel ? null : p.id)}
         className={`grid grid-cols-[5.5rem_1.15rem_minmax(4rem,1fr)_auto] items-center gap-2 rounded-lg px-2 py-1 transition-colors ${
-          isSel ? "bg-accent/15 shadow-[inset_0_0_0_1px_rgba(74,114,255,.5)]" : "hover:bg-raised/50"
+          dropOver === p.id ? "bg-accent/25" : isSel ? "bg-accent/15 shadow-[inset_0_0_0_1px_rgba(74,114,255,.5)]" : "hover:bg-raised/50"
         } ${p.done && !isSel ? "opacity-55" : ""}`}
       >
         {/* The name is typed here and is the person's id from then on. Enter or leaving the field saves it. */}
@@ -1530,19 +1847,23 @@ export function Correction({
     const t = qTarget();
     if (t) qLabelPlayer(t.frame, t.track, NOBODY);
   };
-  const qNextPlayer = () => {
+  // The next player of the squad still to do (all done: just the next one).
+  const qNextPlayer = (done: string[] = []) => {
     const names = qRoster.map((r) => r.player_id);
+    if (names.length === 0) return;
     const i = qPlayer ? names.indexOf(qPlayer) : -1;
-    if (names.length) qPickPlayer(names[(i + 1) % names.length], "own");
+    const order = names.map((_, k) => names[(i + 1 + k) % names.length]);
+    qPickPlayer(order.find((n) => !done.includes(n) && n !== qPlayer) ?? order[0], "own");
   };
   const qDone = edits.quick?.done ?? [];
   // Reviewed to the end of the part: counts for the part to be complete; on to the next one.
   const qMarkDone = () => {
     if (!qPlayer) return;
-    const r = finishIfComplete({ ...edits, quick: { labels: qLabels, seen: qSeen, done: [...new Set([...qDone, qPlayer])] } });
+    const done = [...new Set([...qDone, qPlayer])];
+    const r = finishIfComplete({ ...edits, quick: { labels: qLabels, seen: qSeen, done } });
     setEdits(r.edits);
     if (r.note) setMsg(r.note);
-    qNextPlayer();
+    qNextPlayer(done);
   };
 
   // Keys of the quick review (before the table's own: digits, Enter and the arrows mean something else here).
@@ -1554,6 +1875,8 @@ export function Correction({
       if (isTyping(el)) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const k = e.key;
+      // Held arrows: fast-forward of the table (below).
+      if ((k === "ArrowRight" || k === "ArrowLeft") && e.repeat) return;
       if (qMode === "player") {
         if (/^\d$/.test(k)) setQTyped((t) => (t + k).slice(-2));
         else if (k === "Enter" && e.shiftKey && qPlayer) qMarkDone();
@@ -1566,7 +1889,7 @@ export function Correction({
         } else if (k === "x" || k === "X") qNotHer();
         else if (k === "ArrowRight") seekFrame(frame + Math.round(fps));
         else if (k === "ArrowLeft") seekFrame(frame - Math.round(fps));
-        else if (k === "Tab") qNextPlayer();
+        else if (k === "Tab") qNextPlayer(qDone);
         else if (k === "a" || k === "s") setQTeam(k === "a" ? "own" : "opp");
         else return;
         e.preventDefault();
@@ -1708,6 +2031,8 @@ export function Correction({
       </div>
     </Card>
   );
+
+  const aspect = dims ? dims.w / (dims.h * (1 - cropTop - cropBottom)) : 16 / 9;
 
   // The ball has its own view (it is marked on the same video).
   // Ball view: one compact bar (the pitch goes beside the video); the events as ball positions, in a dialog.
@@ -1986,7 +2311,7 @@ export function Correction({
           const hers = qBoxOfPlayer === b;
           const c = hers ? "#fde047" : name ? "rgba(255,255,255,.55)" : "rgba(255,255,255,.3)";
           return (
-            <g key={b[0]} className="cursor-pointer" opacity={b[11] ? 1 : 0.3} onClick={(e) => (e.stopPropagation(), qf !== null && qLabelPlayer(qf, b[0]))}>
+            <g key={b[0]} className={`cursor-pointer ${focusSel && qBoxOfPlayer && !hers ? "mark-dim" : ""}`} opacity={b[11] ? 1 : 0.3} onClick={(e) => (e.stopPropagation(), qf !== null && qLabelPlayer(qf, b[0]))}>
               <rect x={b[1]} y={b[2]} width={b[3] - b[1]} height={b[4] - b[2]} fill="transparent" stroke="none" />
               <PlayerMark
                 box={[b[1], b[2], b[3], b[4]]}
@@ -2005,7 +2330,7 @@ export function Correction({
         const c = isSel ? "#fde047" : lab ? "#ffffff" : name ? TEAM_COLORS[team] : "rgba(255,255,255,.45)";
         const shownName = name === NOBODY ? "—" : name ? `${qNumber.get(name) ?? ""}${qNumber.has(name) ? " " : ""}${name}` : "?";
         return (
-          <g key={b[0]} className="cursor-pointer" opacity={b[11] ? 1 : 0.3} onClick={(e) => (e.stopPropagation(), setQPicked(b[0]))}>
+          <g key={b[0]} className={`cursor-pointer ${focusSel && qSel !== null && !isSel ? "mark-dim" : ""}`} opacity={b[11] ? 1 : 0.3} onClick={(e) => (e.stopPropagation(), setQPicked(b[0]))}>
             <rect x={b[1]} y={b[2]} width={b[3] - b[1]} height={b[4] - b[2]} fill="transparent" stroke="none" />
             <PlayerMark
               box={[b[1], b[2], b[3], b[4]]}
@@ -2062,28 +2387,127 @@ export function Correction({
     qPickPlayer(to, qPlayerTeam);
     setMsg(`Los nombres de ${from} pasan a ${to}. Ctrl + Z lo deshace. Si ya habías aplicado, vuelve a «Aplicar a la mesa».`);
   };
+  // Where the review of the current player has got to in the part: her next stop, or the end.
+  const qProgress = data && qPlayer ? Math.min(1, Math.max(0, ((qCp ? qCp.frame : data.end_frame) - data.start_frame) / span)) : 0;
+  const qDoneCount = qRoster.filter((r) => qDone.includes(r.player_id)).length;
+  const qShortcuts: [string, string][] = [
+    ["número", "elige la jugadora por su dorsal"],
+    ["clic", "esa caja es ella (también para empezar)"],
+    ["Enter / X", "es ella / no es ella"],
+    ["← →", "1 s atrás o adelante (mantener: rápido)"],
+    ["Tab", "siguiente jugadora sin hacer"],
+    ["Mayús + Enter", "hecha y siguiente"],
+  ];
   const quickPlayerPanel = (
-    <Card title="Revisión rápida" note={qPlayer ? `${qNumber.get(qPlayer) ?? ""} ${qPlayer}` : "elige una jugadora"}>
-      {qModeSwitch}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
-        {qRoster.map((r) => (
-          <button key={r.player_id} type="button" onClick={() => qPickPlayer(r.player_id, "own")}
-            className={`flex items-center gap-1.5 rounded-xl border px-2 py-1 text-left text-xs transition-colors hover:border-accent ${qPlayer === r.player_id ? "border-accent bg-accent/20 text-accent-100" : "border-line text-ink-2"}`}>
-            <span className="tc w-5 text-right text-faint">{r.number ?? "–"}</span>
-            <span className="min-w-0 flex-1 truncate">{r.player_id}</span>
-            {qDone.includes(r.player_id) ? <Check size={11} weight="bold" className="text-ok" /> : qPlayerCount(r.player_id) > 0 && <span className="tc text-[10px] text-faint">{qPlayerCount(r.player_id)}</span>}
-          </button>
-        ))}
+    <section className="rounded-lg bg-surface p-3">
+      <div className="mb-3 flex items-baseline justify-between gap-2">
+        <h2 className="cond text-sm font-bold tracking-wide text-ink uppercase">Revisión rápida</h2>
+        <span className="tc text-xs text-faint">
+          {qDoneCount}/{qRoster.length} hechas
+        </span>
       </div>
+      {qModeSwitch}
+      {/* The squad as shirt numbers: the current one filled, done ones tinted with a tick, started ones with a dot. */}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(3.4rem,1fr))] gap-1.5">
+        {qRoster.map((r) => {
+          const done = qDone.includes(r.player_id);
+          const cur = qPlayer === r.player_id;
+          const n = qPlayerCount(r.player_id);
+          return (
+            <button
+              key={r.player_id}
+              type="button"
+              title={`${r.player_id}${done ? " · hecha" : n > 0 ? ` · ${n} nombre(s) dados` : ""}`}
+              aria-pressed={cur}
+              onClick={() => qPickPlayer(r.player_id, "own")}
+              className={`relative flex flex-col items-center rounded-md px-1 pt-1.5 pb-1 transition-[background-color,transform] duration-150 active:scale-95 ${
+                cur ? "bg-own text-[var(--on-own)]" : done ? "bg-own/15 text-ink" : "bg-bg/60 text-ink-2 hover:bg-raised hover:text-ink"
+              }`}
+            >
+              <span className="num text-xl leading-none">{r.number ?? "–"}</span>
+              <span className="mt-1 w-full truncate text-center text-[10px] leading-tight opacity-80">{r.player_id}</span>
+              {done ? (
+                <Check size={10} weight="bold" className={`absolute top-1 right-1 ${cur ? "" : "text-ok"}`} />
+              ) : (
+                n > 0 && <span className={`absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full ${cur ? "bg-[var(--on-own)]" : "bg-own"}`} />
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {qPlayer ? (
+        <div key={qPlayer} className="enter mt-3 rounded-lg bg-bg/60 p-3">
+          <div className="flex items-center gap-3">
+            <span className="num text-3xl leading-none text-own">{qNumber.get(qPlayer) ?? "–"}</span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-ink">{qPlayer}</div>
+              <div className="text-[11px] text-faint">{qDone.includes(qPlayer) ? "hecha en esta parte" : `${qPlayerCount(qPlayer)} nombre(s) dados`}</div>
+            </div>
+            <IconButton
+              label={`Reiniciar a ${qPlayer}: quitarle todos sus nombres de la revisión rápida y la marca de hecha (Ctrl + Z lo deshace)`}
+              tone="danger"
+              disabled={qPlayerCount(qPlayer) === 0 && !qDone.includes(qPlayer)}
+              onClick={() => qRemoveAll(qPlayer)}
+            >
+              <ArrowCounterClockwise size={15} />
+            </IconButton>
+          </div>
+          <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-line" title="Hasta dónde va su revisión en esta parte">
+            <span className="block h-full rounded-full bg-own transition-[width] duration-300" style={{ width: `${qProgress * 100}%` }} />
+          </div>
+          {qCp ? (
+            <>
+              <p className="mt-3 text-sm text-pretty text-ink-2">{CP_TEXT[qCp.kind]}</p>
+              <div className="tc mt-0.5 text-[11px] text-faint">{fmtT(qCp.frame / fps)}</div>
+              <div className="mt-3 grid grid-cols-2 gap-1.5">
+                <button type="button" className={`${btnPrimary} justify-center`} disabled={!qTarget()} onClick={qConfirmPlayer}>
+                  <Check size={14} /> Es ella <kbd className="kbd">Enter</kbd>
+                </button>
+                <button type="button" className={`${btn} justify-center`} disabled={!qTarget()} onClick={qNotHer}>
+                  <X size={14} /> No <kbd className="kbd">X</kbd>
+                </button>
+                <button type="button" className={`${btn} justify-center`} onClick={() => qNextPlayer(qDone)}>
+                  Siguiente <kbd className="kbd">Tab</kbd>
+                </button>
+                {qDone.includes(qPlayer) ? (
+                  <span className="tag tag-accent justify-center">Hecha</span>
+                ) : (
+                  <button type="button" className={`${btn} justify-center`} onClick={qMarkDone} title="Ya no hay más que revisarle en esta parte (por ejemplo, salió de cuadro y no vuelve): hecha y siguiente (Mayús + Enter)">
+                    <Check size={14} /> Hecha
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="mt-3">
+              <div className="flex items-center gap-2 text-sm text-ok">
+                <FlagCheckered size={16} weight="fill" /> Llegó al final de la parte
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-1.5">
+                {qDone.includes(qPlayer) ? (
+                  <span className="tag tag-accent justify-center">Hecha</span>
+                ) : (
+                  <button type="button" className={`${btnPrimary} justify-center`} onClick={qMarkDone}>
+                    <Check size={14} /> Hecha <kbd className="kbd">Enter</kbd>
+                  </button>
+                )}
+                <button type="button" className={`${btn} justify-center`} onClick={() => qNextPlayer(qDone)}>
+                  Siguiente <kbd className="kbd">Tab</kbd>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-faint">Elige una jugadora: su dorsal en el teclado o clic arriba.</p>
+      )}
       {qPlayer && qMine.length > 0 && (
-        <details className="mt-3 rounded-2xl bg-bg/40 p-3 text-xs text-muted">
-          <summary className="cursor-pointer text-ink-2">
-            {qMine.length} nombre(s) dados a {qPlayer} · revisar o corregir
-          </summary>
+        <details className="mt-2 rounded-lg bg-bg/40 px-3 py-2 text-xs text-muted">
+          <summary className="cursor-pointer text-ink-2">Corregir sus {qMine.length} nombre(s)</summary>
           <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto">
             {qMine.map((l) => (
               <li key={`${l.frame}:${l.track}`} className="flex items-center gap-2">
-                <button type="button" className="tc rounded-lg px-1.5 py-0.5 text-ink-2 hover:bg-raised hover:text-ink" title="Ir a ese momento" onClick={() => seekFrame(l.frame)}>
+                <button type="button" className="tc rounded-md px-1.5 py-0.5 text-ink-2 hover:bg-raised hover:text-ink" title="Ir a ese momento" onClick={() => seekFrame(l.frame)}>
                   {fmtT(l.frame / fps)}
                 </button>
                 <span className="tc text-faint">caja {l.track}</span>
@@ -2095,8 +2519,8 @@ export function Correction({
               </li>
             ))}
           </ul>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <select className={input} value={qMoveTo} aria-label="Pasar todos a otra jugadora" onChange={(e) => setQMoveTo(e.target.value)}>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <select className={`${input} min-w-0 flex-1`} value={qMoveTo} aria-label="Pasar todos a otra jugadora" onChange={(e) => setQMoveTo(e.target.value)}>
               <option value="">Pasar todos a…</option>
               {qRoster
                 .filter((r) => r.player_id !== qPlayer)
@@ -2109,96 +2533,32 @@ export function Correction({
             <button type="button" className={btn} disabled={!qMoveTo} onClick={() => qPlayer && qRename(qPlayer, qMoveTo)}>
               <ArrowsMerge size={14} /> Pasar
             </button>
-            <button type="button" className={`${btn} ml-auto`} onClick={() => qPlayer && qRemoveAll(qPlayer)}>
-              <Trash size={14} /> Quitarle todos
-            </button>
           </div>
-          <p className="mt-2 text-[11px] text-pretty text-faint">
-            Para cambiar solo una caja: elige a la jugadora correcta, ve a ese momento y haz clic en la caja. Ctrl + Z deshace el último cambio.
-          </p>
         </details>
       )}
-      {qPlayer && (
-        <div className="mt-3 rounded-2xl bg-bg/60 p-3 text-sm">
-          <div className="-mt-1 -mr-1 mb-1 flex items-center justify-between gap-2">
-            <span className="text-xs text-ink-2">
-              {qNumber.get(qPlayer) ?? ""} {qPlayer}
-              {qDone.includes(qPlayer) && <span className="ml-2 text-ok">· hecha</span>}
-            </span>
-            <IconButton
-              label={`Reiniciar a ${qPlayer}: quitarle todos sus nombres de la revisión rápida y la marca de hecha (Ctrl + Z lo deshace)`}
-              tone="danger"
-              disabled={qPlayerCount(qPlayer) === 0 && !qDone.includes(qPlayer)}
-              onClick={() => qRemoveAll(qPlayer)}
-            >
-              <ArrowCounterClockwise size={15} />
-            </IconButton>
-          </div>
-          {qCp ? (
-            <>
-              <div className="text-ink-2">{CP_TEXT[qCp.kind]}</div>
-              <div className="tc mt-1 text-[11px] text-faint">{fmtT(qCp.frame / fps)}</div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button type="button" className={btnPrimary} disabled={!qTarget()} onClick={qConfirmPlayer}>
-                  <Check size={14} /> Es ella <kbd className="kbd">Enter</kbd>
-                </button>
-                <button type="button" className={btn} disabled={!qTarget()} onClick={qNotHer}>
-                  <X size={14} /> No es ella <kbd className="kbd">X</kbd>
-                </button>
-                <button type="button" className={btn} onClick={qNextPlayer}>
-                  Siguiente jugadora <kbd className="kbd">Tab</kbd>
-                </button>
-                {qDone.includes(qPlayer) ? (
-                  <span className="tag tag-accent">Revisión rápida hecha</span>
-                ) : (
-                  <button type="button" className={btn} onClick={qMarkDone} title="Ya no hay más que revisarle en esta parte (por ejemplo, salió de cuadro y no vuelve)">
-                    <Check size={14} /> Hecha <kbd className="kbd">Mayús + Enter</kbd>
-                  </button>
-                )}
-              </div>
-              <p className="mt-2 text-[11px] text-pretty text-faint">
-                Si la del círculo amarillo no es ella pero la ves, haz clic sobre ella. Si ya no vuelve a salir en esta parte, márcala como hecha.
-              </p>
-            </>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2 text-ok">
-              Llegó al final de la parte.
-              {qDone.includes(qPlayer) ? (
-                <span className="tag tag-accent">Revisada</span>
-              ) : (
-                <button type="button" className={btnPrimary} onClick={qMarkDone}>
-                  <Check size={14} /> Revisión rápida hecha <kbd className="kbd">Enter</kbd>
-                </button>
-              )}
-              <button type="button" className={btn} onClick={qNextPlayer}>
-                Siguiente jugadora <kbd className="kbd">Tab</kbd>
-              </button>
+      <details className="mt-2 rounded-lg px-3 py-1.5 text-xs text-muted">
+        <summary className="cursor-pointer text-faint hover:text-ink-2">Atajos</summary>
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
+          {qShortcuts.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt>
+                <kbd className="kbd">{k}</kbd>
+              </dt>
+              <dd>{v}</dd>
             </div>
-          )}
-        </div>
-      )}
-      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-muted">
-        {[
-          ["número", "elige la jugadora por su dorsal (o clic en la lista)"],
-          ["clic", "esa caja es ella (también para empezar)"],
-          ["Enter / X", "es ella / no es ella"],
-          ["← →", "1 s atrás o adelante, para buscarla"],
-        ].map(([k, v]) => (
-          <div key={k} className="contents">
-            <dt><kbd className="kbd">{k}</kbd></dt>
-            <dd>{v}</dd>
-          </div>
-        ))}
-      </dl>
-      <button type="button" className={`${btnPrimary} mt-4 w-full`} disabled={!qModel || qLabels.length === 0} onClick={qApplyAsk}>
+          ))}
+        </dl>
+      </details>
+      <button
+        type="button"
+        className={`${btnPrimary} mt-3 w-full justify-center`}
+        disabled={!qModel || qLabels.length === 0}
+        onClick={qApplyAsk}
+        title="Lleva los nombres a la mesa. Solo se detiene donde pudo cambiarse de persona: tras un cruce con alguien de su equipo (o uno largo con una rival), cuando reaparece tras perderse y donde el modelo le pasó el nombre a otro trozo. Simulado con dos partes corregidas: 5–8 min por parte, 82–95 % de sus cajas con el nombre correcto, menos del 1 % mal."
+      >
         <Check size={15} /> Aplicar a la mesa
       </button>
-      <p className="mt-2 text-[11px] text-pretty text-faint">
-        Solo se detiene donde pudo cambiarse de persona: tras un cruce con alguien de su equipo (o uno largo con una rival), cuando
-        reaparece tras perderse y donde el modelo le pasó el nombre a otro trozo. Los cruces rápidos con rivales se saltan. Simulado con tus
-        dos partes corregidas: 5–8 min de trabajo por parte, 82–95 % de sus cajas con el nombre correcto, menos del 1 % mal.
-      </p>
-    </Card>
+    </section>
   );
   const quickSamplesPanel = (
     <Card title="Revisión rápida" note={qFrame !== null ? `muestra ${qIdx + 1} de ${qSamples.length} · ${fmtT(qFrame / fps)}` : undefined}>
@@ -2409,7 +2769,10 @@ export function Correction({
             const mark = st?.complete ? " ✓ completa" : st && (st.quick > 0 || st.players > 0 || st.ball > 0) ? ` · verificadas ${st.players} · balón ${Math.round(st.ball * 100)} %` : "";
             return `${partLabel(n, data?.fps ?? 29.97)}${mark}`;
           }}
-          onFile={(f) => void onTracks(asEvent([f]))}
+          onFile={(f) => {
+            setOpening(partLabel(f.name, data?.fps ?? 29.97));
+            void onTracks(asEvent([f]));
+          }}
         />
         )}
         {data && (
@@ -2461,43 +2824,67 @@ export function Correction({
               </span>
             )}
             <span className="ml-auto flex items-center gap-2">
-              <button type="button" className={btnPrimary} title="Guarda lo corregido (tracks_fixed) y las etiquetas en la carpeta del partido; si no se puede, se descargan" onClick={exportFixed}>
-                <FloppyDisk size={15} />
-                Guardar
+              <button
+                type="button"
+                className={`${btnPrimary} min-w-[8.5rem] justify-center transition-[background-color,border-color,color] duration-200 ${
+                  save.state === "saved" || save.state === "downloaded" ? "!border-ok !bg-ok" : save.state === "error" ? "!border-danger !bg-danger" : ""
+                }`}
+                aria-live="polite"
+                title={save.note || "Guarda lo corregido (tracks_fixed) y las etiquetas en la carpeta del partido; si no se puede, se descargan"}
+                disabled={save.state === "saving"}
+                onClick={saveNow}
+              >
+                {save.state === "saving" ? (
+                  <CircleNotch size={15} className="animate-spin" />
+                ) : save.state === "saved" || save.state === "downloaded" ? (
+                  <Check key="ok" size={15} weight="bold" className="save-pop" />
+                ) : (
+                  <FloppyDisk size={15} />
+                )}
+                <span key={save.state} className="enter">
+                  {save.state === "saving" ? "Guardando…" : save.state === "saved" ? "Guardado" : save.state === "downloaded" ? "Descargado" : save.state === "error" ? "Reintentar" : "Guardar"}
+                </span>
               </button>
-              <details className="relative">
-                <summary className="btn cursor-pointer list-none" aria-label="Más acciones">
-                  <DotsThree size={18} weight="bold" />
-                  {anomalies.some((a) => a.kind !== "camera") && <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden />}
-                </summary>
-                <div className="absolute right-0 z-30 mt-2 flex w-60 flex-col rounded-lg bg-raised p-1.5 shadow-xl">
-                  {(
-                    [
-                      [`Anomalías (${anomalies.length})`, <Warning key="w" size={15} />, () => setModal("anomalies")],
-                      ["Exportar…", <Stack key="s" size={15} />, () => setModal("export")],
-                      ["Restablecer…", <ArrowCounterClockwise key="r" size={15} />, () => setModal("reset")],
-                    ] as const
-                  ).map(([text, icon, fn]) => (
-                    <button
-                      key={text}
-                      type="button"
-                      className="flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm text-ink-2 hover:bg-line-strong hover:text-ink"
-                      onClick={(e) => {
-                        (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
-                        fn();
-                      }}
-                    >
-                      {icon}
-                      {text}
-                    </button>
-                  ))}
-                  <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-sm text-ink-2 hover:bg-line-strong hover:text-ink">
-                    <FolderOpen size={15} />
-                    Otro archivo de video
-                    <input type="file" accept="video/*" className="sr-only" onChange={onVideo} />
-                  </label>
-                </div>
-              </details>
+              <Dropdown
+                label="Más acciones"
+                panelClass="w-64 p-1.5"
+                trigger={
+                  <>
+                    <DotsThree size={18} weight="bold" />
+                    {anomalies.some((a) => a.kind !== "camera") && <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden />}
+                  </>
+                }
+              >
+                {(close) => (
+                  <>
+                    <MenuItem icon={<Warning size={15} />} onClick={() => (close(), setModal("anomalies"))}>
+                      Movimientos imposibles <span className="tc text-faint">{anomalies.length}</span>
+                    </MenuItem>
+                    <MenuItem icon={<Stack size={15} />} onClick={() => (close(), setModal("export"))}>
+                      Exportar…
+                    </MenuItem>
+                    <MenuItem icon={<ArrowCounterClockwise size={15} />} onClick={() => (close(), setModal("reset"))}>
+                      Restablecer…
+                    </MenuItem>
+                    <div className="mx-2 my-1 h-px bg-line" />
+                    <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink-2 transition-colors hover:bg-line-strong hover:text-ink">
+                      <span className="grid w-4 shrink-0 place-items-center text-muted">
+                        <FolderOpen size={15} />
+                      </span>
+                      Otro archivo de video
+                      <input
+                        type="file"
+                        accept="video/*"
+                        className="sr-only"
+                        onChange={(e) => {
+                          close();
+                          onVideo(e);
+                        }}
+                      />
+                    </label>
+                  </>
+                )}
+              </Dropdown>
             </span>
           </>
         )}
@@ -2623,16 +3010,24 @@ export function Correction({
         </Modal>
       )}
 
-      {msg && (
-        <div role="status" className="enter mb-5 rounded-2xl bg-accent-900/60 px-4 py-3 text-sm text-accent-100 shadow-[inset_0_0_0_1px_rgba(74,114,255,.45)]">
-          {msg}
+      {msg && !isFull && (
+        <div
+          role="status"
+          className="enter fixed bottom-5 left-1/2 z-40 flex max-w-xl -translate-x-1/2 items-start gap-3 rounded-xl bg-raised px-4 py-3 text-sm text-ink-2 shadow-[0_0_0_1px_var(--color-line-strong),0_20px_40px_-12px_rgba(0,0,0,.7)]"
+        >
+          <span className="min-w-0 flex-1 text-pretty">{msg}</span>
+          <button type="button" className="text-faint transition-colors hover:text-ink" aria-label="Cerrar el aviso" onClick={() => setMsg("")}>
+            <X size={14} />
+          </button>
         </div>
       )}
 
-      {embedded && folder && !data && partNames !== null && partNames.length === 0 ? (
+      {embedded && folder && !data && listing ? (
+        <LoadingStage label="Buscando las partes procesadas" />
+      ) : embedded && folder && !data && partNames !== null && partNames.length === 0 ? (
         <ProcessPanel folder={folder} video={video} onOpen={openRel} onRefresh={relist} />
       ) : embedded && folder && !data && partNames && partNames.length > 0 ? (
-        <p className="text-sm text-faint">Abriendo {partLabel(partNames[0], 29.97)}…</p>
+        <LoadingStage label={`Abriendo la parte ${partLabel(opening ?? partNames[0], 29.97)}`} />
       ) : fileUrl && !data ? (
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_27rem]">
           <div className="min-w-0 space-y-3">
@@ -2694,18 +3089,23 @@ export function Correction({
         </Card>
       ) : (
         <>
-          <div ref={layoutRef} className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]">
+          <div className="enter grid gap-4 xl:grid-cols-[minmax(0,1fr)_var(--side-w)]" style={{ "--side-w": `${sideW}px` } as React.CSSProperties}>
             <div className="min-w-0">
               <div className="space-y-3 xl:sticky xl:top-4">
                 <div
                   ref={stageRef}
-                  className={
-                    isFull
-                      ? "relative flex h-full w-full items-center justify-center overflow-hidden bg-black"
-                      : `relative mx-auto w-full overflow-hidden rounded-2xl bg-black ${selected ? "xl:max-w-[calc((100vh-19rem)*16/9)]" : "xl:max-w-[calc((100vh-11rem)*16/9)]"}`
-                  }
+                  className={isFull ? "relative flex h-full w-full items-center justify-center overflow-hidden bg-black" : "relative mx-auto w-full overflow-hidden rounded-2xl bg-black"}
+                  style={isFull ? undefined : { maxWidth: `calc(${videoVh} * 100vh * ${aspect})` }}
                 >
-                  <div className={isFull ? "relative overflow-hidden" : "contents"} style={isFull && dims ? { width: `min(100vw, calc(100vh * ${dims.w / dims.h}))` } : undefined}>
+                  {/* What is shown: the image less its crop. The zoom moves the image inside it. */}
+                  <div
+                    className={`relative overflow-hidden ${dims ? "" : "aspect-video"}`}
+                    style={{
+                      ...(dims && (cropTop || cropBottom) ? { aspectRatio: `${dims.w} / ${dims.h * (1 - cropTop - cropBottom)}` } : {}),
+                      ...(isFull && dims ? { width: `min(100vw, calc(100vh * ${aspect}))` } : {}),
+                    }}
+                  >
+                  <div style={dims && cropTop ? { marginTop: `${-cropTop * (dims.h / dims.w) * 100}%` } : undefined}>
                   <div
                     className="relative origin-top-left transition-transform duration-300 ease-out will-change-transform"
                     style={{ transform: zoomTransform }}
@@ -2730,6 +3130,26 @@ export function Correction({
                       viewBox={`0 0 ${dims.w} ${dims.h}`}
                       className={`absolute inset-0 h-full w-full ${mode === "manual" || mode === "ball" || pickKit ? "cursor-crosshair" : ""}`}
                       onClick={onOverlayClick}
+                      onDragOver={(e) => {
+                        if (view !== "players" || !e.dataTransfer.types.includes(RANGE_DRAG)) return;
+                        const pt = toPixels(e);
+                        const t = pt ? boxAt(pt) : null;
+                        setDropOver(t);
+                        if (t !== null) {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = "move";
+                        }
+                      }}
+                      onDragLeave={() => setDropOver(null)}
+                      onDrop={(e) => {
+                        setDropOver(null);
+                        const r = readRange(e);
+                        const pt = toPixels(e);
+                        const t = pt ? boxAt(pt, r?.person) : null;
+                        if (!r || t === null) return;
+                        e.preventDefault();
+                        joinRange(r.person, r.from, r.to, t);
+                      }}
                     >
                       {view === "quick" && quickOverlay}
                       {view !== "quick" && (view !== "ball" || ballBoxes) && shown.map(({ b, id }) => {
@@ -2738,7 +3158,13 @@ export function Correction({
                         const twice = twiceHere.has(id);
                         const c = twice ? "#fb7185" : isSel ? "#ffffff" : TEAM_COLORS[p?.team ?? "unk"];
                         return (
-                          <g key={b[0]} className="cursor-pointer" opacity={b[11] ? 1 : 0.35} onClick={(e) => (mode === "manual" || mode === "ball" || pickKit ? undefined : (e.stopPropagation(), pickBox(id, b[0])))}>
+                          <g
+                            key={b[0]}
+                            className={`cursor-pointer ${focusSel && sel !== null && !isSel && id !== pinned ? "mark-dim" : ""}`}
+                            opacity={b[11] ? 1 : 0.35}
+                            onPointerDown={(e) => startBoxDrag(e, id, b)}
+                            onClick={(e) => (mode === "manual" || mode === "ball" || pickKit ? undefined : (e.stopPropagation(), pickBox(id, b[0])))}
+                          >
                             <rect x={b[1]} y={b[2]} width={b[3] - b[1]} height={b[4] - b[2]} fill="transparent" stroke="none" />
                             <PlayerMark
                               box={[b[1], b[2], b[3], b[4]]}
@@ -2752,6 +3178,31 @@ export function Correction({
                           </g>
                         );
                       })}
+                      {/* The pinned player, and the box a drag would join to. */}
+                      {view === "players" &&
+                        shown
+                          .filter((x) => x.id === pinned || x.id === dragLine?.target || x.id === dropOver)
+                          .map(({ b, id }) => (
+                            <rect
+                              key={`hl${b[0]}`}
+                              pointerEvents="none"
+                              x={b[1] - dotR}
+                              y={b[2] - dotR}
+                              width={b[3] - b[1] + 2 * dotR}
+                              height={b[4] - b[2] + 2 * dotR}
+                              rx={dotR}
+                              fill={id === dragLine?.target || id === dropOver ? "rgba(58,102,255,.18)" : "none"}
+                              stroke="var(--color-accent)"
+                              strokeWidth={dotR / (id === pinned && id !== dragLine?.target && id !== dropOver ? 3 : 2)}
+                              strokeDasharray={id === pinned && id !== dragLine?.target && id !== dropOver ? `${dotR} ${dotR * 0.7}` : undefined}
+                            />
+                          ))}
+                      {dragLine && (
+                        <g pointerEvents="none">
+                          <line x1={dragLine.from[0]} y1={dragLine.from[1]} x2={dragLine.to[0]} y2={dragLine.to[1]} stroke="var(--color-accent)" strokeWidth={dotR / 2.5} strokeDasharray={`${dotR} ${dotR * 0.6}`} />
+                          <circle cx={dragLine.to[0]} cy={dragLine.to[1]} r={dotR * 0.9} fill="var(--color-accent)" />
+                        </g>
+                      )}
                       {peekOther !== null &&
                         shown
                           .filter((x) => x.id === peekOther)
@@ -2779,8 +3230,61 @@ export function Correction({
                     </svg>
                   )}
                   </div>
+                  </div>
                   {zoomTransform && (
                     <span className="tc pointer-events-none absolute top-2 right-2 rounded-lg bg-black/60 px-1.5 py-0.5 text-[10px] text-white/80">×{zoom}</span>
+                  )}
+                  {cropping && dims && (
+                    <div className="absolute inset-0 z-20">
+                      {/* The bands that will be hidden, each with its edge to drag. */}
+                      <div className="absolute inset-x-0 top-0 bg-black/65" style={{ height: `${(cropDraft?.[0] ?? cropTopPref) * 100}%` }} />
+                      <div className="absolute inset-x-0 bottom-0 bg-black/65" style={{ height: `${(cropDraft?.[1] ?? cropBottomPref) * 100}%` }} />
+                      {(["top", "bottom"] as const).map((edge) => (
+                        <div
+                          key={edge}
+                          role="slider"
+                          aria-label={edge === "top" ? "Borde de arriba del recorte" : "Borde de abajo del recorte"}
+                          aria-valuenow={Math.round((edge === "top" ? (cropDraft?.[0] ?? cropTopPref) : (cropDraft?.[1] ?? cropBottomPref)) * 100)}
+                          tabIndex={0}
+                          className="group absolute inset-x-0 -my-2.5 flex h-5 cursor-row-resize touch-none items-center"
+                          style={edge === "top" ? { top: `${(cropDraft?.[0] ?? cropTopPref) * 100}%` } : { bottom: `${(cropDraft?.[1] ?? cropBottomPref) * 100}%` }}
+                          onPointerDown={(e) => dragCrop(e, edge)}
+                        >
+                          <span className="h-0.5 w-full bg-own" />
+                          <span className={`absolute left-1/2 h-2 w-12 -translate-x-1/2 rounded-full bg-own shadow-lg transition-transform group-hover:scale-110 ${edge === "top" ? "top-3" : "bottom-3"}`} />
+                        </div>
+                      ))}
+                      <div className="absolute inset-x-0 bottom-3 flex justify-center">
+                        <span className="flex items-center gap-2 rounded-full bg-black/75 py-1 pr-1 pl-4 text-sm text-white shadow-lg backdrop-blur">
+                          Arrastra los bordes azules
+                          <button type="button" className="rounded-full px-3 py-1 text-white/80 hover:bg-white/10 hover:text-white" onClick={() => setPref(cropKey, "0,0")}>
+                            Sin recorte
+                          </button>
+                          <button type="button" className="rounded-full bg-white px-3 py-1 font-medium text-black" onClick={() => setCropping(false)}>
+                            Listo
+                          </button>
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  {!dims && <LoadingStage overlay label="Cargando el video" />}
+                  {/* The quick review of a player reached the end of the part: the video goes no further. */}
+                  {view === "quick" && qMode === "player" && qPlayer && dims && (!qCp || (partEnd !== null && frame >= partEnd - stride)) && (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+                      <span className="enter inline-flex items-center gap-2 rounded-full bg-black/75 px-4 py-1.5 text-sm text-white shadow-lg backdrop-blur">
+                        <FlagCheckered size={15} weight="fill" />
+                        Fin de la parte ·{" "}
+                        {qDone.includes(qPlayer) ? (
+                          <>
+                            <kbd className="kbd">Tab</kbd> siguiente jugadora
+                          </>
+                        ) : (
+                          <>
+                            <kbd className="kbd">Mayús + Enter</kbd> hecha y siguiente
+                          </>
+                        )}
+                      </span>
+                    </div>
                   )}
                   </div>
                   {isFull && fullHud}
@@ -2825,7 +3329,23 @@ export function Correction({
                   >
                     <input className={`${input} tc w-20`} placeholder="mm:ss" aria-label="Ir a un tiempo del video" value={goTo} onChange={(e) => setGoTo(e.target.value)} />
                   </form>
-                  <div className="seg ml-auto" role="group" aria-label="Cómo se marca a cada persona (Mayús + L)">
+                  <span className="ml-auto flex items-center gap-1">
+                    <IconButton
+                      label={focusSel ? "Solo la seleccionada resaltada (h): las demás se ven al pasar el ratón. Clic: todas" : "Todas resaltadas (h). Clic: solo la seleccionada"}
+                      tone={focusSel ? "accent" : "default"}
+                      onClick={() => setPref("correction:focus", focusSel ? "all" : "sel")}
+                    >
+                      <Target size={16} weight={focusSel ? "fill" : "regular"} />
+                    </IconButton>
+                    <IconButton
+                      label={cropping ? "Terminar el recorte" : cropTopPref || cropBottomPref ? "Recorte del cuadro (cambiar)" : "Recortar el cuadro: ver menos cielo"}
+                      tone={cropping || cropTopPref || cropBottomPref ? "accent" : "default"}
+                      onClick={() => setCropping(!cropping)}
+                    >
+                      <Crop size={16} />
+                    </IconButton>
+                  </span>
+                  <div className="seg" role="group" aria-label="Cómo se marca a cada persona (Mayús + L)">
                     {LABEL_STYLES.map((o) => (
                       <button key={o.id} type="button" className="seg-opt" aria-pressed={labelStyle === o.id} title={`${o.label} (Mayús + L cambia)`} onClick={() => setPref("labelStyle", o.id)}>
                         {o.label}
@@ -2852,6 +3372,52 @@ export function Correction({
                     <ArrowsOut size={16} />
                   </IconButton>
                 </div>
+                {anomOn && selected && (
+                  <div className="enter flex flex-wrap items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-sm shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-danger)_40%,transparent)]">
+                    <Warning size={16} weight="fill" className="shrink-0 text-danger" />
+                    {anomCur ? (
+                      <span className="min-w-0 flex-1 text-ink-2">
+                        Salta <strong className="text-ink">{Math.round(anomCur.meters)} m</strong> ({Math.round(anomCur.speed)} m/s)
+                        {anomCur.until !== undefined && ` y vuelve en ${((anomCur.until - anomCur.frame) / fps).toFixed(1)} s`}
+                        <span className="text-faint"> · {anomCur.until !== undefined ? "casi siempre la caja perdió sus pies" : "si desde aquí es otra persona, parte con S"}</span>
+                      </span>
+                    ) : (
+                      <span className="min-w-0 flex-1 text-ok">Corregido. Siguiente con A.</span>
+                    )}
+                    {anomCur && (
+                      <>
+                        <button type="button" className={btn} onClick={() => anomDrop(anomCur)} title="Sus cajas de esos cuadros no cuentan: al guardar se rellena con una recta">
+                          <Eraser size={14} /> Quitar {anomFrames(anomCur) === 1 ? "el cuadro" : `${anomFrames(anomCur)} cuadros`} <kbd className="kbd">Q</kbd>
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn ${mode === "manual" ? "btn-primary" : ""}`}
+                          onClick={() => (mode === "manual" ? setMode(null) : anomFix(anomCur))}
+                          title="Clic donde están sus pies en cada cuadro del salto"
+                        >
+                          <HandPointing size={14} /> Marcar sus pies <kbd className="kbd">P</kbd>
+                        </button>
+                        <button type="button" className={btnPrimary} onClick={() => anomOk(anomCur)} title="Está bien así (por ejemplo, una corrida real): no vuelve a marcarse">
+                          <Check size={14} /> Está bien <kbd className="kbd">Enter</kbd>
+                        </button>
+                      </>
+                    )}
+                    <span className="flex items-center gap-0.5">
+                      <span className="tc mr-1 text-xs text-faint">
+                        {anomCur ? selAnoms.indexOf(anomCur) + 1 : "–"}/{selAnoms.length}
+                      </span>
+                      <IconButton label="Anterior (Mayús + A)" onClick={() => anomStep(-1)}>
+                        <SkipBack size={14} />
+                      </IconButton>
+                      <IconButton label="Siguiente (A)" onClick={() => anomStep(1)}>
+                        <SkipForward size={14} />
+                      </IconButton>
+                      <IconButton label="Terminar la revisión de saltos (Esc)" onClick={() => setAnomAt(null)}>
+                        <X size={14} />
+                      </IconButton>
+                    </span>
+                  </div>
+                )}
                 {peek && selected && peekOther !== null && (
                   <div className="enter flex flex-wrap items-center gap-2 rounded-2xl bg-warn-900/70 px-4 py-2.5 text-sm text-warn shadow-[inset_0_0_0_1px_rgba(224,164,88,.45)]">
                     <span className="min-w-0 flex-1">
@@ -2900,6 +3466,18 @@ export function Correction({
 
             </div>
 
+            <div className="relative min-w-0">
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Ancho del panel lateral (arrastra; doble clic: el de siempre)"
+              title="Arrastra para cambiar el ancho del panel · doble clic: el de siempre"
+              className="group absolute top-0 -left-3 hidden h-full w-2 cursor-col-resize touch-none xl:block"
+              onPointerDown={dragSide}
+              onDoubleClick={() => setPref("correction:sideW", String(SIDE_DEFAULT_PX))}
+            >
+              <span className="mx-auto block h-full w-px rounded-full transition-colors group-hover:bg-line-strong" />
+            </div>
             {view === "ball" ? (
               <div className="space-y-3 xl:sticky xl:top-4">
                 {ballBar}
@@ -2909,6 +3487,34 @@ export function Correction({
               <div className="space-y-4 xl:sticky xl:top-4">{quickPanel}</div>
             ) : (
             <div className="space-y-3 xl:sticky xl:top-4">
+              {pinnedP && (
+                <div
+                  {...dropOn(pinnedP.id)}
+                  className={`enter flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${dropOver === pinnedP.id ? "bg-accent/25" : "bg-surface"}`}
+                >
+                  <PushPin size={15} weight="fill" className="shrink-0 text-accent" />
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left text-ink hover:underline"
+                    title="Seleccionarla"
+                    onClick={() => {
+                      setSel(pinnedP.id);
+                      setMode(null);
+                    }}
+                  >
+                    <span className="text-xs text-faint">Fijada · </span>
+                    {label(pinnedP, pinnedP.id)}
+                  </button>
+                  {selected && selected.id !== pinnedP.id && (
+                    <button type="button" className="btn !px-2 !py-1 text-xs" title={`${label(selected, selected.id)} pasa a ser ${label(pinnedP, pinnedP.id)} (j)`} onClick={joinToPinned}>
+                      <ArrowsMerge size={13} /> Unir <kbd className="kbd">J</kbd>
+                    </button>
+                  )}
+                  <IconButton label="Soltar la fijada (k sobre ella)" onClick={() => setPinned(null)}>
+                    <X size={14} />
+                  </IconButton>
+                </div>
+              )}
               {pitchCard}
                 {blocked && (
                   <div role="alert" className="enter mb-3 rounded-2xl bg-warn-900/70 px-3 py-2.5 text-xs text-warn">
@@ -2977,6 +3583,13 @@ export function Correction({
                         )}
                         <IconButton label="No es jugadora (Supr)" tone="danger" onClick={removeSelected}>
                           <Prohibit size={16} />
+                        </IconButton>
+                        <IconButton
+                          label={pinned === selected.id ? "Soltarla (k)" : "Fijarla (k): luego, con otra seleccionada, J la une a ella; también puedes arrastrarle tramos de la línea"}
+                          tone={pinned === selected.id ? "accent" : "default"}
+                          onClick={togglePin}
+                        >
+                          <PushPin size={16} weight={pinned === selected.id ? "fill" : "regular"} />
                         </IconButton>
                         <IconButton label="Soltar la selección (Esc)" onClick={() => setSel(null)}>
                           <X size={16} />
@@ -3048,6 +3661,15 @@ export function Correction({
                           </IconButton>
                         </span>
                       )}
+                      {selAnoms.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-xl bg-danger/15 py-0.5 pr-0.5 pl-2 text-danger" title="Movimientos que nadie puede correr: casi siempre la caja perdió sus pies un momento. Recuadro rojo en su línea.">
+                          <Warning size={13} weight="fill" />
+                          {selAnoms.length} salto(s) imposible(s)
+                          <IconButton label="Revisarlos (a)" onClick={() => anomStep(1)}>
+                            <SkipForward size={13} />
+                          </IconButton>
+                        </span>
+                      )}
                       {selGaps.length > 0 ? (
                         <span
                           className="inline-flex items-center gap-1 rounded-xl bg-danger/15 py-0.5 pr-0.5 pl-2 text-danger"
@@ -3089,10 +3711,24 @@ export function Correction({
               )}
             </div>
             )}
+            </div>
+          </div>
+
+          {/* Between the video and the timeline: dragged, the video takes more or less of the window. */}
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Alto del video (arrastra; doble clic: el de siempre)"
+            title="Arrastra para cambiar el alto del video · doble clic: el de siempre"
+            className="group mt-2 hidden h-3 cursor-row-resize touch-none items-center justify-center xl:flex"
+            onPointerDown={dragVideo}
+            onDoubleClick={() => setPref("correction:videoVh", String(VIDEO_DEFAULT_VH))}
+          >
+            <span className="h-1 w-14 rounded-full bg-line transition-colors group-hover:bg-line-strong" />
           </div>
 
           {/* The timeline of the part, full width under both columns. */}
-          <div className="mt-4 space-y-2 rounded-lg bg-surface p-3">
+          <div className="mt-2 space-y-2 rounded-lg bg-surface p-3">
                 {/* Whole part on one bar: click to jump. */}
                 <div className="flex items-center gap-3">
                   <span className="tc w-14 text-xs text-faint">{fmtT(data.start_frame / fps)}</span>
@@ -3131,6 +3767,11 @@ export function Correction({
                     manual={edits.manual.filter((m) => m.identity === selected.id).map((m) => m.frame)}
                     open={selGaps}
                     offCamera={selOffCamera}
+                    anomalies={selAnoms.map((a) => ({ frame: a.frame, until: a.until, current: anomOn && anomAt?.frame === a.frame }))}
+                    onAnomaly={(f) => {
+                      const a = selAnoms.find((x) => x.frame === f);
+                      if (a) anomGo(a);
+                    }}
                     start={data.start_frame}
                     end={data.end_frame}
                     frame={frame}
@@ -3140,7 +3781,11 @@ export function Correction({
                     onSeek={seekFrame}
                     onDrop={dropStretch}
                     onSeparate={separateStretch}
-                    onSplit={splitAt}
+                    person={selected.id}
+                    named={joinTargets}
+                    pinned={pinnedP ? { id: pinnedP.id, label: label(pinnedP, pinnedP.id), color: TEAM_COLORS[pinnedP.team] } : null}
+                    pinnedPoints={pinnedLine}
+                    onJoin={(from, to, target) => joinRange(selected.id, from, to, target)}
                   />
             )}
             {view === "players" && !selected && <p className="text-xs text-faint">La línea de cada jugadora aparece aquí al seleccionarla.</p>}
