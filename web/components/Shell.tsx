@@ -3,15 +3,12 @@
 import {
   Barbell,
   CalendarDots,
-  CaretDoubleLeft,
-  CaretDoubleRight,
   Database,
-  DownloadSimple,
   GearSix,
   House,
-  Lock,
-  SoccerBall,
+  Moon,
   Strategy,
+  Sun,
   UsersThree,
   VideoCamera,
   type Icon,
@@ -19,138 +16,86 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { revealRef } from "@/components/motion";
-import { setPref, usePref, useStore } from "@/lib/store";
+import { setPref, usePref } from "@/lib/store";
+import { useThemeSync } from "@/lib/theme";
 import { useRosterFromFile } from "@/components/RosterCard";
 
 type NavItem = { href: string; label: string; icon: Icon; locked?: string };
 
-// Same grouping as the design proposal. `locked` marks screens that are only a preview: the text is the reason.
-const NAV: { label: string; items: NavItem[] }[] = [
-  {
-    label: "Análisis",
-    items: [
-      { href: "/", label: "Resumen", icon: House },
-      { href: "/partidos", label: "Análisis con video", icon: VideoCamera },
-      { href: "/pizarron", label: "Pizarrón", icon: Strategy },
-      { href: "/jugadoras", label: "Jugadoras", icon: UsersThree },
-    ],
-  },
-  {
-    label: "Entrenamiento",
-    items: [
-      { href: "/entrenamientos", label: "Sesiones", icon: Barbell },
-      { href: "/planificacion", label: "Planificación", icon: CalendarDots, locked: "Herramienta en desarrollo" },
-    ],
-  },
-  {
-    label: "Datos",
-    items: [{ href: "/datos", label: "Carga de datos", icon: Database }],
-  },
-  {
-    label: "Sistema",
-    items: [{ href: "/configuracion", label: "Configuración", icon: GearSix }],
-  },
+// Icon rail: the width goes to the video. Each icon names itself on hover; `locked` marks a screen that is only a
+// preview (the text is the reason).
+const NAV: NavItem[] = [
+  { href: "/", label: "Inicio", icon: House },
+  { href: "/partidos", label: "Partidos", icon: VideoCamera },
+  { href: "/jugadoras", label: "Jugadoras", icon: UsersThree },
+  { href: "/entrenamientos", label: "Sesiones", icon: Barbell },
+  { href: "/planificacion", label: "Calendario", icon: CalendarDots, locked: "en desarrollo" },
+  { href: "/pizarron", label: "Pizarrón", icon: Strategy },
 ];
+const NAV_END: NavItem[] = [
+  { href: "/datos", label: "Datos", icon: Database },
+  { href: "/configuracion", label: "Configuración", icon: GearSix },
+];
+
+function RailLink({ n, active }: { n: NavItem; active: boolean }) {
+  const I = n.icon;
+  return (
+    <Link
+      href={n.href}
+      aria-label={n.label}
+      aria-current={active ? "page" : undefined}
+      className={`group relative grid h-10 w-10 shrink-0 place-items-center rounded-lg transition-colors ${
+        active ? "bg-line-strong text-ink" : "text-faint hover:bg-raised hover:text-ink"
+      }`}
+    >
+      <I size={20} weight={active ? "fill" : "regular"} />
+      {n.locked && <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-warn" aria-hidden />}
+      <span className="pointer-events-none absolute left-12 z-30 hidden rounded-md bg-ink px-2 py-1 text-xs font-medium whitespace-nowrap text-bg shadow-lg group-hover:md:block group-focus-visible:md:block">
+        {n.label}
+        {n.locked && <span className="opacity-70"> · {n.locked}</span>}
+      </span>
+    </Link>
+  );
+}
 
 export function Shell({ children }: { children: React.ReactNode }) {
   useRosterFromFile();
+  useThemeSync();
   const path = usePathname();
-  const { matches, events, sessions } = useStore();
-  // Icons only, to leave the width to the video. Applies from the desktop layout up; on a phone the menu is a strip.
-  const collapsed = usePref("sidebar") === "icons";
-  const isActive = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
+  const light = usePref("theme", "dark") === "light";
+  const isActive = (href: string) => (href === "/" ? path === "/" : path.startsWith(href) || (href === "/partidos" && path.startsWith("/partido")));
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
-      <aside
-        className={`relative shrink-0 overflow-hidden border-line-soft transition-[width] duration-300 ease-out md:sticky md:top-0 md:h-screen md:border-r print:hidden ${
-          collapsed ? "md:w-[4.25rem]" : "md:w-60"
-        }`}
-      >
-        {/* Saturated ground that fades into the page, with a slow drifting glow. */}
-        <div className="absolute inset-0 bg-linear-to-b from-section to-bg to-70%" />
-        <div className="absolute -top-24 -left-16 h-64 w-64 rounded-full bg-accent/25 blur-3xl" />
-        <div className="relative flex h-full flex-col gap-5 px-3 py-4 md:gap-7 md:py-6">
-          <Link href="/" className="flex items-center gap-2.5 px-2" title="Rendimiento · inicio">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-accent-400/70 text-accent-300">
-              <SoccerBall size={20} />
-            </span>
-            <span className={`flex flex-col leading-tight whitespace-nowrap ${collapsed ? "md:hidden" : ""}`}>
-              <span className="font-display text-[15px] font-medium text-ink">Rendimiento</span>
-              <span className="text-[11px] text-muted">Fútbol femenil · MVP</span>
-            </span>
+      <aside className="sticky top-0 z-20 shrink-0 border-b border-line bg-bg md:h-screen md:w-14 md:border-r md:border-b-0 print:hidden">
+        <nav aria-label="Secciones" className="flex h-full items-center gap-1 overflow-x-auto px-2 py-1.5 md:flex-col md:overflow-visible md:px-0 md:py-3">
+          <Link href="/" aria-label="Rendimiento · inicio" className="mr-2 grid h-9 w-9 shrink-0 place-items-center md:mr-0 md:mb-3">
+            <svg width="24" height="18" viewBox="0 0 26 20" aria-hidden>
+              <rect x="0" y="0" width="12" height="20" rx="2" fill="var(--color-own)" />
+              <rect x="14" y="0" width="12" height="20" rx="2" fill="var(--color-ink)" />
+            </svg>
           </Link>
-
-          <nav aria-label="Secciones" className="flex gap-4 overflow-x-auto md:flex-col md:gap-5 md:overflow-visible">
-            {NAV.map((g) => (
-              <div key={g.label} className="flex shrink-0 gap-0.5 md:flex-col">
-                <span className={`eyebrow hidden px-3 pb-1 text-[11px] text-faint ${collapsed ? "" : "md:block"}`}>{g.label}</span>
-                {g.items.map((n) => {
-                  const active = isActive(n.href);
-                  const I = n.icon;
-                  return (
-                    <Link
-                      key={n.href}
-                      href={n.href}
-                      title={collapsed ? `${n.label}${n.locked ? ` · ${n.locked}` : ""}` : n.locked}
-                      aria-current={active ? "page" : undefined}
-                      className={`group relative flex items-center gap-2.5 rounded-full px-3 py-2 text-[13px] font-medium whitespace-nowrap transition-[background-color,color,padding] duration-200 ${
-                        active
-                          ? "bg-accent/20 text-accent-100 shadow-[inset_0_0_0_1px_rgba(74,114,255,.55)]"
-                          : `text-muted hover:bg-accent/10 hover:text-ink ${collapsed ? "" : "hover:pl-4"}`
-                      } ${collapsed ? "md:justify-center md:px-0" : ""}`}
-                    >
-                      <I size={17} weight={active ? "fill" : "regular"} className="shrink-0" />
-                      <span className={collapsed ? "md:sr-only" : ""}>{n.label}</span>
-                      {n.locked && (
-                        <Lock size={12} className={`shrink-0 text-warn/80 ${collapsed ? "ml-auto md:absolute md:top-1 md:right-2.5 md:ml-0" : "ml-auto"}`} aria-label={n.locked} />
-                      )}
-                    </Link>
-                  );
-                })}
-              </div>
-            ))}
-          </nav>
-
-          <div className={`mt-auto hidden rounded-2xl bg-bg/50 p-3 text-[11px] leading-snug text-muted ${collapsed ? "" : "md:block"}`}>
-            <div className="mb-1 flex items-center gap-1.5 text-ink-2">
-              <span className="h-1.5 w-1.5 rounded-full bg-ok" />
-              Datos en este navegador
-            </div>
-            {matches.length} partidos · {events.length} eventos · {sessions.length} filas de sensores
-          </div>
+          {NAV.map((n) => (
+            <RailLink key={n.href} n={n} active={isActive(n.href)} />
+          ))}
+          <span className="flex-1" />
+          {NAV_END.map((n) => (
+            <RailLink key={n.href} n={n} active={isActive(n.href)} />
+          ))}
           <button
             type="button"
-            onClick={() => setPref("sidebar", collapsed ? "full" : "icons")}
-            aria-pressed={collapsed}
-            title={collapsed ? "Mostrar el menú completo" : "Dejar solo los iconos"}
-            className={`hidden items-center gap-2.5 rounded-full px-3 py-2 text-[13px] text-muted transition-colors hover:bg-accent/10 hover:text-ink md:flex ${
-              collapsed ? "mt-auto justify-center px-0" : ""
-            }`}
+            onClick={() => setPref("theme", light ? "dark" : "light")}
+            aria-label={light ? "Tema oscuro" : "Tema claro"}
+            title={light ? "Tema oscuro" : "Tema claro"}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-faint transition-colors hover:bg-raised hover:text-ink"
           >
-            {collapsed ? <CaretDoubleRight size={16} /> : <CaretDoubleLeft size={16} />}
-            <span className={collapsed ? "sr-only" : ""}>Ocultar menú</span>
+            {light ? <Moon size={19} /> : <Sun size={19} />}
           </button>
-        </div>
+        </nav>
       </aside>
 
-      <main className="relative min-w-0 flex-1 px-4 pt-4 pb-16 md:px-10 md:pt-5 print:p-0">
-        <div
-          className={`scroll-progress fixed top-0 right-0 left-0 z-20 h-0.5 bg-linear-to-r from-accent-700 via-accent to-accent-300 print:hidden ${
-            collapsed ? "md:left-[4.25rem]" : "md:left-60"
-          }`}
-        />
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 text-xs text-muted md:mb-9 print:hidden">
-          <span className="flex flex-wrap items-center gap-x-5 gap-y-1">
-            <span>Versión MVP · eventos etiquetados a mano</span>
-            <span className="text-faint">Sin cuentas: todo vive en este navegador</span>
-          </span>
-          <Link href="/datos" className="btn">
-            <DownloadSimple size={15} />
-            Respaldo y carga
-          </Link>
-        </div>
-        {/* Keyed by route so the entrance animation replays on every navigation. */}
+      <main className="relative min-w-0 flex-1 px-4 pt-5 pb-16 md:px-8 print:p-0">
+        {/* Keyed by route so each screen starts from the top state. */}
         <div key={path}>{children}</div>
       </main>
     </div>
@@ -161,23 +106,13 @@ type HeaderProps = { eyebrow?: string; title: React.ReactNode; subtitle?: React.
 
 export function PageHeader({ eyebrow, title, subtitle, children }: HeaderProps) {
   return (
-    <header className="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+    <header className="mb-6 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
       <div className="min-w-0">
-        {eyebrow && <div className="eyebrow enter">{eyebrow}</div>}
-        <h1 className="enter mt-1 text-4xl leading-[1.05] text-ink md:text-5xl" style={{ "--d": "60ms" } as React.CSSProperties}>
-          {title}
-        </h1>
-        {subtitle && (
-          <p className="enter mt-3 max-w-2xl text-sm text-pretty text-muted" style={{ "--d": "130ms" } as React.CSSProperties}>
-            {subtitle}
-          </p>
-        )}
+        {eyebrow && <div className="text-xs text-faint">{eyebrow}</div>}
+        <h1 className="mt-0.5 text-2xl leading-tight text-ink">{title}</h1>
+        {subtitle && <p className="mt-1.5 max-w-2xl text-sm text-pretty text-muted">{subtitle}</p>}
       </div>
-      {children && (
-        <div className="enter flex flex-wrap items-center gap-2" style={{ "--d": "180ms" } as React.CSSProperties}>
-          {children}
-        </div>
-      )}
+      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
     </header>
   );
 }
@@ -202,8 +137,8 @@ export function Card({ title, note, children, className = "", tone = "default", 
     >
       {title && (
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h2 className="text-base text-ink">{title}</h2>
-          {note && <span className="text-[11px] text-faint">{note}</span>}
+          <h2 className="text-[15px] text-ink">{title}</h2>
+          {note && <span className="text-xs text-faint">{note}</span>}
         </div>
       )}
       {children}
@@ -215,10 +150,10 @@ export function Card({ title, note, children, className = "", tone = "default", 
 export function Section({ title, note, children, className = "" }: { title: string; note?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
     <section className={className}>
-      <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-xl text-ink">{title}</h2>
+      <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 className="sec-tag">{title}</h2>
+        <span className="hr-fade-l min-w-8" />
         {note && <span className="text-xs text-faint">{note}</span>}
-        <span className="hr-fade-l min-w-8 self-center" />
       </div>
       {children}
     </section>

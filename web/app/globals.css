@@ -1,45 +1,46 @@
 @import "tailwindcss";
 
-/* Tema «Nocturne» de la propuesta de diseño: fondo azul-gris oscuro, un solo acento azul usado como
-   línea y brillo (no como relleno), reglas que se desvanecen en los extremos y jerarquía por tamaño. */
+/* Tema «Cabina»: base casi negra y neutra, color solo en los datos. Azul rey para el equipo analizado (el color
+   institucional) y un contraste elegible para el rival. Tipografía Archivo: normal para leer, condensada para
+   cifras, marcador y encabezados. El tema claro y los colores de equipo se cambian en Configuración. */
 @theme {
-  --color-bg: #161826;
-  --color-surface: #232532;
-  --color-raised: #2d3040;
-  --color-pitch: #1b1e2e;
-  --color-ink: #e9e9ed;
-  --color-ink-2: #cfd3e5;
-  --color-muted: #b2b6ca;
-  --color-faint: #9397ab;
-  --color-line-soft: #2b2e3c;
-  --color-line: #383b4a;
-  --color-line-strong: #595d6c;
+  --color-bg: #0c0c0d;
+  --color-surface: #141415;
+  --color-raised: #1d1d1f;
+  --color-pitch: #131314;
+  --color-ink: #f2f2f0;
+  --color-ink-2: #d9d9d5;
+  --color-muted: #b0b0ab;
+  --color-faint: #929289;
+  --color-line-soft: #1f1f21;
+  --color-line: #2b2b2e;
+  --color-line-strong: #3f3f43;
 
-  --color-accent: #4a72ff;
-  --color-accent-100: #eef2ff;
-  --color-accent-200: #dbe3ff;
-  --color-accent-300: #b8c8ff;
-  --color-accent-400: #8aa5ff;
-  --color-accent-500: #4a72ff;
-  --color-accent-600: #2f55e0;
-  --color-accent-700: #2442b0;
-  --color-accent-800: #1c3180;
-  --color-accent-900: #151f4d;
-  --color-section: #14246e;
+  --color-accent: #3a66ff;
+  --color-accent-100: #eaf0ff;
+  --color-accent-200: #cfdcff;
+  --color-accent-300: #a9c0ff;
+  --color-accent-400: #7a9cff;
+  --color-accent-500: #3a66ff;
+  --color-accent-600: #2a52e0;
+  --color-accent-700: #1f3fb3;
+  --color-accent-800: #172f85;
+  --color-accent-900: #121d47;
+  --color-section: #121d47;
 
   --color-warn: #e0a458;
-  --color-warn-900: #3a2c1c;
+  --color-warn-900: #33281a;
   --color-danger: #f0808a;
-  --color-ok: #6fcf97;
+  --color-ok: #4cc38a;
 
-  /* Equipos: «own» es el equipo analizado, «opp» su contrario. */
-  --color-own: #7895ff;
-  --color-opp: #f39a63;
-  --color-ball: #f3f5fe;
+  /* Equipos: «own» es el equipo analizado, «opp» su contrario (Configuración › Colores los cambia). */
+  --color-own: #3a66ff;
+  --color-opp: #ff9a4d;
+  --color-ball: #f3f3f1;
 
-  --font-sans: var(--font-inter), system-ui, sans-serif;
-  --font-display: var(--font-bricolage), var(--font-inter), system-ui, sans-serif;
-  --font-cond: var(--font-barlow), var(--font-inter), system-ui, sans-serif;
+  --font-sans: var(--font-archivo), system-ui, sans-serif;
+  --font-display: var(--font-archivo), system-ui, sans-serif;
+  --font-cond: var(--font-archivo), system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, monospace;
 
   --ease-out-soft: cubic-bezier(0.2, 0.7, 0.2, 1);
@@ -47,17 +48,55 @@
 
 :root {
   color-scheme: dark;
-  /* Rampa secuencial del mapa de zonas: de poco (oscuro) a mucho (claro). */
-  --zone-0: #1c2a5e;
-  --zone-1: #24388a;
-  --zone-2: #2f4bb8;
-  --zone-3: #4a72ff;
-  --zone-4: #8aa5ff;
-  --zone-5: #c9d5ff;
-  --zone-ink-lo: #e9e9ed;
-  --zone-ink-hi: #10142a;
-  --pitch-fill: rgba(74, 114, 255, 0.045);
-  --pitch-line: #595d6c;
+  /* Texto sobre un relleno del equipo (número dentro del círculo, etiqueta). */
+  --on-own: #ffffff;
+  --on-opp: #1a0d00;
+  /* Rampa del mapa de zonas: del fondo al color del equipo. */
+  --zone-0: color-mix(in srgb, var(--color-own) 14%, var(--color-bg));
+  --zone-1: color-mix(in srgb, var(--color-own) 30%, var(--color-bg));
+  --zone-2: color-mix(in srgb, var(--color-own) 48%, var(--color-bg));
+  --zone-3: color-mix(in srgb, var(--color-own) 68%, var(--color-bg));
+  --zone-4: color-mix(in srgb, var(--color-own) 85%, white);
+  --zone-5: color-mix(in srgb, var(--color-own) 45%, white);
+  --zone-ink-lo: #f2f2f0;
+  --zone-ink-hi: #0c0c0d;
+  --pitch-fill: transparent;
+  --pitch-line: #3f3f43;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #ecece9;
+  --color-surface: #ffffff;
+  --color-raised: #f3f3f1;
+  --color-pitch: #f6f6f4;
+  --color-ink: #101010;
+  --color-ink-2: #2a2a28;
+  --color-muted: #4b4b47;
+  --color-faint: #5c5c57;
+  --color-line-soft: #e4e4e0;
+  --color-line: #d6d6d1;
+  --color-line-strong: #bdbdb6;
+  --color-accent-100: #121d47;
+  --color-accent-200: #1f3fb3;
+  --color-accent-300: #2448d8;
+  --color-accent-400: #2a52e0;
+  --color-accent-900: #e3eaff;
+  --color-section: #e3eaff;
+  --color-warn: #8a5a10;
+  --color-warn-900: #fbf0dc;
+  --color-danger: #b4232f;
+  --color-ok: #1f7a4a;
+  --color-ball: #101010;
+  --zone-ink-lo: #101010;
+  --zone-ink-hi: #ffffff;
+  --zone-0: color-mix(in srgb, var(--color-own) 10%, white);
+  --zone-1: color-mix(in srgb, var(--color-own) 25%, white);
+  --zone-2: color-mix(in srgb, var(--color-own) 45%, white);
+  --zone-3: color-mix(in srgb, var(--color-own) 70%, white);
+  --zone-4: color-mix(in srgb, var(--color-own) 85%, black);
+  --zone-5: color-mix(in srgb, var(--color-own) 55%, black);
+  --pitch-line: #bdbdb6;
 }
 
 * {
@@ -66,23 +105,19 @@
 }
 
 body {
-  background:
-    radial-gradient(1100px 520px at 88% -8%, rgba(74, 114, 255, 0.11), transparent 62%),
-    radial-gradient(700px 420px at 30% 110%, rgba(74, 114, 255, 0.05), transparent 60%),
-    var(--color-bg);
-  background-attachment: fixed;
+  background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 h1,
 h2,
 h3 {
   font-family: var(--font-display);
-  font-weight: 500;
-  letter-spacing: -0.015em;
+  font-weight: 650;
+  letter-spacing: -0.005em;
   text-wrap: balance;
 }
 
@@ -91,11 +126,11 @@ h3 {
   outline-offset: 2px;
 }
 ::selection {
-  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 code {
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: 0.9em;
   color: var(--color-accent-200);
 }
 input[type="range"] {
@@ -109,9 +144,9 @@ input[type="range"] {
     align-items: center;
     justify-content: center;
     gap: 0.4rem;
-    border-radius: 999px;
-    border: 1px solid var(--color-line);
-    padding: 0.4rem 0.95rem;
+    border-radius: 7px;
+    border: 1px solid var(--color-line-strong);
+    padding: 0.38rem 0.8rem;
     font-size: 0.8125rem;
     font-weight: 500;
     line-height: 1.25;
@@ -119,14 +154,13 @@ input[type="range"] {
     white-space: nowrap;
     cursor: pointer;
     transition:
-      background-color 0.18s,
-      border-color 0.18s,
-      box-shadow 0.25s,
-      transform 0.12s;
+      background-color 0.15s,
+      border-color 0.15s,
+      transform 0.1s;
   }
   .btn:hover {
-    background: color-mix(in srgb, var(--color-ink) 7%, transparent);
-    border-color: var(--color-line-strong);
+    background: var(--color-raised);
+    border-color: var(--color-muted);
   }
   .btn:active {
     transform: scale(0.97);
@@ -136,43 +170,44 @@ input[type="range"] {
     cursor: not-allowed;
   }
   .btn-primary {
-    color: var(--color-accent-100);
-    border-color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+    color: var(--color-bg);
+    border-color: var(--color-ink);
+    background: var(--color-ink);
   }
   .btn-primary:hover {
-    background: color-mix(in srgb, var(--color-accent) 28%, transparent);
-    border-color: var(--color-accent-400);
-    box-shadow: 0 8px 22px -10px color-mix(in srgb, var(--color-accent) 80%, transparent);
+    background: var(--color-ink-2);
+    border-color: var(--color-ink-2);
   }
   .btn-ghost {
     border-color: transparent;
-    color: var(--color-accent-300);
+    color: var(--color-muted);
     padding-inline: 0.5rem;
   }
   .btn-ghost:hover {
     border-color: transparent;
-    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+    color: var(--color-ink);
+    background: var(--color-raised);
   }
   .btn-key {
-    border-radius: 0.75rem;
+    border-radius: 7px;
     justify-content: space-between;
-    padding: 0.45rem 0.6rem 0.45rem 0.8rem;
-    background: color-mix(in srgb, var(--color-bg) 55%, transparent);
+    padding: 0.4rem 0.55rem 0.4rem 0.75rem;
+    background: var(--color-surface);
+    border-color: var(--color-line);
   }
 
   .input {
-    min-height: 2.1rem;
-    border-radius: 0.7rem;
-    border: 1px solid var(--color-line);
-    background: color-mix(in srgb, var(--color-bg) 60%, transparent);
-    padding: 0.35rem 0.7rem;
+    min-height: 2rem;
+    border-radius: 7px;
+    border: 1px solid var(--color-line-strong);
+    background: var(--color-surface);
+    padding: 0.32rem 0.65rem;
     font-size: 0.8125rem;
     color: var(--color-ink);
     caret-color: var(--color-accent-400);
     transition:
-      border-color 0.18s,
-      box-shadow 0.25s;
+      border-color 0.15s,
+      box-shadow 0.2s;
   }
   select.input {
     appearance: none;
@@ -185,8 +220,7 @@ input[type="range"] {
     text-overflow: ellipsis;
   }
   select.input:hover {
-    border-color: var(--color-accent-400);
-    background-color: color-mix(in srgb, var(--color-accent) 8%, transparent);
+    border-color: var(--color-muted);
   }
   select.input option,
   select.input optgroup {
@@ -208,66 +242,49 @@ input[type="range"] {
   /* — Superficies — */
   .card {
     position: relative;
-    border-radius: 1.25rem;
-    background: linear-gradient(180deg, var(--color-surface), color-mix(in srgb, var(--color-surface) 78%, var(--color-bg)));
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.05),
-      0 0 0 1px rgba(255, 255, 255, 0.035);
-    padding: 1.25rem 1.35rem;
+    border-radius: 10px;
+    background: var(--color-surface);
+    padding: 1.1rem 1.25rem;
   }
   .card-hero {
-    background:
-      radial-gradient(420px 220px at 100% 0%, rgba(74, 114, 255, 0.28), transparent 70%),
-      linear-gradient(160deg, var(--color-section) 0%, var(--color-surface) 62%);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.08),
-      0 0 0 1px color-mix(in srgb, var(--color-accent) 30%, transparent),
-      0 18px 50px -24px rgba(74, 114, 255, 0.55);
+    background: var(--color-surface);
+    box-shadow: inset 0 0 0 1px var(--color-line);
   }
   .card-link {
-    transition:
-      transform 0.25s var(--ease-out-soft),
-      box-shadow 0.25s;
+    transition: background-color 0.15s;
   }
   .card-link:hover {
-    transform: translateY(-2px);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.07),
-      0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent),
-      0 14px 34px -20px rgba(74, 114, 255, 0.6);
+    background: var(--color-raised);
   }
 
   .eyebrow {
-    font-family: var(--font-cond);
     font-size: 0.8125rem;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--color-accent-300);
+    font-weight: 500;
+    color: var(--color-faint);
   }
   /* Cifras grandes: condensada, tabular, como marcador. */
   .num {
     font-family: var(--font-cond);
-    font-weight: 600;
+    font-stretch: 75%;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.01em;
     line-height: 1;
   }
   .tc {
-    font-family: var(--font-mono);
+    font-family: var(--font-cond);
+    font-stretch: 75%;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
-    font-size: 0.92em;
   }
 
   .tag {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    border-radius: 999px;
-    padding: 0.14rem 0.6rem;
-    font-size: 0.6875rem;
+    border-radius: 4px;
+    padding: 0.1rem 0.45rem;
+    font-size: 0.75rem;
     font-weight: 500;
-    letter-spacing: 0.02em;
     white-space: nowrap;
     background: var(--color-raised);
     color: var(--color-ink-2);
@@ -353,66 +370,63 @@ input[type="range"] {
   .kbd {
     display: inline-grid;
     place-items: center;
-    min-width: 1.4rem;
-    height: 1.4rem;
+    min-width: 1.25rem;
+    height: 1.25rem;
     padding: 0 0.3rem;
-    border-radius: 0.4rem;
-    background: var(--color-surface);
-    box-shadow: inset 0 -2px 0 var(--color-line);
-    font-family: var(--font-mono);
-    font-size: 0.6875rem;
-    color: var(--color-accent-200);
+    border-radius: 4px;
+    background: var(--color-raised);
+    font-family: var(--font-cond);
+    font-stretch: 75%;
+    font-weight: 700;
+    font-size: 0.75rem;
+    color: var(--color-muted);
   }
 
   /* Control segmentado en forma de píldora. */
   .seg {
     display: inline-flex;
     gap: 2px;
-    padding: 3px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--color-bg) 70%, transparent);
-    box-shadow: inset 0 0 0 1px var(--color-line);
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--color-raised);
   }
   .seg-opt {
-    border-radius: 999px;
-    padding: 0.32rem 0.9rem;
+    border-radius: 6px;
+    padding: 0.28rem 0.75rem;
     font-size: 0.8125rem;
     font-weight: 500;
     color: var(--color-muted);
     white-space: nowrap;
     cursor: pointer;
     transition:
-      color 0.18s,
-      background-color 0.25s,
-      box-shadow 0.25s;
+      color 0.15s,
+      background-color 0.15s;
   }
   .seg-opt:hover {
     color: var(--color-ink);
   }
   .seg-opt[aria-pressed="true"],
   .seg-opt[aria-selected="true"] {
-    color: var(--color-accent-100);
-    background: color-mix(in srgb, var(--color-accent) 24%, transparent);
-    box-shadow: inset 0 0 0 1px var(--color-accent);
+    color: var(--color-ink);
+    background: var(--color-line-strong);
   }
 
   /* Regla que se desvanece en los extremos (firma de Nocturne). */
   .hr-fade {
     height: 1px;
     border: 0;
-    background: linear-gradient(to right, transparent, var(--color-line) 48px, var(--color-line) calc(100% - 48px), transparent);
+    background: var(--color-line);
   }
   .hr-fade-l {
     height: 1px;
     flex: 1;
-    background: linear-gradient(to right, var(--color-line), transparent);
+    background: var(--color-line);
   }
 
   .link {
     color: var(--color-accent-300);
-    text-decoration: underline;
-    text-underline-offset: 3px;
-    text-decoration-color: color-mix(in srgb, var(--color-accent-300) 45%, transparent);
+    text-decoration: none;
+    font-weight: 500;
     transition: color 0.15s;
   }
   .link:hover {
@@ -420,18 +434,33 @@ input[type="range"] {
   }
 
   .table-nocturne th {
-    font-family: var(--font-cond);
     font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font-weight: 400;
     color: var(--color-faint);
   }
   .table-nocturne tbody tr {
     transition: background-color 0.15s;
   }
   .table-nocturne tbody tr:hover {
-    background: color-mix(in srgb, var(--color-ink) 4%, transparent);
+    background: var(--color-raised);
+  }
+
+  /* Encabezado de sección: rótulo condensado en mayúsculas sobre una regla. */
+  .sec-tag {
+    font-family: var(--font-cond);
+    font-stretch: 75%;
+    font-weight: 800;
+    font-size: 1rem;
+    text-transform: uppercase;
+    background: var(--color-ink);
+    color: var(--color-bg);
+    padding: 0.2rem 0.85rem;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .cond {
+    font-family: var(--font-cond);
+    font-stretch: 75%;
   }
 
   /* Vista previa de algo que aún no funciona: esqueleto atenuado, sin datos. */
@@ -454,7 +483,7 @@ input[type="range"] {
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(18px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -545,7 +574,7 @@ input[type="range"] {
 @media screen and (prefers-reduced-motion: no-preference) {
   /* Al cargar una pantalla: el encabezado entra primero. */
   .enter {
-    animation: rise 0.6s var(--ease-out-soft) both;
+    animation: rise 0.25s var(--ease-out-soft) both;
     animation-delay: var(--d, 0ms);
   }
 
@@ -554,7 +583,7 @@ input[type="range"] {
     opacity: 0;
   }
   .reveal[data-in] {
-    animation: rise 0.65s var(--ease-out-soft) both;
+    animation: rise 0.3s var(--ease-out-soft) both;
     animation-delay: var(--d, 0ms);
   }
   .locked-frame.reveal[data-in] {
