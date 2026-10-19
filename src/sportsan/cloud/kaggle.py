@@ -243,13 +243,19 @@ def wait_dataset(ref: str, minutes: int = 60) -> None:
         time.sleep(15)
 
 
+def parse_status(returncode: int, text: str) -> str:
+    """Solo cuenta lo que diga Kaggle del cuaderno («has status "KernelWorkerStatus.ERROR"»): si la consulta misma
+    falla (red caída), su mensaje también dice «error» y no significa que el cuaderno haya terminado."""
+    m = re.search(r'has status "(?:\w+\.)?(\w+)"', text)
+    if returncode != 0 or not m:
+        return "sin respuesta"
+    word = m.group(1).lower()
+    return next((w for w in ("complete", "error", "cancel", "running", "queued") if w in word), word)
+
+
 def kernel_status(ref: str) -> str:
     r = kaggle("kernels", "status", ref, check=False)
-    text = (r.stdout + r.stderr).lower()
-    for word in ("complete", "error", "cancel", "running", "queued"):
-        if word in text:
-            return word
-    return text.strip()[:80] or "?"
+    return parse_status(r.returncode, r.stdout + r.stderr)
 
 
 def job_script(job: dict) -> str:

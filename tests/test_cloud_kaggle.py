@@ -123,3 +123,11 @@ def test_job_script_carries_its_parameters():
 def test_job_script_is_valid_python():
     # Los parámetros van arriba de todo: nada en el archivo puede exigir ir primero (como from __future__).
     compile(kg.job_script({"match_id": "m1", "videos": {}}), "job.py", "exec")
+
+
+def test_a_failed_status_query_is_not_the_end_of_the_run():
+    assert kg.parse_status(0, 'yo/x has status "KernelWorkerStatus.RUNNING"') == "running"
+    assert kg.parse_status(0, 'yo/x has status "KernelWorkerStatus.ERROR"') == "error"
+    assert kg.parse_status(0, 'yo/x has status "complete"') == "complete"
+    assert kg.parse_status(1, "NameResolutionError ... Max retries exceeded (Error 11001)") == "sin respuesta"
+    assert kg.parse_status(0, "") == "sin respuesta"
