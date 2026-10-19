@@ -6,7 +6,6 @@ OpenVINO (CPU Intel) por el mismo en PyTorch (`.pt`, que usa la GPU solo), insta
 con un tope de tiempo (para no perder lo hecho si Kaggle corta la sesión) y deja en /kaggle/working/out/ solo los
 archivos nuevos o cambiados de `tracking/`, que la laptop baja después.
 """
-from __future__ import annotations
 
 import json
 import os

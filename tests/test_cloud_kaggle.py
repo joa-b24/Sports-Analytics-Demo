@@ -115,3 +115,8 @@ def test_job_script_carries_its_parameters():
     assert s.startswith('JOB = {"match_id": "m1"')
     meta = kg.kernel_meta("yo/sportsan-tracking-m1", ["yo/sportsan-code"])
     assert meta["title"] == "sportsan-tracking-m1" and meta["enable_gpu"] and meta["is_private"] and meta["enable_internet"]
+
+
+def test_job_script_is_valid_python():
+    # Los parámetros van arriba de todo: nada en el archivo puede exigir ir primero (como from __future__).
+    compile(kg.job_script({"match_id": "m1", "videos": {}}), "job.py", "exec")
