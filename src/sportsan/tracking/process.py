@@ -185,11 +185,11 @@ def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h:
     return (y0, y1) if y1 - y0 > 40 else None
 
 
-def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: float, tracker: str, progress=None, tiles: int = 1, band: tuple[int, int] | str | None = None):
+def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: float, tracker: str, progress=None, tiles: int = 1, band: tuple[int, int] | str | None = None, mask_rects: list | None = None):
     """Una pasada por la parte: movimiento de cámara, detección y seguimiento, y ubicación con la biblioteca cada `every` cuadros procesados."""
     import cv2
 
-    from .library import features, localize
+    from .library import features, in_mask, localize, mask_image
 
     auto_band = band == "auto"
     ft = FrameTracker(model, tracker, conf, tiles=tiles, band=None if auto_band else band)  # seguidor nuevo: identificadores locales a la parte
@@ -201,6 +201,8 @@ def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: floa
     motions: dict[int, np.ndarray | None] = {}
     anchors: dict[int, np.ndarray] = {}
     prev_gray, hint = None, None
+    rects = mask_rects if mask_rects is not None else (lib.meta.get("mask") or [])
+    hide = None
     for f in range(chunk.start, chunk.end):
         if not cap.grab():
             break
@@ -212,11 +214,13 @@ def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: floa
         i = len(frames)
         small = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1.0 else img
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        if rects and hide is None:
+            hide = mask_image(rects, gray.shape, scale)
         if prev_gray is not None:
-            motions[i - 1], _ = estimate_motion(prev_gray, gray, scale)
+            motions[i - 1], _ = estimate_motion(prev_gray, gray, scale, hide)
         prev_gray = gray
         if i % every == 0:
-            loc = localize(*features(gray, scale), lib, hint)
+            loc = localize(*features(gray, scale, mask=hide), lib, hint)
             if loc.H is not None:
                 anchors[i] = loc.H
                 hint = loc.ref
@@ -225,6 +229,8 @@ def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: floa
                     ft.band = pitch_band(loc.H, float(venue.get("length_m", PITCH_LENGTH_M)), float(venue.get("width_m", PITCH_WIDTH_M)), w, h)
         row: list[dict] = []
         for tid, x1, y1, x2, y2, c in ft.step(img):
+            if in_mask(rects, (x1 + x2) / 2, (y1 + y2) / 2):
+                continue  # en el marcador o el logo, no es una persona
             row.append({
                 "track_id": tid, "box": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)], "conf": round(c, 2),
                 "lab": jersey_color(img, x1, y1, x2, y2),
@@ -533,7 +539,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.benchmark:
         probe = Chunk(chunks[0].start, min(chunks[0].end, chunks[0].start + round(20 * fps)))
         t0 = time.time()
-        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band)
+        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None)
         result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
         per = (time.time() - t0) / max(1, len(frames))
         q = result["quality"]
@@ -555,7 +561,7 @@ def main(argv: list[str] | None = None) -> None:
         test_dir = root / cfg["paths"]["tracking_dir"] / "prueba"
         test_dir.mkdir(parents=True, exist_ok=True)
         t0 = time.time()
-        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band)
+        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None)
         result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
         per = (time.time() - t0) / max(1, len(frames))
         path = write_outputs(test_dir, meta, probe, stride, frames, result)
@@ -583,7 +589,7 @@ def main(argv: list[str] | None = None) -> None:
             t0 = time.time()
             after = sum(c.end - c.start for c in pending[n:]) // stride
             bar = Progress(f"[{n}/{len(pending)}]", (chunk.end - chunk.start) // stride + 1, fps, stride, after_s=after)
-            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, conf, args.tracker, progress=bar, tiles=tiles, band=band)
+            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, conf, args.tracker, progress=bar, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None)
             bar.end()
             if not frames:
                 print(f"  parte {chunk.name}: sin cuadros (¿fin del video?)")

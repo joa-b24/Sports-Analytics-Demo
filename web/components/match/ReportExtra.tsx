@@ -13,6 +13,37 @@ type Side = "own" | "opp";
 const color = (s: Side) => (s === "own" ? COLORS.own : COLORS.opp);
 const onColor = (s: Side) => (s === "own" ? "var(--on-own)" : "var(--on-opp)");
 
+// Every pitch of the report has the same size: the figure, and beside it the few figures that read it.
+export function FigureRow({ children, aside, note }: { children: React.ReactNode; aside: React.ReactNode; note?: React.ReactNode }) {
+  return (
+    <div className="grid gap-6 break-inside-avoid md:grid-cols-[minmax(0,1fr)_15rem] print:grid-cols-[minmax(0,1fr)_13rem]">
+      <div className="min-w-0">
+        {children}
+        {note && <p className="mt-1 text-xs text-faint">{note}</p>}
+      </div>
+      <div className="min-w-0">{aside}</div>
+    </div>
+  );
+}
+
+// Label and figure, one per line; `mark` is the colour of the series it belongs to (text stays in ink).
+export function StatList({ items, title }: { items: { label: string; value: React.ReactNode; mark?: string; hollow?: boolean }[]; title?: string }) {
+  return (
+    <dl className="text-sm">
+      {title && <div className="mb-1 text-xs font-medium text-muted">{title}</div>}
+      {items.map((it) => (
+        <div key={it.label} className="flex items-baseline justify-between gap-3 border-b border-line-soft py-2">
+          <dt className="flex min-w-0 items-center gap-1.5 text-ink-2">
+            {it.mark && <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={it.hollow ? { border: `2px solid ${it.mark}` } : { background: it.mark }} />}
+            <span className="min-w-0">{it.label}</span>
+          </dt>
+          <dd className="num text-xl whitespace-nowrap text-ink">{it.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 // Bloque: where the team spent its time (heat), each player's average position and the block measures.
 export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; side: Side; team: string }) {
   const b = teamBlock(parts, side);
@@ -29,8 +60,26 @@ export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; sid
   });
   if (b.players.length === 0 && h.total === 0) return <p className="text-sm text-faint">Sin posiciones de {team} en las partes revisadas.</p>;
   return (
-    <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_16rem] print:grid-cols-[minmax(0,1fr)_14rem]">
-      <div>
+    <FigureRow
+      note={<>Color: tiempo en cada zona · círculos: posición media · línea: altura de la defensa. {team} ataca hacia la derecha.</>}
+      aside={
+        <>
+          <StatList
+            items={(
+              [
+                ["Altura de la línea defensiva", b.line_m],
+                ["Largo del equipo", b.length_m],
+                ["Ancho del equipo", b.width_m],
+              ] as const
+            ).map(([k, v]) => ({ label: k, value: v === null ? <span className="text-faint">—</span> : `${v} m` }))}
+          />
+          <p className="mt-2 text-xs text-faint">
+            {Math.round(b.seconds / 60)} min revisados. Altura desde su portería: media de las 4 más retrasadas sin la portera.
+            {b.line_m === null && " Hacen falta al menos 7 jugadoras de campo con nombre."}
+          </p>
+        </>
+      }
+    >
         <Pitch showDirection={false}>
           {cells.map((c, k) => c.o > 0.08 && <rect key={k} x={c.x} y={c.y} width={cw} height={ch} fill={color(side)} opacity={0.75 * c.o} />)}
           {b.line_m !== null && (
@@ -57,27 +106,7 @@ export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; sid
             </g>
           ))}
         </Pitch>
-        <p className="mt-1 text-xs text-faint">Color: tiempo en cada zona · círculos: posición media · línea: altura de la defensa. {team} ataca hacia la derecha.</p>
-      </div>
-      <dl className="text-sm">
-        {(
-          [
-            ["Altura de la línea defensiva", b.line_m, "m"],
-            ["Largo del equipo", b.length_m, "m"],
-            ["Ancho del equipo", b.width_m, "m"],
-          ] as const
-        ).map(([k, v, u]) => (
-          <div key={k} className="flex items-baseline justify-between gap-3 border-b border-line py-2.5">
-            <dt className="text-ink-2">{k}</dt>
-            <dd className="num text-2xl text-ink">{v === null ? <span className="text-faint">—</span> : `${v} ${u}`}</dd>
-          </div>
-        ))}
-        <p className="mt-2 text-xs text-faint">
-          {Math.round(b.seconds / 60)} min revisados. Altura desde su portería: media de las 4 más retrasadas sin la portera.
-          {b.line_m === null && " Hacen falta al menos 7 jugadoras de campo con nombre."}
-        </p>
-      </dl>
-    </div>
+    </FigureRow>
   );
 }
 
@@ -89,8 +118,29 @@ export function PassMapSection({ parts, side, team, segmentsByVideo }: { parts: 
   const prog = arrows.filter((a) => a.progressive).length;
   const id = `pm-${side}`;
   const drawn = all ? arrows : arrows.filter((a) => a.progressive);
+  const byPlayer = new Map<string, number>();
+  for (const a of arrows) if (a.progressive && a.from) byPlayer.set(a.from, (byPlayer.get(a.from) ?? 0) + 1);
+  const top = [...byPlayer].sort((x, y) => y[1] - x[1]).slice(0, 5);
   return (
-    <div className="md:max-w-[80%]">
+    <FigureRow
+      note={<>{arrows.length} pases con sus dos extremos en cuadro · {prog} progresivos (10 m o más hacia la portería rival, en color). {team} ataca hacia la derecha.</>}
+      aside={
+        <>
+          <StatList
+            items={[
+              { label: "Pases leídos", value: arrows.length },
+              { label: "Progresivos", value: prog, mark: color(side) },
+              { label: "% progresivos", value: `${Math.round((100 * prog) / arrows.length)} %` },
+            ]}
+          />
+          {top.length > 0 && (
+            <div className="mt-4">
+              <StatList title="Más pases progresivos" items={top.map(([n, k]) => ({ label: n, value: k }))} />
+            </div>
+          )}
+        </>
+      }
+    >
       <div className="seg mb-2 print:hidden" role="group" aria-label="Qué pases">
         <button type="button" className="seg-opt" aria-pressed={!all} onClick={() => setAll(false)}>
           Progresivos ({prog})
@@ -121,10 +171,7 @@ export function PassMapSection({ parts, side, team, segmentsByVideo }: { parts: 
           </line>
         ))}
       </Pitch>
-      <p className="mt-1 text-xs text-faint">
-        {arrows.length} pases con sus dos extremos en cuadro · {prog} progresivos (10 m o más hacia la portería rival, en color). {team} ataca hacia la derecha.
-      </p>
-    </div>
+    </FigureRow>
   );
 }
 

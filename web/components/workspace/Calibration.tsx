@@ -1,8 +1,9 @@
 "use client";
 
-import { Anchor, CaretDown, CaretLeft, CaretRight, CaretUp, Check, CheckCircle, Crop, Crosshair, DownloadSimple, Eraser, Eye, FastForward, FolderOpen, GearSix, Info, Keyboard, Pause, Play, Plus, Rewind, SkipBack, SkipForward, TerminalWindow, Trash, Warning, X } from "@phosphor-icons/react";
+import { Anchor, Selection, ArrowClockwise, ArrowCounterClockwise, CaretDown, CircleHalf, CaretLeft, CaretRight, CaretUp, Check, CheckCircle, Crop, Crosshair, DownloadSimple, Eraser, Eye, FastForward, FolderOpen, GearSix, Info, Keyboard, Pause, Play, Plus, Rewind, SkipBack, SkipForward, TerminalWindow, Trash, Warning, X } from "@phosphor-icons/react";
 import { Dropdown, MenuItem } from "@/components/Dropdown";
 import { IconButton, Modal } from "@/components/Modal";
+import { Select } from "@/components/Select";
 import { Command } from "@/components/Command";
 import { KitPanel, sampleShirt, useKits } from "@/components/workspace/KitPanel";
 import type { JerseyKey } from "@/lib/tracks";
@@ -11,14 +12,16 @@ import { COLORS, Pitch } from "@/components/Pitch";
 import { FilePicker, partLabel } from "@/components/LocalPick";
 import { Card, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
 import { localVideo, readLocal, writeLocal } from "@/lib/local";
+import { readVideoMask, writeVideoMask } from "@/lib/matchYaml";
 import { SpeedControl } from "@/components/SpeedControl";
 import { downloadText, fmtT, isTyping } from "@/lib/format";
 import { parseHms } from "@/lib/segments";
-import { apply, fitHomography, fitQuality, invert, invertFor, orient, type Pt } from "@/lib/homography";
+import { apply, fitHomography, fitQuality, invert, invertFor, lerpHomography, orient, type Pt } from "@/lib/homography";
 import { mutate, setPref, uid, useHydrated, usePref, useStore } from "@/lib/store";
 import type { AnchorPoint, CalibAnchor } from "@/lib/types";
 import { VENUES, allVenues, toNormalized, type Landmark, type Venue } from "@/lib/venue";
 import { IX, landmarksWith, linePoints, namedLines, type ImageLine } from "@/lib/calibLines";
+import { ARC_MIN, constraintPoints, fitHybrid, type ArcInput } from "@/lib/calibFit";
 
 const GROUPS: { id: Landmark["group"]; label: string; short: string }[] = [
   { id: "football", label: "Rejilla de americano (exacta)", short: "Americano" },
@@ -68,6 +71,11 @@ const TEAM_COLORS: Record<string, string> = { own: COLORS.own, opp: COLORS.opp, 
 
 // A stable, well separated colour per track id.
 const trackColor = (id: number) => `hsl(${(id * 47) % 360} 90% 62%)`;
+
+// "Realzar líneas": grey, strong contrast and a little brightness; white paint on grass comes out of the green.
+const ENHANCE_FILTER = "grayscale(1) contrast(2.4) brightness(1.08)";
+
+type ArcId = "center" | "pen_l" | "pen_r";
 
 interface CalibTrack {
   name: string;
@@ -126,6 +134,9 @@ export function Calibration({
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number; duration: number } | null>(null);
   const [fps, setFps] = useState(29.97002997);
+  // Where the fps comes from: match.yaml (exact, from ffprobe), typed by hand, or the default guess. Anchors keep the
+  // frame number computed with it, so a wrong fps shifts them in time (24 frames at 13 min of a 30 fps video).
+  const [fpsFrom, setFpsFrom] = useState<"yaml" | "manual" | "default">("default");
   const [time, setTime] = useState(0);
   const [matchId, setMatchId] = useState(folder || "partido_2026_09_25");
   // Shirt colours of the match, taken from this video before processing (the tracking uses them for the teams).
@@ -195,8 +206,13 @@ export function Calibration({
   // Lines of the pitch marked on the frame (calibration by lines), the tool in use and the line being marked: its
   // clicks on the video and the line of the model it is.
   const [lines, setLines] = useState<ImageLine[]>([]);
-  const [tool, setTool] = useState<"points" | "lines">("points");
+  const [tool, setTool] = useState<"points" | "lines" | "arcs">("points");
+  // Clicks along circles of the pitch, and the circle being marked.
+  const [arcs, setArcs] = useState<{ arc_id: ArcId; pts: Pt[] }[]>([]);
+  const [arcId, setArcId] = useState<ArcId>("center");
   const [lineDraft, setLineDraft] = useState<{ px: Pt[]; id: string | null }>({ px: [], id: null });
+  // A marked line chosen for the fine adjustment: one of its two clicks, or the whole line (moved or turned).
+  const [selLine, setSelLine] = useState<{ id: string; end: "a" | "b" | "both" } | null>(null);
   const [pointsFrame, setPointsFrame] = useState<number | null>(null);
   const [pendingPx, setPendingPx] = useState<Pt | null>(null);
   const [pendingLm, setPendingLm] = useState<string | null>(null);
@@ -215,6 +231,17 @@ export function Calibration({
   const venues = useMemo(() => allVenues(state.venues), [state.venues]);
   const venue = venues.find((v) => v.venue_id === venueId) ?? venues[0];
   const modelLines = useMemo(() => namedLines(venue), [venue]);
+  // The circles that can be marked: the centre circle and the arcs around each penalty spot (same radius).
+  const circles = useMemo(() => {
+    const R = venue.spec.circle_r_m ?? 9.15;
+    const spot = (t: string) => venue.landmarks.find((l) => l.id === `sc_${t}_ps`);
+    const out: Record<ArcId, { c: Pt; r: number } | null> = {
+      center: { c: [venue.length_m / 2, venue.width_m / 2], r: R },
+      pen_l: spot("l") ? { c: [spot("l")!.x, spot("l")!.y], r: R } : null,
+      pen_r: spot("r") ? { c: [spot("r")!.x, spot("r")!.y], r: R } : null,
+    };
+    return out;
+  }, [venue]);
   // The points computed where two marked lines cross, and every landmark by id (computed ones included).
   const derived = useMemo(() => linePoints(venue, lines), [venue, lines]);
   const byId = useMemo(() => {
@@ -266,13 +293,40 @@ export function Calibration({
 
   // Moves the selected point by a number of steps. Read through a ref by the key handler.
   const selPoint = stale ? null : (points.find((q) => q.landmark_id === sel) ?? null);
+  // A chosen point wins over a chosen line (choosing a line clears the point).
+  const selLineObj = !stale && selLine && !sel ? (lines.find((l) => l.line_id === selLine.id) ?? null) : null;
   const nudge = (ux: number, uy: number) => {
+    if (selLineObj && selLine) {
+      const dx = ux * step;
+      const dy = uy * step;
+      const mv = (q: [number, number]): [number, number] => [q[0] + dx, q[1] + dy];
+      return setLines((ls) =>
+        ls.map((l) => (l.line_id !== selLine.id ? l : { ...l, a: selLine.end !== "b" ? mv(l.a) : l.a, b: selLine.end !== "a" ? mv(l.b) : l.b })),
+      );
+    }
     if (!selPoint) return;
     setPoints((ps) => ps.map((q) => (q.landmark_id === sel ? { ...q, px: q.px + ux * step, py: q.py + uy * step } : q)));
   };
+  // Turns the selected line around its middle (degrees, clockwise on screen).
+  const rotateLine = (deg: number) => {
+    if (!selLineObj || !selLine) return;
+    const r = (deg * Math.PI) / 180;
+    const cx = (selLineObj.a[0] + selLineObj.b[0]) / 2;
+    const cy = (selLineObj.a[1] + selLineObj.b[1]) / 2;
+    const turn = (q: [number, number]): [number, number] => [cx + (q[0] - cx) * Math.cos(r) - (q[1] - cy) * Math.sin(r), cy + (q[0] - cx) * Math.sin(r) + (q[1] - cy) * Math.cos(r)];
+    setLines((ls) => ls.map((l) => (l.line_id !== selLine.id ? l : { ...l, a: turn(l.a), b: turn(l.b) })));
+  };
+  const pickLine = (id: string, end: "a" | "b" | "both" = "a") => {
+    setSelLine({ id, end });
+    setSel(null);
+  };
   const nudgeRef = useRef(nudge);
+  const rotateRef = useRef(rotateLine);
+  const endRef = useRef<(end: "a" | "b" | "both") => void>(() => undefined);
   useEffect(() => {
     nudgeRef.current = nudge;
+    rotateRef.current = rotateLine;
+    endRef.current = (end) => setSelLine((s) => (s ? { ...s, end } : s));
   });
 
   const seekFrame = useCallback(
@@ -296,6 +350,18 @@ export function Calibration({
       if (e.altKey && dir) {
         e.preventDefault();
         nudgeRef.current(dir[0] * (e.shiftKey ? 10 : 1), dir[1] * (e.shiftKey ? 10 : 1));
+        return;
+      }
+      // Lines: Alt + , / . turn the selected line (a tenth of a degree; with Shift, one degree); Alt + 1 / 2 / 3 choose
+      // its first click, its second click or the whole line.
+      if (e.altKey && (e.key === "," || e.key === "." || e.code === "Comma" || e.code === "Period")) {
+        e.preventDefault();
+        rotateRef.current((e.code === "Comma" || e.key === "," ? -1 : 1) * (e.shiftKey ? 1 : 0.1));
+        return;
+      }
+      if (e.altKey && (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3")) {
+        e.preventDefault();
+        endRef.current(e.code === "Digit1" ? "a" : e.code === "Digit2" ? "b" : "both");
         return;
       }
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
@@ -347,6 +413,12 @@ export function Calibration({
     if (!px || stale) return;
     videoRef.current?.pause();
     if (tool === "lines") return addLineClick(px);
+    if (tool === "arcs") {
+      setPointsFrame(frame);
+      return setArcs((as) =>
+        as.some((a) => a.arc_id === arcId) ? as.map((a) => (a.arc_id === arcId ? { ...a, pts: [...a.pts, px] } : a)) : [...as, { arc_id: arcId, pts: [px] }],
+      );
+    }
     if (pendingLm) addPair(pendingLm, px);
     else setPendingPx(px);
   };
@@ -374,7 +446,13 @@ export function Calibration({
     else setPendingLm(id === pendingLm ? null : id);
   };
 
-  const drawLoupe = useCallback((px: Pt | null) => {
+  // Worn paint: a view with more contrast and no colour, on the video and in the magnifier, makes pale lines stand out.
+  const enhance = usePref("calib:enhance", "0") === "1";
+  const enhanceRef = useRef(enhance);
+  useEffect(() => {
+    enhanceRef.current = enhance;
+  }, [enhance]);
+  const drawLoupe = useCallback((px: Pt | null, seg: [Pt, Pt] | null = null) => {
     const c = loupeRef.current;
     const v = videoRef.current;
     const ctx = c?.getContext("2d");
@@ -384,7 +462,9 @@ export function Calibration({
     const sw = c.width / 8;
     const sh = c.height / 8;
     ctx.imageSmoothingEnabled = false;
+    ctx.filter = enhanceRef.current ? ENHANCE_FILTER : "none";
     ctx.drawImage(v, px[0] - sw / 2, px[1] - sh / 2, sw, sh, 0, 0, c.width, c.height);
+    ctx.filter = "none";
     ctx.strokeStyle = "#f43f5e";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -393,12 +473,33 @@ export function Calibration({
     ctx.moveTo(0, c.height / 2);
     ctx.lineTo(c.width, c.height / 2);
     ctx.stroke();
+    // The marked line being adjusted, across the whole magnifier, to lay it on the paint.
+    if (seg) {
+      const to = (q: Pt): Pt => [((q[0] - (px[0] - sw / 2)) * c.width) / sw, ((q[1] - (px[1] - sh / 2)) * c.height) / sh];
+      const [a, b] = [to(seg[0]), to(seg[1])];
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const len = Math.hypot(dx, dy) || 1;
+      const k = (c.width + c.height) / len;
+      ctx.strokeStyle = "#22d3ee";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(a[0] - dx * k, a[1] - dy * k);
+      ctx.lineTo(b[0] + dx * k, b[1] + dy * k);
+      ctx.stroke();
+      for (const q of [a, b]) {
+        ctx.beginPath();
+        ctx.arc(q[0], q[1], 4, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    }
   }, []);
 
+  const selSeg: [Pt, Pt] | null = selLineObj ? [selLineObj.a, selLineObj.b] : null;
   const onVideoMove = (e: React.MouseEvent) => {
     const px = toPixels(e);
     setHover(px);
-    drawLoupe(px);
+    drawLoupe(px, selSeg);
   };
 
   const fit = useMemo(() => {
@@ -408,10 +509,62 @@ export function Calibration({
     });
     const src = pairs.map(({ p }) => [p.px, p.py] as Pt);
     const dst = pairs.map(({ lm }) => [lm.x, lm.y] as Pt);
-    const H = fitHomography(src, dst);
-    const Hinv = H ? invertFor(H, dst) : null;
-    return { pairs, H, Hinv, quality: H ? fitQuality(H, src, dst) : null };
-  }, [allPoints, byId]);
+    const plain = fitHomography(src, dst);
+    const arcInput: ArcInput[] = arcs.flatMap((a) => (circles[a.arc_id] && a.pts.length >= ARC_MIN ? [{ pts: a.pts, c: circles[a.arc_id]!.c, r: circles[a.arc_id]!.r }] : []));
+    if (arcInput.length === 0) {
+      const Hinv = plain ? invertFor(plain, dst) : null;
+      return { pairs, H: plain, Hinv, quality: plain ? fitQuality(plain, src, dst) : null, hybrid: null };
+    }
+    // With circles: one fit of the clicked points, every click of the marked lines and every click on the arcs.
+    const clicked = pairs.filter(({ p }) => !p.landmark_id.startsWith(IX));
+    const lineInput = lines.flatMap((l) => {
+      const m = modelLines.find((x) => x.id === l.line_id);
+      return m ? [{ pts: [l.a, l.b] as Pt[], ma: m.a, mb: m.b }] : [];
+    });
+    const hybrid = fitHybrid(
+      { points: clicked.map(({ p, lm }) => ({ px: [p.px, p.py] as Pt, m: [lm.x, lm.y] as Pt })), lines: lineInput, arcs: arcInput },
+      plain,
+    );
+    if (!hybrid) return { pairs, H: null, Hinv: null, quality: null, hybrid: null };
+    const H = hybrid.H;
+    const residuals = pairs.map(({ p, lm }) => {
+      const m = apply(H, [p.px, p.py]);
+      return m ? Math.hypot(m[0] - lm.x, m[1] - lm.y) : Infinity;
+    });
+    // How much of each circle the clicks cover (degrees on the model): a short arc fits well and can still be off.
+    const spans = arcInput.map((a) => {
+      const ang = a.pts.flatMap((q) => {
+        const m = apply(H, q);
+        return m ? [Math.atan2(m[1] - a.c[1], m[0] - a.c[0])] : [];
+      }).sort((x, y) => x - y);
+      if (ang.length < 2) return 0;
+      let gap = 2 * Math.PI - (ang[ang.length - 1] - ang[0]);
+      for (let i = 1; i < ang.length; i++) gap = Math.max(gap, ang[i] - ang[i - 1]);
+      return ((2 * Math.PI - gap) * 180) / Math.PI;
+    });
+    const all = [...dst, ...arcInput.flatMap((a) => [a.c])];
+    return {
+      pairs,
+      H,
+      Hinv: invertFor(H, all),
+      quality: { residuals, rms: hybrid.rms, leaveOneOut: pairs.map((): number | null => null) },
+      hybrid: { ...hybrid, spans, input: { lines: lineInput, arcs: arcInput } },
+    };
+  }, [allPoints, byId, arcs, circles, lines, modelLines]);
+  // What an anchor saves: the points, plus each click of the arcs and lines as a point on its circle or line, so that
+  // Python (which only reads points) uses the same fit.
+  const anchorPoints = useMemo(() => {
+    if (!fit.hybrid || !fit.H) return allPoints;
+    const H = fit.H;
+    const extra = constraintPoints(H, fit.hybrid.input).map((c, i) => ({
+      landmark_id: `${c.kind === "arc" ? "arc" : "ln"}:${c.kind === "arc" ? arcs.filter((a) => a.pts.length >= ARC_MIN)[c.index]?.arc_id : (lines[c.index]?.line_id ?? c.index)}:${i}`,
+      px: c.px[0],
+      py: c.px[1],
+      x_m: c.m[0],
+      y_m: c.m[1],
+    }));
+    return [...allPoints, ...extra];
+  }, [fit, allPoints, arcs, lines]);
 
   const projected = useMemo(
     () => (fit.Hinv && dims ? projectLines(venue, fit.Hinv, dims.w, dims.h) : []),
@@ -419,11 +572,37 @@ export function Calibration({
   );
 
   useEffect(() => {
-    if (!hover && selPoint) drawLoupe([selPoint.px, selPoint.py]);
-  }, [hover, selPoint, time, drawLoupe]);
+    if (hover) return;
+    if (selLineObj && selLine) {
+      const c: Pt =
+        selLine.end === "a" ? selLineObj.a : selLine.end === "b" ? selLineObj.b : [(selLineObj.a[0] + selLineObj.b[0]) / 2, (selLineObj.a[1] + selLineObj.b[1]) / 2];
+      drawLoupe(c, [selLineObj.a, selLineObj.b]);
+    } else if (selPoint) drawLoupe([selPoint.px, selPoint.py]);
+  }, [hover, selPoint, selLineObj, selLine, time, drawLoupe]);
 
-  // Propagated calibration of the frame on screen, used wherever this frame has no points of its own.
-  const tf = track?.frames.get(frame) ?? null;
+  // Propagated calibration of the frame on screen, used wherever this frame has no points of its own. Only some frames
+  // are calibrated (1 of every `stride`); in between, the two around it are blended, so the drawing does not blink.
+  const trackKeys = useMemo(() => (track ? [...track.frames.keys()].sort((a, b) => a - b) : []), [track]);
+  const tf = (() => {
+    if (!track) return null;
+    const exact = track.frames.get(frame);
+    if (exact) return exact;
+    let lo = 0;
+    let hi = trackKeys.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (trackKeys[mid] < frame) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo === 0 || lo === trackKeys.length) return null;
+    const a = track.frames.get(trackKeys[lo - 1]);
+    const b = track.frames.get(trackKeys[lo]);
+    // More than a second and a half apart: a hole in the calibration, shown as such.
+    if (!a?.H || !b?.H || trackKeys[lo] - trackKeys[lo - 1] > fps * 1.5) return null;
+    const H = lerpHomography(a.H, b.H, (frame - trackKeys[lo - 1]) / (trackKeys[lo] - trackKeys[lo - 1]));
+    const near = frame - trackKeys[lo - 1] <= trackKeys[lo] - frame ? a : b;
+    return H ? { ...near, H, dis: a.dis !== null && b.dis !== null ? Math.max(a.dis, b.dis) : (a.dis ?? b.dis) } : null;
+  })();
   const trackRaw = (points.length === 0 || stale) && tf?.H ? tf.H : null;
   // Not memoised: while a track is loaded the matrix changes on every frame anyway.
   const trackInv = trackRaw && dims ? invert(trackRaw) : null;
@@ -527,6 +706,7 @@ export function Calibration({
   const reset = () => {
     setPoints([]);
     setLines([]);
+    setArcs([]);
     setLineDraft({ px: [], id: null });
     setPointsFrame(null);
     setPendingPx(null);
@@ -544,8 +724,9 @@ export function Calibration({
       t_video: pointsFrame / fps,
       image_w: dims.w,
       image_h: dims.h,
-      points: allPoints,
+      points: anchorPoints,
       ...(lines.length ? { lines } : {}),
+      ...(arcs.length ? { arcs } : {}),
     };
     mutate((s) => ({
       ...s,
@@ -558,8 +739,11 @@ export function Calibration({
 
   const loadAnchor = (a: CalibAnchor) => {
     setVenueId(a.venue_id);
-    setPoints(a.lines?.length ? a.points.filter((q) => !q.landmark_id.startsWith(IX)) : a.points);
+    setPoints(
+      a.lines?.length || a.arcs?.length ? a.points.filter((q) => !q.landmark_id.startsWith(IX) && !q.landmark_id.startsWith("arc:") && !q.landmark_id.startsWith("ln:")) : a.points,
+    );
     setLines(a.lines ?? []);
+    setArcs(a.arcs ?? []);
     setLineDraft({ px: [], id: null });
     setPointsFrame(a.frame);
     setPendingPx(null);
@@ -574,14 +758,56 @@ export function Calibration({
     void localVideo(folder, videoId).then((url) => {
       if (live && url) setFileUrl(url);
     });
-    void readLocal(`matches/${folder}/match.yaml`).then((yaml) => {
-      const m = yaml?.match(new RegExp(`video_id:\\s*${videoId}\\b[\\s\\S]*?\\bfps:\\s*([\\d.]+)`));
-      if (live && m) setFps(Number(m[1]));
-    });
     return () => {
       live = false;
     };
   }, [embedded, folder, videoId, fileUrl]);
+  // The exact fps of the video, from match.yaml, whatever way the video was opened.
+  const yamlFolder = folder || matchId;
+  useEffect(() => {
+    if (!yamlFolder) return;
+    let live = true;
+    void readLocal(`matches/${yamlFolder}/match.yaml`).then((yaml) => {
+      const m = yaml?.match(new RegExp(`video_id:\\s*${videoId}\\b[\\s\\S]*?\\bfps:\\s*([\\d.]+)`));
+      if (!live || !m) return;
+      setFps(Number(m[1]));
+      setFpsFrom("yaml");
+    });
+    return () => {
+      live = false;
+    };
+  }, [yamlFolder, videoId]);
+  // Zones of the image that are neither pitch nor fixed background (scoreboard, channel logo): `mask` of this video in
+  // match.yaml. Calibration (library, propagation) and detection do not look there.
+  const [maskRects, setMaskRects] = useState<[number, number, number, number][]>([]);
+  const [maskEdit, setMaskEdit] = useState(false);
+  const [maskDraft, setMaskDraft] = useState<[Pt, Pt] | null>(null);
+  const [maskMsg, setMaskMsg] = useState("");
+  useEffect(() => {
+    if (!yamlFolder) return;
+    let live = true;
+    void readLocal(`matches/${yamlFolder}/match.yaml`).then((yaml) => {
+      if (live && yaml) setMaskRects(readVideoMask(yaml, videoId));
+    });
+    return () => {
+      live = false;
+    };
+  }, [yamlFolder, videoId]);
+  const saveMask = async () => {
+    const path = `matches/${yamlFolder}/match.yaml`;
+    const yaml = await readLocal(path);
+    const next = yaml !== null ? writeVideoMask(yaml, videoId, maskRects) : null;
+    if (next === null) return setMaskMsg("No encuentro este video en match.yaml.");
+    const ok = await writeLocal(path, next);
+    setMaskMsg(ok ? `Guardado en match.yaml (${maskRects.length} zona${maskRects.length === 1 ? "" : "s"}). Reconstruye la biblioteca para que la use.` : "No se pudo escribir match.yaml.");
+  };
+  // Anchors saved while the fps was another: their frame is taken again from their time (what was on screen), once.
+  useEffect(() => {
+    if (fpsFrom !== "yaml") return;
+    const off = (a: CalibAnchor) => a.match_id === matchId && a.video_id === videoId && Math.abs(Math.round(a.t_video * fps) - a.frame) > 1;
+    if (!state.anchors.some(off)) return;
+    mutate((s) => ({ ...s, anchors: s.anchors.map((a) => (off(a) ? { ...a, frame: Math.round(a.t_video * fps) } : a)) }));
+  }, [fpsFrom, fps, matchId, videoId, state.anchors]);
   const [savedMsg, setSavedMsg] = useState("");
   const [showCommands, setShowCommands] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -607,13 +833,14 @@ export function Calibration({
   const b = venue.bounds;
   const dotR = dims ? dims.w / 260 : 6;
   const saved =
-    pointsFrame !== null && anchors.some((a) => a.frame === pointsFrame && (a.points === allPoints || JSON.stringify(a.points) === JSON.stringify(allPoints)));
+    pointsFrame !== null && anchors.some((a) => a.frame === pointsFrame && (a.points === anchorPoints || JSON.stringify(a.points) === JSON.stringify(anchorPoints)));
   const currentAnchor = pointsFrame !== null ? (anchors.find((a) => a.frame === pointsFrame) ?? null) : null;
 
   // Fit error of a saved anchor (RMS of its own points), for the list.
   const anchorRms = (a: CalibAnchor) => {
     const lms = landmarksWith(venues.find((v) => v.venue_id === a.venue_id) ?? venue, a.lines);
     const pr = a.points.flatMap((q) => {
+      if (q.x_m !== undefined && q.y_m !== undefined) return [{ s: [q.px, q.py] as Pt, d: [q.x_m, q.y_m] as Pt }];
       const l = lms.get(q.landmark_id);
       return l ? [{ s: [q.px, q.py] as Pt, d: [l.x, l.y] as Pt }] : [];
     });
@@ -644,6 +871,7 @@ export function Calibration({
             return {
               ...a,
               points: a.points.flatMap((q) => {
+                if (q.x_m !== undefined && q.y_m !== undefined) return [q];
                 const l = lms.get(q.landmark_id);
                 return l ? [{ ...q, x_m: l.x, y_m: l.y }] : [];
               }),
@@ -846,6 +1074,16 @@ export function Calibration({
         {mode === "calibrar" ? (
           <>
             {anchorsMenu}
+            {fpsFrom !== "yaml" && (
+              <button
+                type="button"
+                className="tag tag-warn"
+                onClick={() => setShowSettings(true)}
+                title="Las anclas guardan el número de cuadro calculado con este fps. Si no es el del video, quedan corridas en el tiempo y la propagación sale mal. Ponlo en match.yaml (ffprobe) o escríbelo en «Video y sede»."
+              >
+                <Warning size={12} /> {Math.round(fps * 1000) / 1000} fps sin confirmar
+              </button>
+            )}
             {noVenue && (
               <span className="tag tag-warn inline-flex items-center gap-1.5" title="La sede se elige en los datos del partido (engrane de la barra superior)">
                 <Warning size={13} />
@@ -859,7 +1097,8 @@ export function Calibration({
             <FilePicker
               dir={`matches/${matchId}/tracking`}
               pattern={new RegExp(`^(calib|tracks)_${videoId}_\\d+_\\d+\\.json$`)}
-              describe={(n) => `${partLabel(n, fps)} · ${n.startsWith("calib_") ? "calibración" : "tracking"}`}
+              describe={(n) => `${partLabel(n.replace(/^revision\//, ""), fps)} · ${n.startsWith("revision/") ? "revisión de la biblioteca" : n.startsWith("calib_") ? "calibración" : "tracking"}`}
+              subdirs={["revision"]}
               label="Previsualizar"
               icon={<Eye size={15} />}
               primary={!track && !dets}
@@ -951,7 +1190,20 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted">Cuadros por segundo</span>
-              <input className={`${input} w-28`} type="number" step="any" min={1} value={fps} onChange={(e) => setFps(Math.max(1, Number(e.target.value) || 1))} />
+              <input
+                className={`${input} w-28`}
+                type="number"
+                step="any"
+                min={1}
+                value={fps}
+                onChange={(e) => {
+                  setFps(Math.max(1, Number(e.target.value) || 1));
+                  setFpsFrom("manual");
+                }}
+              />
+              <span className={`text-[11px] ${fpsFrom === "yaml" ? "text-faint" : "text-warn"}`}>
+                {fpsFrom === "yaml" ? "de match.yaml" : fpsFrom === "manual" ? "escrito a mano" : "sin confirmar: 29.97 por defecto"}
+              </span>
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted">Sede</span>
@@ -1000,6 +1252,7 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                     playsInline
                     preload="auto"
                     className="block w-full"
+                    style={enhance ? { filter: ENHANCE_FILTER } : undefined}
                     onPlay={() => setPlaying(true)}
                     onPause={() => setPlaying(false)}
                     onLoadedMetadata={(e) => setDims({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight, duration: e.currentTarget.duration })}
@@ -1009,7 +1262,28 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                       ref={overlayRef}
                       viewBox={`0 0 ${dims.w} ${dims.h}`}
                       className={`absolute inset-0 h-full w-full ${pickKit ? "cursor-copy" : mode === "verificar" ? "" : stale ? "cursor-not-allowed" : "cursor-crosshair"}`}
-                      onClick={(e) => (mode === "calibrar" || pickKit ? onVideoClick(e) : undefined)}
+                      onClick={(e) => (maskEdit ? undefined : mode === "calibrar" || pickKit ? onVideoClick(e) : undefined)}
+                      onPointerDown={(e) => {
+                        if (!maskEdit) return;
+                        const p0 = toPixels(e);
+                        if (!p0) return;
+                        // A click inside a zone takes it away; a drag elsewhere draws a new one.
+                        const hit = maskRects.findIndex(([x0, y0, x1, y1]) => p0[0] >= x0 && p0[0] <= x1 && p0[1] >= y0 && p0[1] <= y1);
+                        if (hit >= 0) return setMaskRects((rs) => rs.filter((_, i) => i !== hit));
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                        setMaskDraft([p0, p0]);
+                      }}
+                      onPointerMove={(e) => {
+                        if (!maskEdit || !maskDraft) return;
+                        const p1 = toPixels(e);
+                        if (p1) setMaskDraft([maskDraft[0], p1]);
+                      }}
+                      onPointerUp={() => {
+                        if (!maskDraft) return;
+                        const [[ax, ay], [bx, by]] = maskDraft;
+                        if (Math.abs(bx - ax) > 6 && Math.abs(by - ay) > 6) setMaskRects((rs) => [...rs, [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)]]);
+                        setMaskDraft(null);
+                      }}
                       onMouseMove={onVideoMove}
                       onMouseLeave={() => {
                         setHover(null);
@@ -1034,9 +1308,15 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                             return (
                               <g key={l.line_id} pointerEvents="none">
                                 <line x1={l.a[0] - dx * k} y1={l.a[1] - dy * k} x2={l.b[0] + dx * k} y2={l.b[1] + dy * k} stroke="#22d3ee" strokeWidth={dotR / 4} strokeDasharray={`${dotR} ${dotR * 0.8}`} opacity={0.7} />
-                                <line x1={l.a[0]} y1={l.a[1]} x2={l.b[0]} y2={l.b[1]} stroke="#22d3ee" strokeWidth={dotR / 2.5} />
+                                <line x1={l.a[0]} y1={l.a[1]} x2={l.b[0]} y2={l.b[1]} stroke={selLine?.id === l.line_id ? "#fde047" : "#22d3ee"} strokeWidth={dotR / 2.5} />
                                 {[l.a, l.b].map((q, n) => (
-                                  <circle key={n} cx={q[0]} cy={q[1]} r={dotR / 2.5} fill="#22d3ee" />
+                                  <circle
+                                    key={n}
+                                    cx={q[0]}
+                                    cy={q[1]}
+                                    r={selLine?.id === l.line_id && (selLine.end === "both" || selLine.end === (n === 0 ? "a" : "b")) ? dotR * 0.8 : dotR / 2.5}
+                                    fill={selLine?.id === l.line_id ? "#fde047" : "#22d3ee"}
+                                  />
                                 ))}
                               </g>
                             );
@@ -1047,6 +1327,9 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                               <rect x={d.px - dotR * 0.7} y={d.py - dotR * 0.7} width={dotR * 1.4} height={dotR * 1.4} transform={`rotate(45 ${d.px} ${d.py})`} fill="none" stroke="#22d3ee" strokeWidth={dotR / 3} />
                             </g>
                           ))}
+                          {arcs.flatMap((a) =>
+                            a.pts.map((q, n) => <circle key={`arc${a.arc_id}${n}`} cx={q[0]} cy={q[1]} r={dotR * 0.45} fill={a.arc_id === arcId && tool === "arcs" ? "#fde047" : "#e879f9"} pointerEvents="none" />),
+                          )}
                           {lineDraft.px.map((q, n) => (
                             <circle key={`ld${n}`} cx={q[0]} cy={q[1]} r={dotR * 0.7} fill="none" stroke="#fde047" strokeWidth={dotR / 3} />
                           ))}
@@ -1070,9 +1353,39 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                           </g>
                         ))}
                       {mode === "calibrar" && pendingPx && <circle cx={pendingPx[0]} cy={pendingPx[1]} r={dotR} fill="none" stroke="#fde047" strokeWidth={dotR / 3} />}
+                      {(maskEdit || maskRects.length > 0) &&
+                        [...maskRects, ...(maskDraft ? [[Math.min(maskDraft[0][0], maskDraft[1][0]), Math.min(maskDraft[0][1], maskDraft[1][1]), Math.max(maskDraft[0][0], maskDraft[1][0]), Math.max(maskDraft[0][1], maskDraft[1][1])] as [number, number, number, number]] : [])].map(
+                          ([x0, y0, x1, y1], i) => (
+                            <rect
+                              key={`mask${i}`}
+                              x={x0}
+                              y={y0}
+                              width={x1 - x0}
+                              height={y1 - y0}
+                              fill={maskEdit ? "rgba(0,0,0,0.55)" : "rgba(0,0,0,0.25)"}
+                              stroke="#f43f5e"
+                              strokeWidth={dotR / 4}
+                              strokeDasharray={`${dotR} ${dotR * 0.6}`}
+                              pointerEvents="none"
+                            />
+                          ),
+                        )}
                     </svg>
                   )}
                   </div>
+                  {maskEdit && (
+                    <div className="absolute inset-x-0 top-2 z-20 flex justify-center">
+                      <div className="flex flex-wrap items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-xs text-white">
+                        <span>Arrastra para tapar el marcador o el logo · clic en una zona la quita · {maskRects.length} zona{maskRects.length === 1 ? "" : "s"}</span>
+                        <button type="button" className="rounded-full px-2.5 py-0.5 text-white/80 hover:bg-white/10" onClick={() => setMaskEdit(false)}>
+                          Cerrar
+                        </button>
+                        <button type="button" className="rounded-full bg-white px-2.5 py-0.5 font-medium text-black" onClick={() => void saveMask()}>
+                          Guardar en match.yaml
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {cropping && dims && (
                     <div className="absolute inset-0 z-20">
                       {/* The bands that will be hidden, each with its edge to drag. */}
@@ -1154,6 +1467,21 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                     </span>
                   )}
                   <span className="ml-auto flex items-center gap-2">
+                    {maskMsg && <span className="max-w-[16rem] truncate text-[11px] text-faint" title={maskMsg}>{maskMsg}</span>}
+                    <IconButton
+                      label={maskEdit ? "Terminar de tapar zonas" : `Tapar zonas que no son cancha (marcador, logo del canal)${maskRects.length ? ` · ${maskRects.length} tapada(s)` : ""}`}
+                      tone={maskEdit || maskRects.length ? "accent" : "default"}
+                      onClick={() => (setMaskEdit(!maskEdit), setMaskMsg(""))}
+                    >
+                      <Selection size={16} weight={maskEdit ? "bold" : "regular"} />
+                    </IconButton>
+                    <IconButton
+                      label={enhance ? "Ver el video normal" : "Realzar las líneas: más contraste y sin color, para pintura gastada"}
+                      tone={enhance ? "accent" : "default"}
+                      onClick={() => setPref("calib:enhance", enhance ? "0" : "1")}
+                    >
+                      <CircleHalf size={16} weight={enhance ? "fill" : "regular"} />
+                    </IconButton>
                     <IconButton
                       label={cropping ? "Terminar el recorte" : cropTopPref || cropBottomPref ? "Recorte del cuadro (cambiar)" : "Recortar el cuadro: ver menos cielo"}
                       tone={cropping || cropTopPref || cropBottomPref ? "accent" : "default"}
@@ -1218,7 +1546,14 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                   <span className={`tc ${trackCheckMax > WARN_M ? "text-warn" : "text-ink-2"}`}>peor {trackCheckMax.toFixed(2)} m</span>
                 </div>
               )}
-              {fit.pairs.length < 4 ? (
+              {fit.hybrid && (
+                <p className="mb-3 text-xs text-muted">
+                  Con círculo: puntos {fit.hybrid.points.length}, clics de líneas {fit.hybrid.lines.length}, clics de arcos {fit.hybrid.arcs.length} · error de ajuste{" "}
+                  <span className="tc text-ink">{fit.hybrid.rms.toFixed(2)} m</span>
+                  {fit.hybrid.spans.some((sp) => sp < 120) && <span className="text-warn"> · arco corto</span>}
+                </p>
+              )}
+              {!fit.hybrid && fit.pairs.length < 4 ? (
                 <p className="text-sm text-muted">
                   {fit.pairs.length} de 4 puntos. Mejor 6 o más, repartidos entre la banda lejana y la cercana.
                 </p>
@@ -1321,10 +1656,10 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
               {/* With the height of the window, the drawing of the venue and the magnifier share what is left: no scroll. */}
               <div className={`flex min-h-0 flex-1 flex-col ${fitH ? "gap-3" : "gap-4"}`}>
                 <div className="shrink-0">
-                  <KitPanel kits={kits} picking={pickKit} onPick={setPickKit} teams={teams} />
+                  <KitPanel compact kits={kits} picking={pickKit} onPick={setPickKit} teams={teams} />
                   {kitMsg && <p className="mt-1 text-xs text-warn">{kitMsg}</p>}
                 </div>
-                <Card delay={100} className={fitH ? "flex min-h-0 flex-[3] basis-0 flex-col" : ""}>
+                <Card delay={100} className={fitH ? "flex min-h-0 flex-[2] basis-0 flex-col" : ""}>
                   <div className="mb-3 flex items-center gap-2">
                     <span className="seg" role="group" aria-label="Qué se marca">
                       <button type="button" className="seg-opt !py-0.5 text-xs" aria-pressed={tool === "points"} onClick={() => (setTool("points"), setLineDraft({ px: [], id: null }))} title="Clic en un punto visible y en su punto del dibujo">
@@ -1332,6 +1667,15 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                       </button>
                       <button type="button" className="seg-opt !py-0.5 text-xs" aria-pressed={tool === "lines"} onClick={() => (setTool("lines"), setPendingPx(null), setPendingLm(null))} title="Cuando el punto no se ve: dos clics sobre una línea visible y la línea del dibujo; dos líneas que se cruzan dan el punto">
                         Líneas
+                      </button>
+                      <button
+                        type="button"
+                        className="seg-opt !py-0.5 text-xs"
+                        aria-pressed={tool === "arcs"}
+                        onClick={() => (setTool("arcs"), setPendingPx(null), setPendingLm(null), setLineDraft({ px: [], id: null }))}
+                        title="Clics a lo largo del círculo central o de un arco del área (5 o más, mejor medio círculo): se ajusta junto con los puntos y las líneas"
+                      >
+                        Círculo
                       </button>
                     </span>
                     <span className={`tag tc ${fit.pairs.length >= 4 ? "tag-accent" : ""}`} title={derived.length ? `${derived.length} calculado(s) con líneas` : undefined}>
@@ -1356,20 +1700,83 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                       El partido no tiene sede: se usa {venue.name}. Elígela en los datos del partido.
                     </p>
                   )}
+                  {tool === "arcs" && (
+                    <div className="enter mb-3 space-y-2 rounded-xl bg-bg/60 px-3 py-2 text-xs text-pretty text-muted">
+                      <div className="seg flex w-full" role="group" aria-label="Qué círculo">
+                        {(
+                          [
+                            ["center", "Central"],
+                            ["pen_l", "Arco área izq."],
+                            ["pen_r", "Arco área der."],
+                          ] as const
+                        ).map(([id, label]) => (
+                          <button key={id} type="button" aria-pressed={arcId === id} className="seg-opt flex-1 !px-1 text-[11px]" onClick={() => setArcId(id)}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="m-0">
+                        {(arcs.find((a) => a.arc_id === arcId)?.pts.length ?? 0) < ARC_MIN
+                          ? `Clics sobre el arco en el video: ${arcs.find((a) => a.arc_id === arcId)?.pts.length ?? 0} de ${ARC_MIN} como mínimo, repartidos a lo largo de todo lo que se vea.`
+                          : "Sigue añadiendo clics si se ve más arco: cuanto más largo, mejor."}
+                      </p>
+                      {arcs.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {arcs.map((a, i) => (
+                            <span key={a.arc_id} className="inline-flex items-center gap-1 rounded-full bg-raised py-0.5 pr-0.5 pl-2 text-[11px] text-ink-2">
+                              {a.arc_id === "center" ? "Central" : a.arc_id === "pen_l" ? "Arco izq." : "Arco der."} · {a.pts.length}
+                              {fit.hybrid && a.pts.length >= ARC_MIN && (
+                                <span className={(fit.hybrid.spans[arcs.filter((x) => x.pts.length >= ARC_MIN).indexOf(a)] ?? 0) < 120 ? "text-warn" : "text-faint"}>
+                                  · {Math.round(fit.hybrid.spans[arcs.filter((x) => x.pts.length >= ARC_MIN).indexOf(a)] ?? 0)}°
+                                </span>
+                              )}
+                              <button type="button" className="grid h-4 w-4 place-items-center rounded-full text-faint hover:text-ink" aria-label="Quitar el último clic" title="Quitar el último clic" onClick={() => setArcs((as) => as.map((x, k) => (k === i ? { ...x, pts: x.pts.slice(0, -1) } : x)).filter((x) => x.pts.length > 0))}>
+                                <ArrowCounterClockwise size={10} />
+                              </button>
+                              <button type="button" className="grid h-4 w-4 place-items-center rounded-full text-faint hover:text-danger" aria-label="Quitar este arco" onClick={() => setArcs((as) => as.filter((x) => x.arc_id !== a.arc_id))}>
+                                <X size={10} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {fit.hybrid && fit.hybrid.spans.some((sp) => sp < 120) && (
+                        <p className="m-0 text-warn">Arco corto (menos de 120°): el ajuste puede quedar bien en los números y aun así irse un metro. Añade clics más lejos sobre el arco o una línea más.</p>
+                      )}
+                    </div>
+                  )}
                   {tool === "lines" && (
                     <div className="enter mb-3 space-y-2 rounded-xl bg-bg/60 px-3 py-2 text-xs text-pretty text-muted">
-                      <p className={lineDraft.px.length || lineDraft.id ? "text-warn" : ""}>
-                        {lineDraft.px.length === 2 && !lineDraft.id
-                          ? "Ahora elige en el dibujo qué línea es."
-                          : lineDraft.id
-                            ? `${modelLines.find((l) => l.id === lineDraft.id)?.label}: ${lineDraft.px.length === 0 ? "dos clics" : "un clic más"} sobre ella en el video.`
-                            : "Dos clics sobre una línea visible del video (donde sea, no hace falta la esquina) y elige cuál es en el dibujo. Cada dos líneas que se cruzan dan un punto, aunque el cruce no salga en cuadro."}
-                      </p>
+                      {(lineDraft.px.length > 0 || lineDraft.id) && (
+                        <p className="text-warn">
+                          {lineDraft.px.length === 2 && !lineDraft.id
+                            ? "Ahora elige qué línea es."
+                            : `${modelLines.find((l) => l.id === lineDraft.id)?.label}: ${lineDraft.px.length === 0 ? "dos clics" : "un clic más"} sobre ella en el video.`}
+                        </p>
+                      )}
+                      <Select
+                        variant="field"
+                        label="Línea del dibujo"
+                        className="w-full justify-between"
+                        placeholder="…o elige la línea por su nombre"
+                        value={lineDraft.id}
+                        onChange={(v) => v && onModelLineClick(v)}
+                        options={modelLines.map((l) => ({
+                          value: l.id,
+                          label: `${l.label}${l.exact ? "" : " · por verificar"}`,
+                          group: l.id.startsWith("r_") ? "De la sede" : l.family === "soccer" ? "Fútbol" : "Americano",
+                        })).sort((a, b) => (a.group ?? "").localeCompare(b.group ?? "")).map((o, i, all) => (i > 0 && all[i - 1].group === o.group ? { ...o, group: undefined } : o))}
+                      />
                       {lines.length > 0 && (
                         <div className="flex flex-wrap gap-1">
                           {lines.map((l) => (
-                            <span key={l.line_id} className="inline-flex items-center gap-1 rounded-full bg-raised py-0.5 pr-0.5 pl-2 text-[11px] text-ink-2">
-                              {modelLines.find((m) => m.id === l.line_id)?.label ?? l.line_id}
+                            <span
+                              key={l.line_id}
+                              className={`inline-flex items-center gap-1 rounded-full py-0.5 pr-0.5 pl-2 text-[11px] ${selLine?.id === l.line_id ? "bg-accent text-white" : "bg-raised text-ink-2"}`}
+                            >
+                              <button type="button" className="text-left" title="Ajustarla con el teclado (Alt + flechas, Alt + , . para girar)" onClick={() => pickLine(l.line_id)}>
+                                {modelLines.find((m) => m.id === l.line_id)?.label ?? l.line_id}
+                              </button>
                               <button type="button" className="grid h-4 w-4 place-items-center rounded-full text-faint hover:text-danger" aria-label="Quitar esta línea" onClick={() => setLines((ls) => ls.filter((x) => x.line_id !== l.line_id))}>
                                 <X size={10} />
                               </button>
@@ -1477,7 +1884,7 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                     ))}
                   </div>
                 </Card>
-                <Card delay={140} className={fitH ? "flex min-h-0 flex-[2] basis-0 flex-col" : ""}>
+                <Card delay={140} className={fitH ? "flex min-h-0 flex-[3] basis-0 flex-col" : ""}>
                   <div className="mb-3 flex shrink-0 items-center gap-2">
                     <h2 className="text-[15px] text-ink">Ajuste fino</h2>
                     {points.length > 0 && (
@@ -1485,7 +1892,9 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                         <IconButton label="Punto anterior" disabled={points.length < 2 || stale} onClick={() => setSel(points[(Math.max(0, selIdx) - 1 + points.length) % points.length].landmark_id)}>
                           <CaretLeft size={13} />
                         </IconButton>
-                        <span className="max-w-[11rem] truncate text-xs text-ink-2">{selPoint ? byId.get(selPoint.landmark_id)?.label : "Elige un punto"}</span>
+                        <span className="max-w-[11rem] truncate text-xs text-ink-2">
+                          {selLineObj ? (modelLines.find((m) => m.id === selLineObj.line_id)?.label ?? "Línea") : selPoint ? byId.get(selPoint.landmark_id)?.label : "Elige un punto"}
+                        </span>
                         <IconButton label="Punto siguiente" disabled={points.length < 2 || stale} onClick={() => setSel(points[(selIdx + 1) % points.length].landmark_id)}>
                           <CaretRight size={13} />
                         </IconButton>
@@ -1493,7 +1902,7 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                     )}
                   </div>
                   <div className={`relative overflow-hidden rounded-xl bg-bg shadow-[0_0_0_1px_var(--color-line)] ${fitH ? "min-h-[4.5rem] flex-1" : ""}`}>
-                    <canvas ref={loupeRef} width={320} height={180} className={`block w-full ${fitH ? "h-full object-contain" : "aspect-video"}`} />
+                    <canvas ref={loupeRef} width={640} height={360} className={`block w-full ${fitH ? "h-full object-contain" : "aspect-video"}`} />
                     <span className="tc absolute top-2 left-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] text-white">×8 {hover ? "cursor" : selPoint ? "punto" : ""}</span>
                     {hover && (
                       <span className="tc absolute bottom-2 left-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
@@ -1503,7 +1912,61 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                     )}
                     {!hover && !selPoint && <span className="absolute inset-0 grid place-items-center text-xs text-faint">Pasa el cursor sobre el video</span>}
                   </div>
-                  {selPoint ? (
+                  {selLineObj && selLine ? (
+                    <div className="mt-3 flex shrink-0 items-center gap-4">
+                      <div className="grid shrink-0 grid-cols-3 gap-1">
+                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Girar a la izquierda" title="Alt + , (con Mayús, 1°)" onClick={(e) => rotateLine(e.shiftKey ? -1 : -0.1)}>
+                          <ArrowCounterClockwise size={14} />
+                        </button>
+                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Subir un paso" title="Alt + ↑" onClick={() => nudge(0, -1)}>
+                          <CaretUp size={14} />
+                        </button>
+                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Girar a la derecha" title="Alt + . (con Mayús, 1°)" onClick={(e) => rotateLine(e.shiftKey ? 1 : 0.1)}>
+                          <ArrowClockwise size={14} />
+                        </button>
+                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Izquierda un paso" title="Alt + ←" onClick={() => nudge(-1, 0)}>
+                          <CaretLeft size={14} />
+                        </button>
+                        <span className="tc grid h-8 w-8 place-items-center text-[11px] text-faint">{step}</span>
+                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Derecha un paso" title="Alt + →" onClick={() => nudge(1, 0)}>
+                          <CaretRight size={14} />
+                        </button>
+                        <span />
+                        <button type="button" className={`${btn} h-8 w-8 !p-0`} aria-label="Bajar un paso" title="Alt + ↓" onClick={() => nudge(0, 1)}>
+                          <CaretDown size={14} />
+                        </button>
+                        <span />
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="seg flex w-full" role="group" aria-label="Qué se mueve">
+                          {(
+                            [
+                              ["a", "Clic 1", "Alt + 1"],
+                              ["b", "Clic 2", "Alt + 2"],
+                              ["both", "Toda", "Alt + 3"],
+                            ] as const
+                          ).map(([end, label, key]) => (
+                            <button key={end} type="button" aria-pressed={selLine.end === end} title={key} className="seg-opt flex-1 !px-1 text-xs" onClick={() => setSelLine({ ...selLine, end })}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="seg" role="group" aria-label="Paso en píxeles">
+                            {NUDGE_STEPS.map((v) => (
+                              <button key={v} type="button" aria-pressed={step === v} onClick={() => setStep(v)} className="seg-opt tc !px-2.5">
+                                {v}
+                              </button>
+                            ))}
+                          </div>
+                          <span className="text-[11px] text-faint">px · giro 0.1° (Mayús 1°)</span>
+                          <button type="button" className="link ml-auto text-[11px]" onClick={() => setSelLine(null)}>
+                            soltar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : selPoint ? (
                     <div className="mt-3 flex shrink-0 items-center gap-4">
                       {/* Arrows around the step: the same moves as Alt + arrows. */}
                       <div className="grid shrink-0 grid-cols-3 gap-1">
@@ -1561,7 +2024,7 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-3 shrink-0 text-xs text-faint">Elige un punto (aquí o en su fila del Ajuste) para moverlo píxel a píxel.</p>
+                    <p className="mt-3 shrink-0 text-xs text-faint">Elige un punto (aquí o en su fila del Ajuste) o una línea (su nombre en Líneas) para moverla píxel a píxel.</p>
                   )}
                 </Card>
               </div>

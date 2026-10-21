@@ -30,6 +30,8 @@ test("jugadora con nombre que salta más de lo que se puede correr: sale primero
   assert.equal(a.length, 1);
   assert.deepEqual([a[0].kind, a[0].person, a[0].name, a[0].frame], ["player", 2, "Jugadora Dos", 30]);
   assert.ok(a[0].meters > 19 && a[0].speed > 190);
+  // El cuadro anterior al salto, para poder quitar ese en vez del salto (Alt + Q).
+  assert.ok(a[0].before < 30 && a[0].before >= 27);
 });
 
 test("si muchas saltan en el mismo cuadro es la cámara (calibración), no las jugadoras", () => {

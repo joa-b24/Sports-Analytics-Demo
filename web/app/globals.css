@@ -62,6 +62,12 @@
   --zone-ink-hi: #0c0c0d;
   --pitch-fill: transparent;
   --pitch-line: #3f3f43;
+  /* Players compared side by side (Análisis › Rendimiento individual): identity, not team. Validated against the
+     surface in each mode (dataviz validate_palette); they stay apart from the team colours. */
+  --slot-1: #199e70;
+  --slot-2: #c98500;
+  --slot-3: #d55181;
+  --slot-4: #9085e9;
 }
 
 :root[data-theme="light"] {
@@ -97,6 +103,10 @@
   --zone-4: color-mix(in srgb, var(--color-own) 85%, black);
   --zone-5: color-mix(in srgb, var(--color-own) 55%, black);
   --pitch-line: #bdbdb6;
+  --slot-1: #1baf7a;
+  --slot-2: #eda100;
+  --slot-3: #e87ba4;
+  --slot-4: #6250d6;
 }
 
 * {
@@ -760,8 +770,27 @@ input[type="range"] {
   }
 }
 
+/* Print. The PDF keeps the colours of the app (dark or light, whichever is on) unless the report asks for white paper
+   (`data-paper="white"` on <html>, set by the report). The page has no margin so the background reaches the edges;
+   `.print-sheet` gives the margin back on every page. */
 @media print {
-  :root {
+  @page {
+    margin: 0;
+  }
+  html,
+  body {
+    background: var(--color-bg) !important;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-sheet {
+    padding: 12mm 13mm;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  :root[data-paper="white"] {
     color-scheme: light;
     --color-bg: #ffffff;
     --color-surface: #ffffff;
@@ -770,17 +799,22 @@ input[type="range"] {
     --color-ink: #0f172a;
     --color-ink-2: #1e293b;
     --color-muted: #475569;
-    --color-faint: #64748b;
-    --color-line-soft: #e8ebf2;
-    --color-line: #d5d9e4;
-    --color-line-strong: #b9bfcd;
+    --color-faint: #5b6577;
+    --color-line-soft: #e3e7ef;
+    --color-line: #d0d5e0;
+    --color-line-strong: #a9b0c0;
     --color-accent-300: #2442b0;
+    --color-accent-400: #2442b0;
+    --color-section: #e3eaff;
     --color-warn: #7a4a0b;
     --color-warn-900: #fdf3e2;
     --color-danger: #b4232f;
     --color-ok: #1b7a43;
-    --color-own: #2f55e0;
-    --color-opp: #d9541e;
+    /* The team colours chosen in Configuración come inline on <html>; on paper, their darker version wins. */
+    --color-own: var(--paper-own, #2f55e0) !important;
+    --color-opp: var(--paper-opp, #c2410c) !important;
+    --on-own: #ffffff !important;
+    --on-opp: #ffffff !important;
     --color-ball: #0b0b0b;
     --zone-0: #dbe3ff;
     --zone-1: #b8c8ff;
@@ -792,11 +826,5 @@ input[type="range"] {
     --zone-ink-hi: #ffffff;
     --pitch-fill: #f6f8fc;
     --pitch-line: #9aa3b5;
-  }
-  body {
-    background: #ffffff;
-  }
-  @page {
-    margin: 14mm;
   }
 }

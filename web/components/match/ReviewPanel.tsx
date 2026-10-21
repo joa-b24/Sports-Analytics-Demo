@@ -1,5 +1,6 @@
 "use client";
 
+import { detailsFor, outcomePatch } from "@/lib/tagging";
 import { ArrowClockwise, CaretLeft, CaretRight, Minus, Plus, SoccerBall, Target } from "@phosphor-icons/react";
 import { useEffect, useRef } from "react";
 import { Pitch, toMeters } from "@/components/Pitch";
@@ -7,7 +8,7 @@ import { Select } from "@/components/Select";
 import { Card, btn, input } from "@/components/Shell";
 import { fmtT, isTyping } from "@/lib/format";
 import { endKind, missingEnd, missingReview, retype } from "@/lib/tagging";
-import { DETAIL_KEYS, DETAIL_TITLES, EVENT_DETAILS, EVENT_LABELS, EVENT_OUTCOMES, OUTCOME_KEYS, type Match, type MatchEvent } from "@/lib/types";
+import { DETAIL_KEYS, DETAIL_TITLES, EVENT_LABELS, EVENT_OUTCOMES, OUTCOME_KEYS, type Match, type MatchEvent } from "@/lib/types";
 import { GoalFrame } from "./GoalFrame";
 import { TYPE_OPTIONS, teamColor, teamOptions } from "./eventOptions";
 import { PlayerPicker, type PlayerChoice } from "./PlayerPicker";
@@ -94,13 +95,13 @@ export function ReviewPanel({
 
   // Result and detail keep the keys of the first pass: 1 2 3 and 7 8 9.
   const outcomes = e ? Object.entries(EVENT_OUTCOMES[e.type] ?? {}) : [];
-  const details = e ? Object.entries(EVENT_DETAILS[e.type] ?? {}) : [];
+  const details = e ? detailsFor(e) : [];
   useEffect(() => {
     completeRef.current = (k: string) => {
       if (!e || pass !== 2) return false;
       const o = OUTCOME_KEYS.indexOf(k);
       const d = DETAIL_KEYS.indexOf(k);
-      if (o >= 0 && outcomes[o]) return update(e.event_id, { outcome: e.outcome === outcomes[o][0] ? null : outcomes[o][0] }), true;
+      if (o >= 0 && outcomes[o]) return update(e.event_id, outcomePatch(e, e.outcome === outcomes[o][0] ? null : outcomes[o][0])), true;
       if (d >= 0 && details[d]) return update(e.event_id, { detail: e.detail === details[d][0] ? null : details[d][0] }), true;
       return false;
     };

@@ -165,6 +165,15 @@ A, B y C avanzan en paralelo. El contrato v2 espera a las tres; la base de datos
 - "Carga de tracking en la app" deja de estar fuera de alcance: pasa a ser la mesa de corrección.
 - Se mantiene: **la app sirve completa solo con eventos manuales.**
 
+## Propagación corregida (2026-10-20)
+
+Con `partido_ccm_vs_up` y `partido_ucg_vs_u_inter` la rejilla propagada se movía demasiado aunque las anclas calzaban. Dos causas, medidas con las anclas reales:
+
+- Encadenar el flujo óptico cuadro a cuadro derivaba 1.5-1.9 m cada 3 s; emparejar cada cuadro directamente con el ancla (SIFT) deja 0.1-0.4 m. `propagate` usa ahora el emparejamiento directo y el flujo solo donde falla.
+- Las anclas de los videos de 30 fps se habían guardado con 29.97 (el fps por defecto de Calibración cuando no leía `match.yaml`): ~24 cuadros corridas a los 13 min. Python toma ahora el cuadro de `t_video`, y Calibración lee siempre el fps de `match.yaml`, corrige una vez las anclas guardadas con otro y avisa si no lo conoce.
+
+Con eso, `ccm_vs_up`: discrepancia media de v1 1.60 -> 0.13 m, v2 5.54 -> 0.33 m, v3 1.03 -> 0.70 m (v3 queda limitado por sus anclas, todas en las dos bandas). `library locate` en tramos lejanos al barrido: referencias que coinciden a 0.05-0.28 m. En `library.localize` el ajuste de varias referencias y su medida solo usan rasgos que caen sobre la cancha (antes gradas y cielo daban "diferencias" de cientos de metros). `ucg_vs_u_inter` sigue mal: sus anclas son 4 cruces de líneas casi en una franja, sin redundancia; hay que remarcarlas.
+
 ## Estado de A3 (2026-10-11)
 
 `src/sportsan/tracking/propagate.py` estima el movimiento de cámara cuadro a cuadro (seguimiento de puntos + RANSAC, CPU), encadena

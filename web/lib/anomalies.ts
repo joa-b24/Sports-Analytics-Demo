@@ -38,6 +38,9 @@ export interface Anomaly {
   speed: number;
   // A detour: the frame where it is back on a possible path.
   until?: number;
+  // Player and ball anomalies: the last position before the jump. Often that one is the wrong one (a box that lost the
+  // feet just before), so it can be taken away instead.
+  before?: number;
 }
 
 const scaleOf = (file: Pick<TracksFile, "venue">): [number, number] => [
@@ -84,7 +87,7 @@ export function playerAnomalies(file: TracksFile, edits: TrackEdits): Anomaly[] 
     const dt = back ? (back.after.frame - j.before.frame) / fps : 0;
     const returns =
       back !== undefined && back.person === j.person && (back.frame - j.frame) / fps <= DETOUR_S && Math.hypot(back.after.x - j.before.x, back.after.y - j.before.y) <= JUMP_SPEED_MS * dt + JUMP_MIN_M;
-    out.push({ kind: "player", frame: j.frame, person: j.person, name: names.get(j.person) ?? null, meters: j.meters, speed: j.speed, ...(returns ? { until: back.frame } : {}) });
+    out.push({ kind: "player", frame: j.frame, person: j.person, name: names.get(j.person) ?? null, meters: j.meters, speed: j.speed, before: j.before.frame, ...(returns ? { until: back.frame } : {}) });
     if (returns) i++;
   }
   return out.sort((a, b) => rank(a) - rank(b) || a.frame - b.frame);
@@ -138,7 +141,7 @@ export function ballAnomalies(points: BallPoint[], file: Pick<TracksFile, "fps" 
         break;
       }
     }
-    out.push({ kind: "ball", frame: b.frame, meters: dist(a, b), speed: dist(a, b) / dt(a, b), ...(back >= 0 ? { until: pts[back].frame } : {}) });
+    out.push({ kind: "ball", frame: b.frame, meters: dist(a, b), speed: dist(a, b) / dt(a, b), before: a.frame, ...(back >= 0 ? { until: pts[back].frame } : {}) });
     if (back >= 0) i = back;
   }
   return out;

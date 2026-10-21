@@ -1,5 +1,6 @@
 "use client";
 
+import { shootoutText } from "@/lib/shootout";
 import { FileText, Monitor, Path, PlayCircle, Scissors, SoccerBall, Strategy, Tag, Target, type Icon } from "@phosphor-icons/react";
 import type { StepId, StepStatus } from "@/lib/steps";
 import type { Match, MatchEvent } from "@/lib/types";
@@ -84,6 +85,11 @@ export function ScoreBug({ match, events, size = "md" }: { match: Match; events:
         {match.other_team}
         <i className="h-4 w-1 rounded-full bg-opp" />
       </span>
+      {match.shootout?.length ? (
+        <span className="ml-1.5 flex items-center text-[0.7em] font-semibold whitespace-nowrap text-muted normal-case" title="Tanda de penales">
+          ({shootoutText(match.shootout)})
+        </span>
+      ) : null}
     </div>
   );
 }

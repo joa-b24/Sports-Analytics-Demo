@@ -52,7 +52,16 @@ export const SOCCER_DEFAULTS = { box_depth_m: 16.5, box_width_m: 40.32, goal_are
 export const FOOTBALL_WIDTH_M = (160 / 3) * YARD; // 53 1/3 yd
 
 // Soccer markings for a pitch of L x W meters. `exact` says whether the pitch size itself is trusted.
-function soccerMarkings(L: number, W: number, exact: boolean, m: typeof SOCCER_DEFAULTS = SOCCER_DEFAULTS): { landmarks: Landmark[]; lines: ModelLine[] } {
+// Regulation goal mouth (m), used for the posts when the venue has not measured its own.
+export const GOAL_WIDTH_M = 7.32;
+
+function soccerMarkings(
+  L: number,
+  W: number,
+  exact: boolean,
+  m: typeof SOCCER_DEFAULTS = SOCCER_DEFAULTS,
+  goalWidth?: number,
+): { landmarks: Landmark[]; lines: ModelLine[] } {
   const cx = L / 2;
   const cy = W / 2;
   const R = m.circle_r_m;
@@ -78,6 +87,11 @@ function soccerMarkings(L: number, W: number, exact: boolean, m: typeof SOCCER_D
     soccer(`sc_${tag}_gf`, `Área chica ${name} · vértice lejano`, x0 + dir * m.goal_area_depth_m, cy - gh);
     soccer(`sc_${tag}_gn`, `Área chica ${name} · vértice cercano`, x0 + dir * m.goal_area_depth_m, cy + gh);
     soccer(`sc_${tag}_ps`, `Punto penal ${name}`, x0 + dir * m.penalty_spot_m, cy);
+    // Base of each goal post, on the goal line: easy to see even where the paint is worn. Without a measured goal, at
+    // the regulation width and marked as to be checked.
+    const gw = goalWidth ?? GOAL_WIDTH_M;
+    for (const [side, label, y] of [["f", "lejano", cy - gw / 2], ["n", "cercano", cy + gw / 2]] as const)
+      landmarks.push({ id: `sc_${tag}_gp${side}`, label: `Poste ${label} ${name} (base)`, x: x0, y, group: "soccer", exact: exact && goalWidth !== undefined });
     const box = (d: number, h: number): Pt[] => [[x0, cy - h], [x0 + dir * d, cy - h], [x0 + dir * d, cy + h], [x0, cy + h]];
     lines.push({ pts: box(m.box_depth_m, bh), group: "soccer" });
     lines.push({ pts: box(m.goal_area_depth_m, gh), group: "soccer" });
@@ -126,7 +140,7 @@ export function buildVenue(spec: VenueSpec, builtin = false): Venue {
   const overlay = spec.kind === "football_overlay";
   // Over a football grid the soccer lines are the uncertain part; on a soccer-only pitch they are all there is.
   const marks = Object.fromEntries(Object.entries(SOCCER_DEFAULTS).map(([k, v]) => [k, spec[k as keyof typeof SOCCER_DEFAULTS] ?? v])) as typeof SOCCER_DEFAULTS;
-  const soccer = soccerMarkings(L, W, !overlay, marks);
+  const soccer = soccerMarkings(L, W, !overlay, marks, spec.goal_width_m);
   const grid = overlay
     ? footballGrid(L / 2 + (spec.grid_dx_m ?? 0), W / 2 + (spec.grid_dy_m ?? 0), spec.hash_far_m ?? DEFAULT_HASH_M, spec.hash_near_m ?? DEFAULT_HASH_M, spec.football_width_m ?? FOOTBALL_WIDTH_M)
     : null;

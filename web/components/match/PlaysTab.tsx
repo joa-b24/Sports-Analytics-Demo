@@ -12,6 +12,7 @@ import { IconButton } from "@/components/Modal";
 import { useRef, useState, type RefObject } from "react";
 import { ClipEditor } from "@/components/clip/ClipEditor";
 import { TimeRange } from "@/components/TimeRange";
+import { ViewShade } from "@/components/ViewShade";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
 import { btn, btnPrimary, input } from "@/components/Shell";
 import { PanelTitle } from "@/components/studio/Studio";
@@ -389,6 +390,7 @@ export function PlaysTab({
                 onPointerUp={commitDrag}
                 onPointerLeave={commitDrag}
               >
+                {measured && <ViewShade poly={measured.view} />}
                 {measured && (
                   <>
                     {measured.players

@@ -25,6 +25,7 @@ import { setPref, usePref, useStore } from "@/lib/store";
 import type { Match, MatchEvent } from "@/lib/types";
 import { useThemeSync } from "@/lib/theme";
 import { useRosterFromFile } from "@/components/RosterCard";
+import { useRenamesFromFile } from "@/lib/renames";
 import { TEAM_SECTIONS } from "@/lib/features";
 import { EdgeReveal, useFocusMode } from "@/components/FocusMode";
 
@@ -208,6 +209,7 @@ function Sidebar() {
 
 export function Shell({ children }: { children: React.ReactNode }) {
   useRosterFromFile();
+  useRenamesFromFile();
   useThemeSync();
   const path = usePathname();
   const focus = useFocusMode();

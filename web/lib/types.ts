@@ -24,6 +24,8 @@ export const EVENT_TYPES = [
   "duel",
   // 2026-10-19: offside, with the team that commits it.
   "offside",
+  // 2026-10-20: substitution; player_id leaves, player_in comes in.
+  "substitution",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -45,6 +47,7 @@ export const EVENT_LABELS: Record<EventType, string> = {
   cross: "Centro",
   duel: "Duelo",
   offside: "Fuera de lugar",
+  substitution: "Cambio",
 };
 
 // Keyboard shortcut for each event type in the tagging tool: a letter that recalls its Spanish name.
@@ -67,6 +70,7 @@ export const EVENT_KEYS: Record<EventType, string> = {
   cross: "c",
   duel: "d",
   offside: "q",
+  substitution: "h",
 };
 
 // Second datum of an event, by type. Same values as EVENT_OUTCOMES / EVENT_DETAILS in schema.py.
@@ -84,12 +88,16 @@ export const EVENT_DETAILS: Partial<Record<EventType, Record<string, string>>> =
   goal_kick: { short: "En corto", long: "En largo" },
   recovery: { forward: "Pase adelante", backward: "Pase atrás" },
   duel: { aerial: "Aéreo", ground: "En el suelo" },
+  foul: { yellow: "Amarilla", red: "Roja" },
+  shot: { saved: "Atajada" },
 };
 export const DETAIL_TITLES: Partial<Record<EventType, string>> = {
   corner: "Envío",
   goal_kick: "Salida",
   recovery: "Primer pase",
   duel: "Tipo",
+  foul: "Tarjeta",
+  shot: "Portera",
 };
 // Keys for the options of the last tagged event, in order.
 export const OUTCOME_KEYS = ["1", "2", "3"];
@@ -181,7 +189,16 @@ export interface Match {
   // Possession read from the followed ball, in seconds, kept when the report is built (the match list shows it without
   // reading the tracking files). Absent until the report of a match with the ball followed is opened.
   possession?: { own: number; opp: number; followed_s: number };
+  // Penalty shootout after a draw (lib/shootout.ts), in kick order. Absent: none.
+  shootout?: ShootoutKick[];
   is_demo?: boolean;
+}
+
+// One kick of a penalty shootout: not a match event (it comes after the match).
+export interface ShootoutKick {
+  team: "own" | "opp";
+  player_id: string | null;
+  result: "goal" | "saved" | "missed";
 }
 
 export interface MatchEvent {
@@ -201,6 +218,8 @@ export interface MatchEvent {
   detail?: string | null;
   note: string | null;
   // Where it ended (third tagging pass). Crosses and corners: where the ball landed, on the pitch.
+  // Substitutions: who comes in (player_id is who leaves). Absent or null in every other type.
+  player_in?: string | null;
   x_end?: number | null;
   y_end?: number | null;
   // Shots: where the ball crossed the goal line seen from the shooter, meters from the left post and height.
@@ -286,6 +305,10 @@ export interface AnchorPoint {
   landmark_id: string;
   px: number;
   py: number;
+  // Model position, for points that are not a landmark of the venue: a click on an arc or a line taken to the nearest
+  // point of its circle or line in the fit (ids `arc:...`, `ln:...`).
+  x_m?: number;
+  y_m?: number;
 }
 
 // Manual calibration of one frame. The homography is not stored: it is recomputed from the points.
@@ -303,6 +326,8 @@ export interface CalibAnchor {
   points: AnchorPoint[];
   // Lines of the pitch marked on the frame (two pixels each and the line of the model). Absent in older anchors.
   lines?: { line_id: string; a: [number, number]; b: [number, number] }[];
+  // Clicks along a circle of the pitch (centre circle, penalty arcs), fitted together with points and lines.
+  arcs?: { arc_id: "center" | "pen_l" | "pen_r"; pts: [number, number][] }[];
 }
 
 // Same values as the `tipo` column of segments.csv in the data contract.
@@ -355,6 +380,10 @@ export interface VenueSpec {
   goal_width_m?: number;
   goal_height_m?: number;
   // Extra drawings in venue meters (lib/venueFit.ts): straight lines (mowing lines, other paint) and mowing stripes.
+  // Extra straight lines for calibrating by lines (lib/calibLines.ts) where the paint is worn: parallel to the
+  // sidelines ("along", at y = at_m) or to the goal lines ("across", at x = at_m), in meters from the far-left corner
+  // of the soccer pitch. For instance, where the grass ends, 1 m beyond the far sideline: along, -1.
+  ref_lines?: { id: string; label: string; axis: "along" | "across"; at_m: number }[];
   layers?: (
     | { id: string; kind: "line"; color: string; pts: [number, number][] }
     | { id: string; kind: "stripes"; color: string; axis: "across" | "along"; width_m: number; offset_m: number }

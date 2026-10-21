@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Check } from "@phosphor-icons/react";
+import { ArrowLeft, Check, Plus, X } from "@phosphor-icons/react";
 import { useState } from "react";
 import { FitStage } from "@/components/venue/FitStage";
 import { ModelDrawing } from "@/components/venue/ModelDrawing";
@@ -50,6 +50,7 @@ export function VenueEditor({ initial, isNew, onSave, onCancel }: Props) {
     // Empty lists are left out, so a venue that never used them stays as it was.
     if (!out.layers?.length) delete out.layers;
     if (!out.checked?.length) delete out.checked;
+    if (!out.ref_lines?.length) delete out.ref_lines;
     onSave(out);
   };
 
@@ -146,6 +147,57 @@ export function VenueEditor({ initial, isNew, onSave, onCancel }: Props) {
             <div className="grid grid-cols-2 gap-2.5">
               <Num label="Ancho" value={spec.goal_width_m} step={0.01} optional placeholder="sin medir" onChange={(v) => set({ goal_width_m: v })} />
               <Num label="Alto" value={spec.goal_height_m} step={0.01} optional placeholder="sin medir" onChange={(v) => set({ goal_height_m: v })} />
+            </div>
+          </Panel>
+
+          <Panel title="Líneas extra para calibrar" aside="pintura gastada">
+            <p className="mb-2 text-[11px] text-pretty text-faint">
+              Rectas que se ven aunque la pintura no: dónde acaba el pasto, una reja. Distancia desde la esquina lejana izquierda; negativo es por fuera
+              (fin del pasto 1 m tras la banda lejana: paralela a las bandas, −1). Salen en Calibración › Líneas.
+            </p>
+            <div className="space-y-2">
+              {(spec.ref_lines ?? []).map((r) => {
+                const upd = (p: Partial<typeof r>) => set({ ref_lines: (spec.ref_lines ?? []).map((x) => (x.id === r.id ? { ...x, ...p } : x)) });
+                return (
+                  <div key={r.id} className="space-y-1.5 rounded-lg bg-bg/50 p-2">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        className="min-w-0 flex-1 rounded-[7px] border border-line-strong bg-transparent px-2 py-1 text-xs text-ink outline-none focus:border-accent"
+                        value={r.label}
+                        placeholder="Nombre (p. ej. fin del pasto lejano)"
+                        aria-label="Nombre de la línea"
+                        onChange={(e) => upd({ label: e.target.value })}
+                      />
+                      <button
+                        type="button"
+                        className="grid h-7 w-7 place-items-center rounded-md text-faint hover:text-danger"
+                        aria-label="Quitar la línea"
+                        onClick={() => set({ ref_lines: (spec.ref_lines ?? []).filter((x) => x.id !== r.id) })}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 items-end gap-2">
+                      <div className="seg flex w-full" role="group" aria-label="Orientación">
+                        <button type="button" className="seg-opt flex-1 !px-1 text-[11px]" aria-pressed={r.axis === "along"} onClick={() => upd({ axis: "along" })}>
+                          ∥ bandas
+                        </button>
+                        <button type="button" className="seg-opt flex-1 !px-1 text-[11px]" aria-pressed={r.axis === "across"} onClick={() => upd({ axis: "across" })}>
+                          ∥ fondo
+                        </button>
+                      </div>
+                      <Num label={r.axis === "along" ? "Desde la banda lejana" : "Desde el fondo izquierdo"} value={r.at_m} step={0.1} onChange={(v) => v !== undefined && upd({ at_m: v })} />
+                    </div>
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                className="btn !py-1 text-xs"
+                onClick={() => set({ ref_lines: [...(spec.ref_lines ?? []), { id: Math.random().toString(36).slice(2, 8), label: "Fin del pasto lejano", axis: "along", at_m: -1 }] })}
+              >
+                <Plus size={12} /> Añadir línea
+              </button>
             </div>
           </Panel>
 

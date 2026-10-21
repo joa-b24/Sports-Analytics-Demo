@@ -19,5 +19,8 @@ export function useThemeSync() {
     root.style.setProperty("--on-own", o.on);
     root.style.setProperty("--color-opp", r.value);
     root.style.setProperty("--on-opp", r.on);
+    // For the report printed on white paper (globals.css).
+    root.style.setProperty("--paper-own", o.paper);
+    root.style.setProperty("--paper-opp", r.paper);
   }, [theme, own, opp]);
 }

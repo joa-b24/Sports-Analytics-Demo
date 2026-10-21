@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from sportsan.tracking.propagate import (
+    anchor_frame,
     apply_h,
     blend,
     fit_homography,
@@ -146,3 +147,33 @@ def test_anchors_found_by_name_in_the_match_folder(tmp_path, monkeypatch):
     with pytest.raises(FileNotFoundError):
         find_anchors("anchors_m1_v9.json", tmp_path)
 
+
+
+def noisy_motions(n: int, drift: float) -> dict[int, np.ndarray]:
+    """Flujo óptico con un pequeño error sistemático en cada paso: encadenado, deriva."""
+    bias = np.array([[1 + drift, 0, 0.5], [0, 1, 0], [0, 0, 1]])
+    return {k: bias @ G for k, G in true_motions(n).items()}
+
+
+def test_el_emparejamiento_directo_no_deriva_y_el_flujo_tapa_los_huecos():
+    n = 60
+    motions = noisy_motions(n, 0.002)
+    # Directo exacto con cada ancla, salvo en un hueco (cuadros 25-35) donde no hubo coincidencias.
+    direct = {
+        a: {k: (np.linalg.inv(camera(k)) @ camera(a) if not 25 <= k <= 35 else None) for k in range(n + 1)}
+        for a in (0, n)
+    }
+    old = propagate({0: camera(0), n: camera(n)}, motions, 0, n, GRID, W, H_IMG)
+    new = propagate({0: camera(0), n: camera(n)}, motions, 0, n, GRID, W, H_IMG, direct)
+    worst_old = max(error_m(c.H, c.frame) for c in old)
+    worst_new = max(error_m(c.H, c.frame) for c in new if not 25 <= c.frame <= 35)
+    assert worst_new < 1e-6 < worst_old
+    # En el hueco sigue habiendo calibración (flujo desde el último directo), y con poco error.
+    assert all(c.H is not None for c in new)
+    assert max(error_m(c.H, c.frame) for c in new if 25 <= c.frame <= 35) < worst_old
+
+
+def test_el_cuadro_del_ancla_sale_de_su_tiempo():
+    assert anchor_frame({"frame": 23676, "t_video": 23676 / 29.97002997}, 30.0) == 23700
+    assert anchor_frame({"frame": 13350, "t_video": 445.0}, 30.0) == 13350
+    assert anchor_frame({"frame": 10}, 30.0) == 10

@@ -5,7 +5,7 @@ import type { SessionRow } from "./types";
 
 export const ACUTE_DAYS = 7;
 export const CHRONIC_DAYS = 28;
-// Usual reference band for the ratio. A guide for the staff, not a medical threshold.
+// Usual reference b nd for the ratio. A guide for the staff, not a medical threshold.
 export const SAFE_ACWR: [number, number] = [0.8, 1.3];
 
 // Pre-training questionnaire scales, as the staff's form defines them. `worseHigh`: a higher answer is a worse state.

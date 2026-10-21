@@ -4,6 +4,7 @@ import { useState } from "react";
 import { BinChart, CompareBars, EventTimeline, PartsDuo, RateDuo, ShotMap, StatTile, ZoneMap, type PartsRow } from "@/components/charts";
 import { PassStretchesCard } from "@/components/match/PassStretches";
 import { PassesCards } from "@/components/match/PassesCards";
+import { PlayersCompare } from "@/components/match/PlayersCompare";
 import { PositionsCards } from "@/components/match/PositionsCards";
 import { TeamShapeCard } from "@/components/match/TeamShape";
 import { COLORS } from "@/components/Pitch";
@@ -46,9 +47,11 @@ type Props = {
   videoIds?: string[];
   // The same events with their own video times, to place them in the measured positions.
   videoEvents?: MatchEvent[];
+  // Play stretches of each video, for what is read from the tracking (individual performance).
+  segmentsByVideo?: Record<string, Segment[]>;
 };
 
-export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v1"], videoEvents }: Props) {
+export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v1"], videoEvents, segmentsByVideo = {} }: Props) {
   const [zoneType, setZoneType] = useState<EventType>("recovery");
   const [zoneTeam, setZoneTeam] = useState<Side>("own");
   const [period, setPeriod] = useState<0 | 1 | 2>(0);
@@ -75,6 +78,9 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             etiquetado»; los de posiciones, abajo, salen de las partes corregidas.
           </p>
         </Card>
+        <Section title="Rendimiento individual" note="hasta 4 jugadoras, propias y rivales">
+          <PlayersCompare match={match} events={[]} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
+        </Section>
         <Section title="Pases y jugadoras" note="desde el tracking">
           <PassStretchesCard match={match} />
         </Section>
@@ -160,6 +166,19 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
           <StatTile label="Tiros" a={shotsOf(evs, "own").length} b={shotsOf(evs, "opp").length} aLabel={A} bLabel={B} />
           <StatTile label="Recuperaciones" a={a.recovery} b={b.recovery} aLabel={A} bLabel={B} />
           <StatTile label="Pérdidas" a={a.loss} b={b.loss} aLabel={A} bLabel={B} />
+          {/* Only when tagged: a zero would read as "none" when it was not noted. */}
+          {(() => {
+            const cards = (t: Side, c: string) => evs.filter((e) => e.type === "foul" && e.team === t && e.detail === c).length;
+            const saves = (shooter: Side) => evs.filter((e) => e.type === "shot" && e.team === shooter && e.detail === "saved").length;
+            return (
+              <>
+                {cards("own", "yellow") + cards("opp", "yellow") > 0 && <StatTile label="Amarillas" a={cards("own", "yellow")} b={cards("opp", "yellow")} aLabel={A} bLabel={B} />}
+                {cards("own", "red") + cards("opp", "red") > 0 && <StatTile label="Rojas" a={cards("own", "red")} b={cards("opp", "red")} aLabel={A} bLabel={B} />}
+                {a.offside + b.offside > 0 && <StatTile label="Fueras de lugar" a={a.offside} b={b.offside} aLabel={A} bLabel={B} />}
+                {saves("own") + saves("opp") > 0 && <StatTile label="Atajadas" a={saves("opp")} b={saves("own")} aLabel={A} bLabel={B} />}
+              </>
+            );
+          })()}
         </Reveal>
       </div>
 
@@ -310,6 +329,10 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             <CompareBars aLabel={A} bLabel={B} rows={EVENT_TYPES.map((t) => ({ label: EVENT_LABELS[t], a: a[t], b: b[t] }))} />
           </Card>
         </div>
+      </Section>
+
+      <Section title="Rendimiento individual" note="hasta 4 jugadoras, propias y rivales">
+        <PlayersCompare match={match} events={evs} videoIds={videoIds} segmentsByVideo={segmentsByVideo} periodNote={period !== 0} />
       </Section>
 
       <Section title="Pases y jugadoras" note="pases desde el tracking; eventos por jugadora">

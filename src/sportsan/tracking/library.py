@@ -149,11 +149,30 @@ class Library:
         return Library(d["frames"], d["H"], d["offsets"], d["xy"], d["des"], meta)
 
 
-def features(gray_small, scale: float, max_features: int = 2500) -> tuple[np.ndarray, np.ndarray]:
-    """Puntos característicos de un cuadro reducido; las coordenadas se devuelven en píxeles del video original."""
+def mask_image(rects: list, shape: tuple, scale: float, pad: float = 8.0) -> np.ndarray | None:
+    """Máscara (255 = se mira, 0 = no) del tamaño de un cuadro reducido, con los rectángulos de `mask` de match.yaml (en
+    píxeles del video original) tapados y un margen. None sin rectángulos."""
+    if not rects:
+        return None
+    m = np.full(shape[:2], 255, np.uint8)
+    for x0, y0, x1, y1 in rects:
+        r0, r1 = max(0, int((y0 - pad) * scale)), int((y1 + pad) * scale) + 1
+        c0, c1 = max(0, int((x0 - pad) * scale)), int((x1 + pad) * scale) + 1
+        m[r0:r1, c0:c1] = 0
+    return m
+
+
+def in_mask(rects: list, x: float, y: float) -> bool:
+    """¿El punto (píxeles del video original) cae en algún rectángulo tapado?"""
+    return any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in rects or [])
+
+
+def features(gray_small, scale: float, max_features: int = 2500, mask: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Puntos característicos de un cuadro reducido; las coordenadas se devuelven en píxeles del video original.
+    `mask`: zonas que no se miran (mask_image)."""
     import cv2
 
-    kp, des = cv2.SIFT_create(nfeatures=max_features).detectAndCompute(gray_small, None)
+    kp, des = cv2.SIFT_create(nfeatures=max_features).detectAndCompute(gray_small, mask)
     if des is None or len(kp) == 0:
         return np.empty((0, 2), np.float32), np.empty((0, 128), np.uint8)
     xy = np.float32([k.pt for k in kp]) / scale
@@ -211,6 +230,10 @@ class Location:
     spread_m: float | None
 
 
+# Margen alrededor de la cancha (m) para los rasgos que cuentan en el ajuste de varias referencias.
+PITCH_MARGIN_M = 10.0
+
+
 def localize(xy_q: np.ndarray, des_q: np.ndarray, lib: Library, hint: int | None = None, pool: int = 3) -> Location:
     """Calibración de un cuadro según la biblioteca.
 
@@ -244,19 +267,30 @@ def localize(xy_q: np.ndarray, des_q: np.ndarray, lib: Library, hint: int | None
     if len(used) == 1:
         return Location(H_best, best.inliers, best.index, 1, None)
 
+    # Solo los rasgos que caen sobre la cancha (con margen): los de gradas, edificios y cielo, llevados al suelo, quedan
+    # cerca del horizonte o detrás de la cámara, a cientos de metros, y desequilibran el ajuste y la comparación.
+    venue = lib.meta.get("venue") or {}
+    L, W = float(venue.get("length_m", 105.0)), float(venue.get("width_m", 68.0))
+
+    def on_pitch(m: np.ndarray) -> np.ndarray:
+        return np.isfinite(m).all(axis=1) & (m[:, 0] > -PITCH_MARGIN_M) & (m[:, 0] < L + PITCH_MARGIN_M) & (m[:, 1] > -PITCH_MARGIN_M) & (m[:, 1] < W + PITCH_MARGIN_M)
+
     src = np.concatenate([f.src for f in used]).astype(np.float64)
     meters = np.concatenate([apply_h(lib.H[f.index], f.dst) for f in used])
-    ok = np.isfinite(meters).all(axis=1)
+    ok = on_pitch(meters)
     H, _ = cv2.findHomography(src[ok], meters[ok], cv2.RANSAC, 1.0) if ok.sum() >= MIN_INLIERS else (None, None)
     if H is None:
         return Location(H_best, best.inliers, best.index, 1, None)
     H = H / H[2, 2]
-    # Comparación sobre los propios puntos emparejados (dentro de la imagen, donde las dos respuestas están apoyadas).
-    spread = np.linalg.norm(apply_h(H, best.src) - apply_h(H_best, best.src), axis=1)
+    # Comparación sobre los propios puntos emparejados que caen en la cancha, donde las dos respuestas están apoyadas.
+    near = best.src[on_pitch(apply_h(H_best, best.src))]
+    if len(near) == 0:
+        return Location(H, best.inliers, best.index, len(used), None)
+    spread = np.linalg.norm(apply_h(H, near) - apply_h(H_best, near), axis=1)
     return Location(H, best.inliers, best.index, len(used), float(np.nanmean(spread)) if np.isfinite(spread).any() else None)
 
 
-def build_library(video: str | Path, track: dict, min_shift_px: float = 150.0, work_width: int = 960, progress=None) -> Library:
+def build_library(video: str | Path, track: dict, min_shift_px: float = 150.0, work_width: int = 960, progress=None, mask: list | None = None) -> Library:
     """Biblioteca a partir de un tramo calibrado (el JSON de `propagate`)."""
     import cv2
 
@@ -274,7 +308,7 @@ def build_library(video: str | Path, track: dict, min_shift_px: float = 150.0, w
         gray = read_gray(cap, frame, scale)
         if gray is None:
             continue
-        xy, des = features(gray, scale)
+        xy, des = features(gray, scale, mask=mask_image(mask or [], gray.shape, scale))
         if len(xy) < MIN_INLIERS:
             continue
         frames.append(frame)
@@ -296,6 +330,8 @@ def build_library(video: str | Path, track: dict, min_shift_px: float = 150.0, w
         "work_width": work_width,
         "venue": track.get("venue") or {},
         "source_frames": [int(track["start_frame"]), int(track["end_frame"])],
+        # Lo que no se mira (marcador, logo): quien ubique cuadros con esta biblioteca lo tapa igual.
+        "mask": [list(map(float, r)) for r in (mask or [])],
     }
     return Library(np.array(frames), np.array(Hs), np.array(offsets), np.concatenate(xys), np.concatenate(dess), meta)
 
@@ -314,7 +350,7 @@ def auto_anchors(video: str | Path, lib: Library, frames: list[int], progress=No
     for n, frame in enumerate(frames):
         gray = read_gray(cap, frame, scale)
         if gray is not None:
-            loc = localize(*features(gray, scale), lib, hint)
+            loc = localize(*features(gray, scale, mask=mask_image(lib.meta.get("mask") or [], gray.shape, scale)), lib, hint)
             support[frame] = loc
             if loc.H is not None:
                 anchors[frame] = loc.H
@@ -327,20 +363,108 @@ def auto_anchors(video: str | Path, lib: Library, frames: list[int], progress=No
 
 # ---------------------------------------------------------------- CLI
 
+def track_from_anchors(data: dict, fps: float, min_points: int = 6) -> tuple[dict, list[str]]:
+    """Un "tramo calibrado" hecho solo de las anclas (sin propagar): cada ancla con `min_points` o más puntos es una
+    referencia. Sirve cuando las líneas solo se ven en algunos momentos y el fondo (edificios, reja) basta para ubicar
+    el resto. Devuelve el tramo y avisos de las anclas que se quedan fuera."""
+    from .propagate import anchor_arrays, anchor_frame, fit_homography
+
+    frames, notes = [], []
+    w = h = None
+    for a in sorted(data["anchors"], key=lambda a: a.get("t_video", a["frame"])):
+        px, m = anchor_arrays(a)
+        f = anchor_frame(a, fps)
+        if len(px) < min_points:
+            notes.append(f"cuadro {f}: {len(px)} puntos (hacen falta {min_points}), fuera")
+            continue
+        H = fit_homography(px, m)
+        if H is None:
+            notes.append(f"cuadro {f}: puntos alineados, fuera")
+            continue
+        frames.append({"frame": f, "H": [float(v) for v in H.reshape(-1)], "source": "anchor"})
+        w, h = a.get("image_w", w), a.get("image_h", h)
+    track = {"kind": "calib_track", "match_id": data["match_id"], "video_id": data["video_id"], "fps": fps,
+             "image_w": w, "image_h": h, "venue": data.get("venue") or {}, "frames": frames,
+             "start_frame": frames[0]["frame"] if frames else 0, "end_frame": frames[-1]["frame"] if frames else 0}
+    return track, notes
+
+
 def _cmd_build(args) -> None:
     from ..config import load_config, project_root
 
-    track = json.loads(Path(args.track).read_text(encoding="utf-8"))
-    if track.get("kind") != "calib_track":
-        raise SystemExit(f"{args.track} no es una calibración propagada (se espera el JSON de sportsan.tracking.propagate).")
-    cfg = load_config(match=args.match or track["match_id"], video=args.video or track["video_id"])
+    if bool(args.track) == bool(args.anchors):
+        raise SystemExit("Da --track (calib_*.json de propagate) o --anchors (anchors_*.json de la app), uno de los dos.")
+    if args.anchors:
+        from .propagate import read_anchors
+
+        data = read_anchors(args.anchors)
+        cfg = load_config(match=args.match or data["match_id"], video=args.video or data["video_id"])
+        track, notes = track_from_anchors(data, float(cfg["video_fps"]), args.min_points)
+        for n in notes:
+            print(f"  {n}")
+        if not track["frames"]:
+            raise SystemExit("Ningún ancla tiene suficientes puntos para ser referencia.")
+        min_shift = 0.0  # todas las anclas buenas cuentan
+    else:
+        track = json.loads(Path(args.track).read_text(encoding="utf-8"))
+        if track.get("kind") != "calib_track":
+            raise SystemExit(f"{args.track} no es una calibración propagada (se espera el JSON de sportsan.tracking.propagate).")
+        cfg = load_config(match=args.match or track["match_id"], video=args.video or track["video_id"])
+        min_shift = args.min_shift_px
     root = project_root()
-    lib = build_library(root / cfg["paths"]["raw_video"], track, args.min_shift_px, progress=lambda i, t: print(f"  referencia {i}/{t}", end="\r"))
+    if cfg.get("mask"):
+        print(f"  tapado (mask de match.yaml): {len(cfg['mask'])} rectángulo(s)")
+    lib = build_library(root / cfg["paths"]["raw_video"], track, min_shift, mask=cfg.get("mask"), progress=lambda i, t: print(f"  referencia {i}/{t}", end="\r"))
     out = Path(args.out) if args.out else root / cfg["paths"]["tracking_dir"] / f"library_{cfg['video_id']}.npz"
     out.parent.mkdir(parents=True, exist_ok=True)
     lib.save(out)
     print(f"\nBiblioteca escrita: {out}")
     print(f"  {len(lib.frames)} referencias de los cuadros {lib.meta['source_frames'][0]} a {lib.meta['source_frames'][1]}, {len(lib.xy)} puntos")
+
+
+def locate_stretch(cfg: dict, lib: Library, start: int, end: int, every_s: float, max_error: float, out: Path, quiet: bool = False) -> dict:
+    """Calibra un tramo con la biblioteca, escribe su calib_*.json (para revisarlo en Calibración › Verificar) y devuelve
+    sus medidas: anclas ubicadas, descartadas, coherencia entre vecinas y entre referencias, cuadros sin calibración."""
+    from ..config import project_root
+
+    say = (lambda *a, **k: None) if quiet else print
+    root = project_root()
+    fps = float(cfg["video_fps"])
+    video = root / cfg["paths"]["raw_video"]
+    w, h = lib.meta["image_w"], lib.meta["image_h"]
+    venue = lib.meta.get("venue") or {}
+    grid = venue_grid(float(venue.get("length_m", 105)), float(venue.get("width_m", 68)))
+    step = max(1, round(every_s * fps))
+    wanted = sorted(set(range(start, end + 1, step)) | {end})
+    say(f"{cfg['match_id']} {cfg['video_id']}: cuadros {start} a {end} ({(end - start) / fps:.1f} s), {len(wanted)} anclas automáticas a intentar")
+    found, support = auto_anchors(video, lib, wanted, progress=None if quiet else (lambda i, t: print(f"  ubicando {i}/{t}", end="\r")))
+    stats = {"start": start, "end": end, "wanted": len(wanted), "found": len(found), "dropped": [], "neighbours_m": None, "worst_m": None,
+             "refs_m": None, "missing": None, "out": str(out)}
+    if not found:
+        return stats
+    motions, _ = video_motions(video, start, end, lib.meta["work_width"], mask=lib.meta.get("mask"))
+    kept, dropped = reject_inconsistent(found, motions, grid, w, h, max_error)
+    calib = propagate(kept, motions, start, end, grid, w, h)
+    calib = [FrameCalib(c.frame, c.H, "library" if c.frame in kept else c.source, c.disagreement_m) for c in calib]
+    errors = anchor_consistency(kept, motions, grid, w, h)
+    check = [
+        {"frame": f, "from": "library", "error_mean_m": e, "error_max_m": e, "inliers": support[f].inliers, "ref_spread_m": support[f].spread_m}
+        for f, e in sorted(errors.items())
+    ]
+    meta = {"match_id": cfg["match_id"], "video_id": cfg["video_id"], "fps": fps, "image_w": w, "image_h": h, "venue": venue}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(track_to_json(meta, calib, check)), encoding="utf-8")
+    measured = [e for e in errors.values() if e is not None]
+    spreads = [support[f].spread_m for f in kept if support[f].spread_m is not None]
+    stats.update(
+        dropped=dropped,
+        neighbours_m=float(np.mean(measured)) if measured else None,
+        worst_m=float(np.max(measured)) if measured else None,
+        refs_m=float(np.mean(spreads)) if spreads else None,
+        missing=sum(1 for c in calib if c.H is None),
+        frames=len(calib),
+    )
+    return stats
 
 
 def _cmd_locate(args) -> None:
@@ -350,58 +474,83 @@ def _cmd_locate(args) -> None:
     cfg = load_config(match=args.match, video=args.video)
     root = project_root()
     fps = float(cfg["video_fps"])
-    video = root / cfg["paths"]["raw_video"]
     lib = Library.load(args.library or root / cfg["paths"]["tracking_dir"] / f"library_{cfg['video_id']}.npz")
-    w, h = lib.meta["image_w"], lib.meta["image_h"]
-    venue = lib.meta.get("venue") or {}
-    grid = venue_grid(float(venue.get("length_m", 105)), float(venue.get("width_m", 68)))
-
     start, end = round(parse_hms(args.start) * fps), round(parse_hms(args.end) * fps)
     if end <= start:
         raise SystemExit("El tramo está vacío.")
-    step = max(1, round(args.every * fps))
-    wanted = sorted(set(range(start, end + 1, step)) | {end})
-    print(f"{cfg['match_id']} {cfg['video_id']}: cuadros {start} a {end} ({(end - start) / fps:.1f} s), {len(wanted)} anclas automáticas a intentar")
-
-    found, support = auto_anchors(video, lib, wanted, progress=lambda i, t: print(f"  ubicando {i}/{t}", end="\r"))
-    print(f"\n  ubicadas con la biblioteca: {len(found)} de {len(wanted)}")
-    if not found:
-        raise SystemExit("La biblioteca no reconoce ningún cuadro del tramo: el encuadre no se parece a nada del barrido.")
-    motions, _ = video_motions(video, start, end, lib.meta["work_width"], progress=lambda i, t: print(f"  movimiento {i}/{t}", end="\r"))
-    kept, dropped = reject_inconsistent(found, motions, grid, w, h, args.max_error)
-    calib = propagate(kept, motions, start, end, grid, w, h)
-    calib = [FrameCalib(c.frame, c.H, "library" if c.frame in kept else c.source, c.disagreement_m) for c in calib]
-    errors = anchor_consistency(kept, motions, grid, w, h)
-    check = [
-        {"frame": f, "from": "library", "error_mean_m": e, "error_max_m": e, "inliers": support[f].inliers, "ref_spread_m": support[f].spread_m}
-        for f, e in sorted(errors.items())
-    ]
-
-    meta = {"match_id": cfg["match_id"], "video_id": cfg["video_id"], "fps": fps, "image_w": w, "image_h": h, "venue": venue}
     out = Path(args.out) if args.out else root / cfg["paths"]["tracking_dir"] / f"calib_{cfg['video_id']}_{start}_{end}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(track_to_json(meta, calib, check)), encoding="utf-8")
+    st = locate_stretch(cfg, lib, start, end, args.every, args.max_error, out)
+    print(f"\n  ubicadas con la biblioteca: {st['found']} de {st['wanted']}")
+    if not st["found"]:
+        raise SystemExit("La biblioteca no reconoce ningún cuadro del tramo: el encuadre no se parece a nada del barrido.")
+    print(f"Escrito: {out}")
+    if st["dropped"]:
+        print(f"  descartadas por no cuadrar con sus vecinas (> {args.max_error} m): cuadros {st['dropped']}")
+    if st["neighbours_m"] is not None:
+        print(f"  anclas automáticas contra sus vecinas: media {st['neighbours_m']:.2f} m, peor {st['worst_m']:.2f} m")
+    if st["refs_m"] is not None:
+        print(f"  diferencia entre referencias de la biblioteca: media {st['refs_m']:.2f} m")
+    if st["missing"]:
+        print(f"  cuadros sin calibración: {st['missing']} de {st['frames']}")
+    print("  Revisa el tramo en la app (Calibración › Verificar › cargar el calib_…): la rejilla punteada tiene que calzar con las líneas.")
 
-    print(f"\nEscrito: {out}")
-    if dropped:
-        print(f"  descartadas por no cuadrar con sus vecinas (> {args.max_error} m): cuadros {dropped}")
-    measured = [e for e in errors.values() if e is not None]
-    if measured:
-        print(f"  anclas automáticas contra sus vecinas: media {np.mean(measured):.2f} m, peor {np.max(measured):.2f} m")
-    spreads = [support[f].spread_m for f in kept if support[f].spread_m is not None]
-    if spreads:
-        print(f"  diferencia entre referencias de la biblioteca: media {np.mean(spreads):.2f} m, peor {np.max(spreads):.2f} m")
-    missing = sum(1 for c in calib if c.H is None)
-    if missing:
-        print(f"  cuadros sin calibración: {missing} de {len(calib)}")
-    print("  Revisa el tramo en la app (Calibración -> Cargar propagación): la rejilla punteada tiene que calzar con las líneas.")
+
+def _cmd_check(args) -> None:
+    """Antes de procesar todo: varios tramos repartidos por los tramos de juego, cada uno ubicado con la biblioteca, con
+    una tabla de cómo salió y sus calib_*.json en tracking/revision/ para mirarlos en la app."""
+    from ..config import load_config, project_root
+    from ..timebase import load_segments
+
+    cfg = load_config(match=args.match, video=args.video)
+    root = project_root()
+    fps = float(cfg["video_fps"])
+    lib = Library.load(args.library or root / cfg["paths"]["tracking_dir"] / f"library_{cfg['video_id']}.npz")
+    seg_file = root / cfg["paths"]["segments_csv"]
+    if not seg_file.exists():
+        raise SystemExit("Hace falta segments.csv con los tramos de juego (pestaña Tramos de la app).")
+    segs = load_segments(seg_file, cfg["video_id"])
+    play = [(float(r.start_s), float(r.end_s)) for r in segs[segs["tipo"] == "juego"].itertuples()]
+    if not play:
+        raise SystemExit(f"segments.csv no tiene tramos de juego para {cfg['video_id']}.")
+    total = sum(b - a for a, b in play)
+    # Puntos repartidos sobre el tiempo de juego (no sobre el video): el centro de cada uno es el centro de un tramo.
+    picks = []
+    for k in range(args.samples):
+        t = (k + 0.5) * total / args.samples
+        for a, b in play:
+            if t <= b - a:
+                mid = a + t
+                lo, hi = max(a, mid - args.seconds / 2), min(b, mid + args.seconds / 2)
+                picks.append((round(lo * fps), round(hi * fps)))
+                break
+            t -= b - a
+    out_dir = root / cfg["paths"]["tracking_dir"] / "revision"
+    print(f"{cfg['match_id']} {cfg['video_id']}: {len(picks)} tramos de {args.seconds:g} s repartidos por {total / 60:.0f} min de juego")
+    rows = []
+    for n, (a, b) in enumerate(picks, 1):
+        print(f"  tramo {n}/{len(picks)}…", end="\r")
+        rows.append(locate_stretch(cfg, lib, a, b, args.every, args.max_error, out_dir / f"calib_{cfg['video_id']}_{a}_{b}.json", quiet=True))
+    fmt_t = lambda f: f"{int(f / fps // 60)}:{int(f / fps % 60):02d}"
+    print("\n\n  tramo        ubicadas  descartadas  vecinas (media/peor)  referencias  sin calibrar")
+    bad = 0
+    for r in rows:
+        nb = "      -" if r["neighbours_m"] is None else f"{r['neighbours_m']:5.2f} / {r['worst_m']:4.2f} m"
+        rf = "    -" if r["refs_m"] is None else f"{r['refs_m']:5.2f} m"
+        miss = "-" if r["missing"] is None else f"{r['missing']}/{r.get('frames', 0)}"
+        ok = r["found"] and r["neighbours_m"] is not None and r["neighbours_m"] < 1.0 and (r["refs_m"] or 0) < 1.5 and not r["missing"]
+        bad += not ok
+        print(f"  {fmt_t(r['start'])}-{fmt_t(r['end'])}  {r['found']:>3}/{r['wanted']:<3}  {len(r['dropped']):>6}       {nb:>18}   {rf:>10}   {miss:>7}  {'bien' if ok else 'REVISAR'}")
+    print(f"\n  Archivos en {out_dir}: en la app, Calibración › Verificar › cargar cada calib_… y mirar que la rejilla calce.")
+    print("  " + ("Todo dentro de lo esperado: se puede procesar." if not bad else f"{bad} tramo(s) para revisar: añade un ancla cerca de ellos y reconstruye la biblioteca."))
 
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Biblioteca de calibración a partir de un barrido calibrado.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="construye la biblioteca desde un tramo calibrado")
-    b.add_argument("--track", required=True, help="calib_*.json escrito por sportsan.tracking.propagate")
+    b.add_argument("--track", help="calib_*.json escrito por sportsan.tracking.propagate")
+    b.add_argument("--anchors", help="anchors_*.json de la app: cada ancla buena es una referencia, sin propagar (líneas que solo se ven a ratos)")
+    b.add_argument("--min-points", type=int, default=6, help="con --anchors: puntos mínimos de un ancla para ser referencia")
     b.add_argument("--match")
     b.add_argument("--video")
     b.add_argument("--out")
@@ -417,6 +566,15 @@ def main(argv: list[str] | None = None) -> None:
     loc.add_argument("--max-error", type=float, default=MAX_CONSISTENCY_M, help="metros a partir de los que un ancla automática se descarta")
     loc.add_argument("--out")
     loc.set_defaults(func=_cmd_locate)
+    chk = sub.add_parser("check", help="antes de procesar: varios tramos repartidos por el partido, con una tabla y sus calib_ para revisar")
+    chk.add_argument("--match")
+    chk.add_argument("--video")
+    chk.add_argument("--library")
+    chk.add_argument("--samples", type=int, default=8, help="cuántos tramos")
+    chk.add_argument("--seconds", type=float, default=10.0, help="duración de cada tramo")
+    chk.add_argument("--every", type=float, default=1.0, help="segundos entre anclas automáticas")
+    chk.add_argument("--max-error", type=float, default=MAX_CONSISTENCY_M)
+    chk.set_defaults(func=_cmd_check)
     args = ap.parse_args(argv)
     args.func(args)
 

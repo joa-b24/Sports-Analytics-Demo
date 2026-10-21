@@ -156,3 +156,21 @@ test("eventsFromCsv keeps valid rows, skips the rest and never fills gaps", () =
   assert.deepEqual([out.events[0].t_video, out.events[0].period, out.events[0].video_id, out.events[0].x], [12.5, 2, "v2", 90]);
   assert.deepEqual([out.events[1].team, out.events[1].x, out.events[1].y, out.events[1].video_id], ["unk", null, null, "v1"]);
 });
+
+test("el CSV de eventos lleva quién entra en los cambios, y solo en ellos", async () => {
+  const { eventsFromCsv, EVENT_COLUMNS } = await import("./uploads.ts");
+  assert.ok(EVENT_COLUMNS.includes("player_in"));
+  let n = 0;
+  const r = eventsFromCsv(
+    [
+      { t_video: "10", type: "substitution", team: "own", player_id: "Sale", player_in: "Entra" },
+      { t_video: "20", type: "foul", team: "opp", player_in: "Nadie", detail: "yellow" },
+    ],
+    "m",
+    () => `e${n++}`,
+  );
+  assert.equal(r.events[0].player_in, "Entra");
+  assert.equal(r.events[1].player_in, undefined);
+  assert.equal(r.playerInDropped, 1);
+  assert.equal(r.events[1].detail, "yellow");
+});

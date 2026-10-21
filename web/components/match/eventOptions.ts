@@ -1,6 +1,7 @@
 import { COLORS } from "@/components/Pitch";
 import type { SelectOption } from "@/components/Select";
-import { EVENT_DETAILS, EVENT_KEYS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
+import { detailsFor } from "@/lib/tagging";
+import { EVENT_KEYS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
 
 // The options of the drop-downs of the tagging, in one place: type (with its key), result and detail of a type, team.
 
@@ -11,8 +12,7 @@ export const TYPE_OPTIONS: SelectOption<EventType>[] = EVENT_TYPES.map((t) => ({
 export const outcomeOptions = (type: EventType): SelectOption<string>[] =>
   Object.entries(EVENT_OUTCOMES[type] ?? {}).map(([value, label]) => ({ value, label }));
 
-export const detailOptions = (type: EventType): SelectOption<string>[] =>
-  Object.entries(EVENT_DETAILS[type] ?? {}).map(([value, label]) => ({ value, label }));
+export const detailOptions = (e: Pick<MatchEvent, "type" | "outcome">): SelectOption<string>[] => detailsFor(e).map(([value, label]) => ({ value, label }));
 
 export const teamOptions = (match: Match): SelectOption<"own" | "opp">[] => [
   { value: "own", label: match.focus_team, color: COLORS.own },

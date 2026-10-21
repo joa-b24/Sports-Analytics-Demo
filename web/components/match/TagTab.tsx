@@ -1,5 +1,6 @@
 "use client";
 
+import { detailsFor, outcomePatch } from "@/lib/tagging";
 import { FilmSlate, Keyboard, Warning, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -13,7 +14,7 @@ import { partFor, positionsAt } from "@/lib/positions";
 import type { Segment } from "@/lib/segments";
 import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
 import { ACTIVE_S, NO_FILTER, activeAt, duplicatesOf, eventsFor, knownPlayers, missingEnd, missingReview, type EventFilter, type Pass } from "@/lib/tagging";
-import { DETAIL_KEYS, DETAIL_TITLES, EVENT_DETAILS, EVENT_KEYS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, OUTCOME_KEYS, type EventType, type Match, type MatchEvent } from "@/lib/types";
+import { DETAIL_KEYS, DETAIL_TITLES, EVENT_KEYS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, OUTCOME_KEYS, type EventType, type Match, type MatchEvent } from "@/lib/types";
 import { useScreenBoxes } from "@/lib/videoPeople";
 import { EventsCompact, EventsTable } from "./EventsTable";
 import { teamColor } from "./eventOptions";
@@ -130,14 +131,14 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
 
   const last = events.find((e) => e.event_id === lastId) ?? null;
   const lastOutcomes = last ? Object.entries(EVENT_OUTCOMES[last.type] ?? {}) : [];
-  const lastDetails = last ? Object.entries(EVENT_DETAILS[last.type] ?? {}) : [];
+  const lastDetails = last ? detailsFor(last) : [];
   // 1 2 3 set the result of the last event and 7 8 9 its detail; pressing the same one again clears it.
   const completeByKey = (key: string): boolean => {
     if (!last) return false;
     const o = OUTCOME_KEYS.indexOf(key);
     const d = DETAIL_KEYS.indexOf(key);
     if (o >= 0 && lastOutcomes[o]) {
-      update(last.event_id, { outcome: last.outcome === lastOutcomes[o][0] ? null : lastOutcomes[o][0] });
+      update(last.event_id, outcomePatch(last, last.outcome === lastOutcomes[o][0] ? null : lastOutcomes[o][0]));
       return true;
     }
     if (d >= 0 && lastDetails[d]) {

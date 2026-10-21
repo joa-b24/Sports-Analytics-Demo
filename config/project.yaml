@@ -1,5 +1,5 @@
 # Configuración global. Lo propio de cada partido está en matches/<match_id>/match.yaml.
-default_match: partido_2026_09_25   # partido que usan los comandos si no se pasa --match
+default_match: 2026_09_25_tec_ccm_vs_anahuac   # partido que usan los comandos si no se pasa --match
 
 # Cancha normalizada de la app: todas las posiciones se guardan en este sistema.
 # Las medidas reales de cada sede van en el match.yaml del partido.

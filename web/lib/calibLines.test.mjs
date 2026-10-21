@@ -53,3 +53,16 @@ test("las paralelas no dan punto y las ids de las anclas se resuelven con sus l�
   const map = landmarksWith(soccer, lines);
   assert.ok(map.has(`${IX}s_half+s_side_f`) && map.has("sc_c"));
 });
+
+test("las líneas extra de la sede (borde del pasto) entran como líneas y cruzan con las de la cancha", () => {
+  const v = buildVenue({ ...soccer.spec, ref_lines: [{ id: "pasto", label: "Fin del pasto lejano", axis: "along", at_m: -1 }] });
+  const l = namedLines(v).find((x) => x.id === "r_pasto");
+  assert.equal(l.label, "Fin del pasto lejano");
+  assert.equal(l.a[1], -1);
+  assert.equal(l.exact, false);
+  const pts = linePoints(v, [
+    { line_id: "r_pasto", a: [0, 100], b: [100, 100] },
+    { line_id: "s_half", a: [50, 0], b: [50, 300] },
+  ]);
+  assert.deepEqual([pts[0].landmark.x, pts[0].landmark.y], [50, -1]);
+});

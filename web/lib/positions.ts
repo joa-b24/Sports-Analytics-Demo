@@ -4,6 +4,7 @@
 // Everything here only counts what the camera saw: a player out of frame is not absent, just not seen. Positions
 // filled inside short holes ("interpolated") are left out of the counts; they are not measurements.
 import { boxTeamOf, fileTeamRefs, type TracksFile } from "./tracks.ts";
+import { viewPolygon } from "./parts.ts";
 import type { Segment } from "./segments.ts";
 import { laneThirdOf } from "./stats.ts";
 import { PITCH, type MatchEvent } from "./types.ts";
@@ -29,7 +30,9 @@ export interface FixedFile {
   venue?: { length_m: number; width_m: number } | null;
   people: { id: number; team: FixedTeam; player_id: string | null; tracks: number[] }[];
   ball: { frame: number; x: number; y: number; source: string }[];
-  frames: { frame: number; positions: FixedPosition[] }[];
+  // `view`: what the camera saw in that frame, as a polygon of the normalised pitch (parts.ts viewPolygon). Absent in
+  // files saved before 2026-10-20.
+  frames: { frame: number; positions: FixedPosition[]; view?: [number, number][] }[];
 }
 
 export const fixedName = (videoId: string) => new RegExp(`^tracks_fixed_${videoId}_\\d+_\\d+\\.json$`);
@@ -53,6 +56,7 @@ export function autoFixed(t: TracksFile): FixedFile {
   const teamOf = new Map<number, FixedTeam>();
   const frames = t.frames.map((fr) => ({
     frame: fr.frame,
+    ...((v) => (v ? { view: v } : {}))(viewPolygon(t, fr.H)),
     positions: fr.boxes.flatMap((b) => {
       if (!b[11] || b[9] === null || b[10] === null) return [];
       const team = boxTeamOf(b, refs);
@@ -321,7 +325,7 @@ export const CONFIRM_S = 2;
 export type PossessionState = "own" | "opp" | "unassigned";
 type Side = "own" | "opp";
 
-const inStretches = (play: Segment[] | null, t: number) => !play || play.some((g) => g.tipo === "juego" && g.end !== null && t >= g.start && t < g.end);
+export const inStretches = (play: Segment[] | null, t: number) => !play || play.some((g) => g.tipo === "juego" && g.end !== null && t >= g.start && t < g.end);
 
 // Who has the ball in each cell of followed ball, inside the closed play stretches (all of it when `play` is null).
 // A team keeps the ball from one of its touches until a touch of the other team, for at most PASS_MAX_S without a new
@@ -662,7 +666,7 @@ export interface Dot {
 
 // Measured positions at a moment of the video (t_video), joined linearly between the two processed frames around
 // it, with the analysed team attacking right. Ball too when it is known there. Null outside the part.
-export function positionsAt(o: Oriented, t: number): { players: Dot[]; ball: [number, number] | null } | null {
+export function positionsAt(o: Oriented, t: number): { players: Dot[]; ball: [number, number] | null; view: [number, number][] | null } | null {
   const f = o.file;
   const at = t * f.fps;
   if (at < f.start_frame || at > f.end_frame || f.frames.length === 0) return null;
@@ -683,7 +687,9 @@ export function positionsAt(o: Oriented, t: number): { players: Dot[]; ball: [nu
   const ba = f.ball.find((p) => p.frame === a.frame);
   const bb = f.ball.find((p) => p.frame === b.frame) ?? ba;
   const ball = ba && bb ? orient(o, ba.x + (bb.x - ba.x) * w, ba.y + (bb.y - ba.y) * w) : null;
-  return { players, ball };
+  const near = w < 0.5 ? a : b;
+  const view = near.view ? near.view.map(([x, y]) => orient(o, x, y)) : null;
+  return { players, ball, view };
 }
 
 // The part that covers a stretch of a video, if any.

@@ -64,6 +64,13 @@ export function namedLines(venue: Venue): NamedLine[] {
     const f = g(`yl${k}_fs`);
     if (f) add(`f_yl${k}`, f.label.replace(/ · banda lejana$/, ""), "football", f, g(`yl${k}_ns`));
   }
+  // Lines of the venue's own (where the grass ends, a fence...), estimated by eye: to be checked.
+  const b = venue.bounds;
+  for (const r of venue.spec.ref_lines ?? []) {
+    const a: Pt = r.axis === "along" ? [b.x0, r.at_m] : [r.at_m, b.y0];
+    const z: Pt = r.axis === "along" ? [b.x1, r.at_m] : [r.at_m, b.y1];
+    out.push({ id: `r_${r.id}`, label: r.label || "Línea extra", family: "soccer", a, b: z, exact: false });
+  }
   return out;
 }
 

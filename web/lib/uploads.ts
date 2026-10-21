@@ -218,7 +218,7 @@ export function formatBytes(n: number): string {
 }
 
 // Columns of the events CSV (docs/data_contract.md), in the order they are exported.
-export const EVENT_COLUMNS = ["event_id", "match_id", "video_id", "t_video", "period", "type", "team", "player_id", "x", "y", "outcome", "detail", "note", "x_end", "y_end", "goal_y", "goal_z"];
+export const EVENT_COLUMNS = ["event_id", "match_id", "video_id", "t_video", "period", "type", "team", "player_id", "x", "y", "outcome", "detail", "note", "x_end", "y_end", "goal_y", "goal_z", "player_in"];
 
 // Empty or non-numeric cells become null (the contract's NaN): never filled in.
 const num = (v: string | undefined): number | null => {
@@ -229,10 +229,16 @@ const num = (v: string | undefined): number | null => {
 
 // Rows of an events CSV onto events of one match. A row without a valid t_video (seconds, >= 0) or with a type outside
 // the catalogue is skipped and counted; coordinates outside the 105 x 68 pitch become missing, an unknown team "unk".
-export function eventsFromCsv(rows: Record<string, string>[], matchId: string, makeId: () => string): { events: MatchEvent[]; skipped: number; offPitch: number } {
+export function eventsFromCsv(
+  rows: Record<string, string>[],
+  matchId: string,
+  makeId: () => string,
+): { events: MatchEvent[]; skipped: number; offPitch: number; playerInDropped: number } {
   const events: MatchEvent[] = [];
   let skipped = 0;
   let offPitch = 0;
+  // player_in only belongs to substitutions; in any other row it is left out, and counted so the import says so.
+  let playerInDropped = 0;
   const coord = (v: number | null, max: number) => {
     if (v === null) return null;
     if (v < 0 || v > max) {
@@ -249,6 +255,7 @@ export function eventsFromCsv(rows: Record<string, string>[], matchId: string, m
       continue;
     }
     const team = (r.team ?? "").trim();
+    if (type !== "substitution" && r.player_in?.trim()) playerInDropped++;
     events.push({
       event_id: makeId(),
       match_id: matchId,
@@ -263,8 +270,10 @@ export function eventsFromCsv(rows: Record<string, string>[], matchId: string, m
       outcome: r.outcome?.trim() || null,
       detail: r.detail?.trim() || null,
       note: r.note || null,
+      // Who comes in: only in substitutions (the contract leaves it empty in every other type).
+      ...(type === "substitution" && r.player_in?.trim() ? { player_in: r.player_in.trim() } : {}),
       ...cleanEnd(type as EventType, { x_end: coord(num(r.x_end), 105), y_end: coord(num(r.y_end), 68), goal_y: num(r.goal_y), goal_z: num(r.goal_z) }),
     });
   }
-  return { events, skipped, offPitch };
+  return { events, skipped, offPitch, playerInDropped };
 }

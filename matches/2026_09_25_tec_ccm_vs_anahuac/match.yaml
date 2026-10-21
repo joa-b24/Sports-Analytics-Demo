@@ -1,8 +1,8 @@
-match_id: partido_2026_09_25
+match_id: 2026_09_25_tec_ccm_vs_anahuac
 kind: own                       # own = partido nuestro; rival = scouting
 date: "2026-09-25"
 own_team_name: "Tec CCM"
-other_team_name: "Anáhuac"   # jornada 1
+other_team_name: "Anáhuac Norte"   # jornada 1
 analysis_stride: 3
 
 venue:

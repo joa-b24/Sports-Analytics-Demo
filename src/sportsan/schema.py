@@ -23,6 +23,8 @@ EVENT_TYPES = (
     "duel",
     # 2026-10-19: fuera de lugar, con el equipo que lo comete (el de la jugadora adelantada)
     "offside",
+    # 2026-10-20: cambio; player_id es quien sale y la columna opcional player_in quien entra
+    "substitution",
 )
 # Valores permitidos de `outcome` y `detail` por tipo de evento. Los dos son opcionales (nulos = no se anotó);
 # un tipo que no aparece aquí no admite ese campo.
@@ -39,6 +41,8 @@ EVENT_DETAILS = {
     "goal_kick": ("short", "long"),
     "recovery": ("forward", "backward"),      # primer pase tras recuperar
     "duel": ("aerial", "ground"),
+    "foul": ("yellow", "red"),                # tarjeta
+    "shot": ("saved",),                       # tiro a puerta que atajó la portera (no se anota si lo sacó otra)
 }
 
 # Dónde acabó la acción (2026-10-14). Columnas opcionales: si faltan o van vacías, no se anotó.
@@ -51,7 +55,9 @@ GOAL_TYPES = ("shot", "goal", "free_kick", "penalty")
 GOAL_WIDTH_M = 7.32
 GOAL_HEIGHT_M = 2.44
 GOAL_MARGIN_M = 5.0  # hasta dónde se admite un tiro fuera alrededor de la portería
-OPTIONAL_EVENT_COLUMNS = ["x_end", "y_end", "goal_y", "goal_z"]
+OPTIONAL_EVENT_COLUMNS = ["x_end", "y_end", "goal_y", "goal_z", "player_in"]
+# player_in (2026-10-20): quien entra en un cambio (`substitution`); en otros tipos va vacía.
+PLAYER_IN_TYPES = ("substitution",)
 
 TRACKING_COLUMNS = [
     "match_id", "segment_id", "frame", "t_local", "t_video",
@@ -169,6 +175,12 @@ def validate_events(df: pd.DataFrame) -> pd.DataFrame:
         bad = [(t, v) for t, v in zip(filled["type"], filled[column]) if v not in allowed.get(t, ())]
         if bad:
             raise SchemaError(f"events: {column} inválido para su tipo: {sorted(set(bad))}; permitidos {allowed}")
+    saved = df[(df["type"] == "shot") & (df["detail"].fillna("") == "saved")]
+    if (saved["outcome"].fillna("") != "on_target").any():
+        raise SchemaError("events: un tiro atajado (detail=saved) tiene que ir a puerta (outcome=on_target)")
+    subs = df[df["type"] == "substitution"]
+    if subs[["x", "y"]].notna().any().any():
+        raise SchemaError("events: un cambio (substitution) no lleva posición (x, y vacías)")
     _check_in_pitch(df, "events")
     for columns, types in ((("x_end", "y_end"), END_TYPES), (("goal_y", "goal_z"), GOAL_TYPES)):
         present = [c for c in columns if c in df.columns]
@@ -182,6 +194,10 @@ def validate_events(df: pd.DataFrame) -> pd.DataFrame:
         wrong = sorted(set(filled["type"]) - set(types))
         if wrong:
             raise SchemaError(f"events: {columns[0]}/{columns[1]} solo para {types}; aparecen en {wrong}")
+    if "player_in" in df.columns:
+        wrong = sorted(set(df[df["player_in"].notna()]["type"]) - set(PLAYER_IN_TYPES))
+        if wrong:
+            raise SchemaError(f"events: player_in solo para {PLAYER_IN_TYPES}; aparece en {wrong}")
     if all(c in df.columns for c in ("x_end", "y_end")):
         _check_in_pitch(df[["x_end", "y_end"]].rename(columns={"x_end": "x", "y_end": "y"}), "events (destino)")
     if all(c in df.columns for c in ("goal_y", "goal_z")):

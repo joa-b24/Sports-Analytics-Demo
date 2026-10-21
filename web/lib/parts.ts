@@ -463,3 +463,46 @@ export function ballCoverage(o: {
   const inPlay = Math.max(1, o.to - o.from - len(outs));
   return { share: Math.max(0, Math.min(1, 1 - len(missing) / inPlay)), missing };
 }
+
+// ---------------------------------------------------------------- what the camera sees
+
+// The part of the pitch in the image of a frame, as a polygon in the normalised pitch: the image border taken to the
+// pitch. Above the horizon the image shows no ground, so each column starts at the highest row that lands on the
+// ground within `reachM` meters of the pitch. Null without calibration or when almost nothing lands.
+export function viewPolygon(file: TracksFile, H: number[] | null | undefined, steps = 16, reachM = 40): [number, number][] | null {
+  if (!H) return null;
+  const w = file.image_w;
+  const h = file.image_h;
+  // Oriented once (as pixelToPitch does on every call), then pixels -> real meters -> normalised pitch.
+  const Ho = orient(H, [[w / 2, h * 0.8]]) ?? H;
+  const sx = PITCH.length / (file.venue?.length_m ?? PITCH.length);
+  const sy = PITCH.width / (file.venue?.width_m ?? PITCH.width);
+  const lx = reachM * sx;
+  const ly = reachM * sy;
+  const at = (x: number, y: number): [number, number] | null => {
+    const m = apply(Ho, [x, y]);
+    if (!m) return null;
+    const p: [number, number] = [m[0] * sx, m[1] * sy];
+    return p[0] > -lx && p[0] < PITCH.length + lx && p[1] > -ly && p[1] < PITCH.width + ly ? p : null;
+  };
+  // Top: per column, the first row (from the top) that lands near the pitch.
+  const top: [number, number][] = [];
+  const rows = 32;
+  for (let i = 0; i <= steps; i++) {
+    const x = (w * i) / steps;
+    for (let r = 0; r <= rows; r++) {
+      const p = at(x, (h * r) / rows);
+      if (p) {
+        top.push(p);
+        break;
+      }
+    }
+  }
+  const bottom: [number, number][] = [];
+  for (let i = steps; i >= 0; i--) {
+    const p = at((w * i) / steps, h);
+    if (p) bottom.push(p);
+  }
+  const poly = [...top, ...bottom];
+  return poly.length >= 3 ? poly.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10] as [number, number]) : null;
+}

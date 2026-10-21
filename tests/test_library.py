@@ -110,7 +110,7 @@ def test_localize_recovers_the_calibration_of_a_new_view(tmp_path):
         Hs.append(to_m @ np.linalg.inv(A))
         offsets.append(offsets[-1] + len(xy))
     lib = Library(np.arange(4), np.array(Hs), np.array(offsets), np.concatenate(xys), np.concatenate(dess),
-                  {"schema_version": 1, "image_w": 960, "image_h": 540, "work_width": 960, "venue": {}})
+                  {"schema_version": 1, "image_w": 960, "image_h": 540, "work_width": 960, "venue": {"length_m": 320, "width_m": 140}})
 
     # Un cuadro que no está en la biblioteca: entre dos referencias, con algo de zoom y giro.
     img, A = _view(cv2, world, 950, zoom=1.15, angle=0.03)
@@ -129,3 +129,27 @@ def test_localize_recovers_the_calibration_of_a_new_view(tmp_path):
     lib.save(tmp_path / "lib.npz")
     again = localize(*features(img, 1.0), Library.load(tmp_path / "lib.npz"))
     assert np.allclose(again.H, loc.H)
+
+
+def test_biblioteca_desde_anclas_solo_las_buenas():
+    from sportsan.tracking.library import track_from_anchors
+
+    def anchor(t, n):
+        px = np.array([[100, 400], [900, 380], [1800, 420], [300, 800], [1500, 820], [960, 1000], [600, 600]], dtype=float)[:n]
+        m = apply_h(camera(0), px)
+        return {"frame": int(t * 29.97), "t_video": t, "image_w": 1920, "image_h": 1080,
+                "points": [{"landmark_id": str(i), "px": a, "py": b, "x_m": x, "y_m": y} for i, ((a, b), (x, y)) in enumerate(zip(px, m))]}
+
+    data = {"match_id": "m", "video_id": "v1", "anchors": [anchor(10.0, 7), anchor(20.0, 4), anchor(30.0, 6)]}
+    track, notes = track_from_anchors(data, 30.0)
+    assert [f["frame"] for f in track["frames"]] == [300, 900]
+    assert len(notes) == 1 and "4 puntos" in notes[0]
+
+
+def test_mascara_tapa_los_rectangulos_con_margen():
+    from sportsan.tracking.library import in_mask, mask_image
+
+    m = mask_image([[100, 50, 300, 90]], (360, 640), 0.5, pad=0)
+    assert m[30, 100] == 0 and m[10, 100] == 255 and m[30, 200] == 255
+    assert mask_image([], (10, 10), 1.0) is None
+    assert in_mask([[100, 50, 300, 90]], 150, 60) and not in_mask([[100, 50, 300, 90]], 350, 60)

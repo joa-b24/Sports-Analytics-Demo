@@ -291,3 +291,23 @@ test("sin nombres: los identificadores de clips y ediciones no se tocan", () => 
   assert.equal(r.transitions.own.losses[0].moment.edit.edit_id, "c_ana_x");
   assert.equal(clipList(r).clips.find((c) => c.kind === "transition" && c.edit_id).edit_id, "c_ana_x");
 });
+
+test("tarjetas, fueras de lugar y atajadas solo aparecen si se etiquetaron; cambios y penales en el informe", () => {
+  const plain = buildReport(input({ events: sample() }));
+  assert.equal(plain.summary.rows.some((r) => ["yellow", "red", "offside", "saves"].includes(r.key)), false);
+  const events = [
+    ...sample(),
+    ev(500, "foul", "opp", { detail: "yellow" }),
+    ev(520, "foul", "opp", { detail: "red" }),
+    ev(540, "offside", "own"),
+    ev(560, "shot", "opp", { outcome: "on_target", detail: "saved" }),
+    ev(600, "substitution", "own", { player_id: "Sale", player_in: "Entra", x: null, y: null }),
+  ];
+  const r = buildReport(input({ events, match: match({ shootout: [{ team: "own", player_id: null, result: "goal" }, { team: "opp", player_id: null, result: "missed" }] }) }));
+  const row = (k) => r.summary.rows.find((x) => x.key === k);
+  assert.deepEqual([row("yellow").opp, row("red").opp, row("offside").own], [1, 1, 1]);
+  // La atajada es de nuestra portera: tiro del rival.
+  assert.deepEqual([row("saves").own, row("saves").opp], [1, 0]);
+  assert.deepEqual(r.summary.substitutions.map((s) => [s.out, s.in]), [["Sale", "Entra"]]);
+  assert.deepEqual([r.cover.shootout.own, r.cover.shootout.opp], [1, 0]);
+});

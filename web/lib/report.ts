@@ -35,7 +35,8 @@ import { fmtT, youtubeLink } from "./format.ts";
 import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, possessionCells, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
 import type { Segment } from "./segments.ts";
 import { LANES_5, THIRDS_3, countByType, laneThirdOf, zoneGrid5x3 } from "./stats.ts";
-import { EMPTY_REPORT, type ManualResult, type Match, type MatchEvent, type Play, type Report, type RosterPlayer } from "./types.ts";
+import { EMPTY_REPORT, type ManualResult, type Match, type MatchEvent, type Play, type Report, type RosterPlayer, type ShootoutKick } from "./types.ts";
+import { shootoutScore } from "./shootout.ts";
 import { matchTimeline, matchVideos, videoOf } from "./videos.ts";
 
 type Side = "own" | "opp";
@@ -410,6 +411,8 @@ export interface ReportData {
     jornada: string;
     // Goals tagged by each team. Null without events.
     score: { own: number; opp: number } | null;
+    // Penalty shootout after a draw: its score and kicks. Null without one.
+    shootout: { own: number; opp: number; kicks: ShootoutKick[] } | null;
     focus_team: string;
     other_team: string;
     is_demo: boolean;
@@ -418,6 +421,8 @@ export interface ReportData {
   results: { rows: ResultRow[]; total: number; no_events: number };
   summary: {
     rows: SummaryRow[];
+    // Substitutions in time order (who leaves, who comes in).
+    substitutions: { team: Side; moment: Moment; out: string | null; in: string | null }[];
     // Final-third entries without a lane: not used here.
     bins: Record<"5" | "10", TimeBins>;
     possession: Gate;
@@ -481,6 +486,20 @@ const zoneLabel = (e: MatchEvent) => {
 };
 
 export const reportFileName = (match: Pick<Match, "match_id" | "folder">) => `report_${match.folder ?? match.match_id}.json`;
+
+// Cards, offsides and saves: rows of the summary only when some were tagged. A save is the goalkeeper's, so it
+// counts for the team that did not shoot.
+function optionalRows(events: MatchEvent[], own: Record<string, number>, opp: Record<string, number>): SummaryRow[] {
+  const card = (team: Side, c: string) => events.filter((e) => e.type === "foul" && e.team === team && e.detail === c).length;
+  const saves = (shooter: Side) => events.filter((e) => e.type === "shot" && e.team === shooter && e.detail === "saved").length;
+  const rows: SummaryRow[] = [
+    { key: "yellow", label: "Tarjetas amarillas", own: card("own", "yellow"), opp: card("opp", "yellow") },
+    { key: "red", label: "Tarjetas rojas", own: card("own", "red"), opp: card("opp", "red") },
+    { key: "offside", label: "Fueras de lugar", own: own.offside ?? 0, opp: opp.offside ?? 0 },
+    { key: "saves", label: "Atajadas de la portera", own: saves("opp"), opp: saves("own") },
+  ];
+  return rows.filter((r) => r.own + r.opp > 0);
+}
 
 export function buildReport(input: ReportInput): ReportData {
   const { match, plays, segmentsByVideo, parts } = input;
@@ -566,6 +585,8 @@ export function buildReport(input: ReportInput): ReportData {
     { key: "crosses", label: "Centros", own: own.cross, opp: opp.cross },
     { key: "corners", label: "Córners", own: own.corner, opp: opp.corner },
     { key: "fouls", label: "Faltas", own: own.foul, opp: opp.foul },
+    // Only when tagged at all: a zero here would say "none" when it was not noted.
+    ...optionalRows(events, own, opp),
     { key: "losses", label: "Pérdidas", own: own.loss, opp: opp.loss },
     { key: "recoveries", label: "Recuperaciones", own: own.recovery, opp: opp.recovery },
   ];
@@ -687,6 +708,7 @@ export function buildReport(input: ReportInput): ReportData {
       date: match.date,
       jornada: report.jornada ?? "",
       score: scoreOf(events),
+      shootout: match.shootout?.length ? { ...(shootoutScore(match.shootout) as { own: number; opp: number }), kicks: match.shootout } : null,
       focus_team: match.focus_team,
       other_team: match.other_team,
       is_demo: !!match.is_demo,
@@ -695,6 +717,10 @@ export function buildReport(input: ReportInput): ReportData {
     results: recentResults(match.focus_team, input.library, report.results_manual ?? [], !!match.is_demo),
     summary: {
       rows: summaryRows,
+      substitutions: events
+        .filter((e) => e.type === "substitution" && (e.team === "own" || e.team === "opp"))
+        .sort((a, b) => (a.video_id ?? "v1").localeCompare(b.video_id ?? "v1") || a.t_video - b.t_video)
+        .map((e) => ({ team: side(e), moment: momentOf(e), out: e.player_id, in: e.player_in ?? null })),
       bins: { "5": timeBins(events, timeline.segments, 5), "10": timeBins(events, timeline.segments, 10) },
       possession: gate(src.ball, "ball"),
       ball: ballSummary,

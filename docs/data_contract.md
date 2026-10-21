@@ -83,7 +83,7 @@ Resultado de la calibración de cada frame: `n_keypoints` (visibles y confiables
 | video_id | str | no | a qué video del partido se refiere `t_video`; `v1` si solo hay uno |
 | t_video | float | no | segundos dentro de ese video |
 | period | int | no | 1 o 2 |
-| type | str | no | `shot, goal, loss, recovery, foul, corner, free_kick, throw_in, penalty, key_pass, other, final_third_entry, box_entry, goal_kick, cross, duel, offside` |
+| type | str | no | `shot, goal, loss, recovery, foul, corner, free_kick, throw_in, penalty, key_pass, other, final_third_entry, box_entry, goal_kick, cross, duel, offside, substitution` |
 | team | str | no | `own`, `opp`, `ref`, `unk` |
 | player_id | str | sí | |
 | x, y | float | sí | posición del evento en metros |
@@ -98,13 +98,14 @@ Resultado de la calibración de cada frame: `n_keypoints` (visibles y confiables
 
 | type | outcome | detail |
 |---|---|---|
-| shot | `on_target`, `off_target`, `blocked` (el gol es el tipo `goal`) | |
+| shot | `on_target`, `off_target`, `blocked` (el gol es el tipo `goal`) | `saved`: solo con `on_target`, cuando la atajó la portera (si lo sacó otra jugadora, no se anota) |
 | corner | `shot` (acaba en remate), `cleared`, `play_on` | `inswing` (cerrado), `outswing` (abierto), `short` |
 | free_kick | `shot`, `cleared`, `play_on` | |
 | cross | `shot`, `cleared`, `play_on` | |
 | goal_kick | `kept` (conservan el balón), `lost` | `short`, `long` |
 | recovery | | `forward`, `backward` (primer pase tras recuperar) |
 | duel | `won`, `lost` (para el equipo del evento) | `aerial`, `ground` |
+| foul | | `yellow`, `red` (tarjeta) |
 
 Las dos parejas de destino van juntas (las dos o ninguna). Un archivo sin esas columnas es válido: se anotan en la tercera
 pasada del etiquetado y casi siempre faltarán. Un tiro libre que es un centro se anota como `cross` si interesa dónde cayó.
@@ -117,6 +118,9 @@ Un partido sin duelos no tiene el mapa; no significa que no los hubo.
 
 `offside` (2026-10-19) es el fuera de lugar. `team` es el equipo que lo comete (el de la jugadora adelantada) y `x, y`
 es donde estaba ella, que es donde se cobra el tiro libre. No lleva resultado ni detalle.
+
+`substitution` (2026-10-20) es un cambio: `team` el equipo, `player_id` quien sale y la columna opcional `player_in`
+quien entra (vacía en cualquier otro tipo). No lleva posición, resultado ni detalle.
 
 ## `passes_<match_id>.csv` (pases etiquetados a mano, exportados desde la app; fuera del repo)
 
@@ -149,7 +153,7 @@ Viven en el navegador y se exportan como un JSON de respaldo. Los eventos usan l
 - **`edits`** (dibujos sobre el video de una jugada, desde el 2026-10-18; un respaldo anterior abre sin ninguno): cada fila es un `ClipEdit` como el de `edit_<edit_id>.json` (abajo).
 - **`sessions`** (entrenamientos, una fila por jugadora y sesión): `date` (AAAA-MM-DD), `session_id`, `player_id` y `metrics`, un mapa `nombre → número` con las columnas numéricas del CSV del sensor. Nombres sugeridos: `duration_min, total_distance_m, hsr_distance_m, sprints, max_speed_kmh, player_load, hr_avg, hr_max`. Celda vacía = valor faltante.
 
-- **`anchors`** (calibración manual, una fila por cuadro calibrado): `anchor_id`, `match_id`, `video_id`, `venue_id`, `frame` (índice en el video original), `t_video` (`frame / fps`), `image_w`, `image_h` y `points`, una lista de `{landmark_id, px, py}` con el punto de referencia de la sede y su posición en píxeles. La homografía no se guarda: se recalcula con los puntos. Se exportan como `anchors_<match_id>_<video_id>.json` con `schema_version` (2), `match_id`, `video_id`, `fps`, `venue` (`venue_id`, `name`, `length_m`, `width_m`) y `anchors`; en la exportación cada punto lleva además `x_m`, `y_m` (su posición en metros reales en la sede), para que Python no tenga que repetir el modelo de la sede. La versión 1 no traía esos campos y `sportsan.tracking.propagate` la rechaza. Desde 2026-10-19 un ancla puede traer `lines` (líneas de la cancha marcadas con dos píxeles `a`, `b` y su `line_id` del modelo, `web/lib/calibLines.ts`); los puntos donde se cruzan dos de ellas van en `points` con `landmark_id` `ix:<línea>+<línea>` y sus `x_m`, `y_m`, así que Python los usa como cualquier otro punto sin leer `lines`.
+- **`anchors`** (calibración manual, una fila por cuadro calibrado): `anchor_id`, `match_id`, `video_id`, `venue_id`, `frame` (índice en el video original), `t_video` (`frame / fps`), `image_w`, `image_h` y `points`, una lista de `{landmark_id, px, py}` con el punto de referencia de la sede y su posición en píxeles. La homografía no se guarda: se recalcula con los puntos. Se exportan como `anchors_<match_id>_<video_id>.json` con `schema_version` (2), `match_id`, `video_id`, `fps`, `venue` (`venue_id`, `name`, `length_m`, `width_m`) y `anchors`; en la exportación cada punto lleva además `x_m`, `y_m` (su posición en metros reales en la sede), para que Python no tenga que repetir el modelo de la sede. La versión 1 no traía esos campos y `sportsan.tracking.propagate` la rechaza. Desde 2026-10-19 un ancla puede traer `lines` (líneas de la cancha marcadas con dos píxeles `a`, `b` y su `line_id` del modelo, `web/lib/calibLines.ts`); los puntos donde se cruzan dos de ellas van en `points` con `landmark_id` `ix:<línea>+<línea>` y sus `x_m`, `y_m`, así que Python los usa como cualquier otro punto sin leer `lines`. Las líneas pueden ser de la sede (`r_<id>`, `ref_lines` de la app: el fin del pasto, una reja), que la app da como «por verificar». Un ancla también puede traer `arcs` (clics sobre el círculo central o los arcos del área, `web/lib/calibFit.ts`): cada clic de arcos y de líneas se exporta además como un punto `arc:...` o `ln:...` con sus `x_m`, `y_m` (el punto más cercano de su círculo o línea según el ajuste), así que Python sigue leyendo solo puntos.
 - **`sessions`**: columnas reconocidas además de las del sensor: `rpe` (1 a 10, cuestionario posterior), `duration_min`, y del cuestionario previo `sleep_hours`, `sleep_q`, `stress`, `fatigue`, `soreness` (1 a 7, **1 es lo mejor**) y `energy` (1 a 10, 10 es lo mejor). La carga de la sesión es `rpe * duration_min` (`web/lib/load.ts`); si falta la duración de una jugadora se usa la mediana de su sesión y se indica. Las columnas de salud (enfermedad, periodo menstrual, ánimo, molestias) se descartan al importar.
 - **`matches`**: además de sus datos, `videos`, una lista de `{video_id, youtube_id, label, period}`. Un tiempo puede venir en varios videos: `period` (1 o 2) dice a cuál pertenece cada uno; sin él, el primer video es el 1.er tiempo y los demás el 2.º. Para analizar el partido entero la app pone los videos en fila sobre un solo eje (`web/lib/videos.ts`); ese eje no se guarda.
 - **`trackEdits`** (correcciones de la mesa de corrección, una fila por parte procesada): `key` (`<match_id>|<video_id>|<inicio>_<fin>`), `identity` (`"<track>"` o `"i<identidad>"` -> identidad a la que pertenece), `people` (por identidad: `team` puesto a mano y `player_id`), `removed` (identidades que no son jugadoras), `splits` (`{track, frame, identity}`: desde ese cuadro el track es otra persona) y `manual` (`{identity, frame, px, py}`: pies marcados a mano donde el detector la perdió). El archivo de tracks nunca se modifica.

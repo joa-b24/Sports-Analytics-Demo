@@ -99,6 +99,45 @@ export function CompareBars({
   );
 }
 
+// Match-sheet comparison: the label in the middle, each team's bar growing outwards from it, its figure at the end.
+// Each row has its own scale (the larger of the two fills its side): it compares the teams, not the rows.
+export function MirrorBars({ rows, aLabel, bLabel }: { rows: { label: string; a: number; b: number; fmt?: (v: number) => string }[]; aLabel: string; bLabel: string }) {
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between text-xs text-muted">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLORS.own }} />
+          {aLabel}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          {bLabel}
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLORS.opp }} />
+        </span>
+      </div>
+      <div className="space-y-2">
+        {rows.map((r, n) => {
+          const max = Math.max(r.a, r.b, 1e-9);
+          const f = r.fmt ?? String;
+          const lead = (v: number, o: number) => (v > o ? "text-ink font-semibold" : "text-muted");
+          return (
+            <div key={r.label} className="grid grid-cols-[2.75rem_minmax(0,1fr)_minmax(6.5rem,9rem)_minmax(0,1fr)_2.75rem] items-center gap-2" title={`${r.label} · ${aLabel}: ${f(r.a)} · ${bLabel}: ${f(r.b)}`}>
+              <span className={`num text-right text-base ${lead(r.a, r.b)}`}>{f(r.a)}</span>
+              <div className="flex h-2 justify-end">
+                <div className="a-bar h-full rounded-l-[4px]" style={{ width: `${(100 * r.a) / max}%`, minWidth: r.a > 0 ? 3 : 0, background: COLORS.own, transformOrigin: "right center", ...i(n) }} />
+              </div>
+              <span className="text-center text-xs leading-tight text-ink-2">{r.label}</span>
+              <div className="flex h-2">
+                <div className="a-bar h-full rounded-r-[4px]" style={{ width: `${(100 * r.b) / max}%`, minWidth: r.b > 0 ? 3 : 0, background: COLORS.opp, ...i(n) }} />
+              </div>
+              <span className={`num text-base ${lead(r.b, r.a)}`}>{f(r.b)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Shots on the pitch: filled = goal, hollow = no goal. Colour = team.
 export function ShotMap({ events, aLabel, bLabel }: { events: MatchEvent[]; aLabel: string; bLabel: string }) {
   // One mark per finish: a goal tagged together with its shot (and its penalty) is drawn once.

@@ -10,6 +10,8 @@ import { parseHms } from "@/lib/segments";
 import { NO_FILTER, duplicatesOf, retype, missingEnd, missingReview, type EventFilter, type Pass } from "@/lib/tagging";
 import { DETAIL_TITLES, EVENT_LABELS, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
 import { TYPE_OPTIONS, detailOptions, outcomeOptions, teamColor, teamOptions } from "./eventOptions";
+import { CardToggle } from "./CardToggle";
+import { outcomePatch } from "@/lib/tagging";
 import { PlayerPicker, type PlayerChoice } from "./PlayerPicker";
 
 const isFiltered = (f: EventFilter) => JSON.stringify(f) !== JSON.stringify(NO_FILTER);
@@ -144,7 +146,7 @@ export function EventsTable({
                 const missing = missingOf(e);
                 const dup = duplicatesOf(events, e).length > 0;
                 const outs = outcomeOptions(e.type);
-                const dets = detailOptions(e.type);
+                const dets = detailOptions(e);
                 return (
                   <tr key={e.event_id} className={`border-t border-line-soft transition-colors ${activeIds.has(e.event_id) ? "bg-accent-900/50" : ""}`}>
                     <td className="py-1 pr-2">
@@ -164,10 +166,19 @@ export function EventsTable({
                       <Select label="Equipo" value={e.team === "own" || e.team === "opp" ? e.team : null} options={teamOptions(match)} onChange={(t) => t && update(e.event_id, { team: t })} />
                     </td>
                     <td className="py-1 pr-2 whitespace-nowrap">
-                      {outs.length > 0 && <Select clearable label="Resultado" value={e.outcome ?? null} options={outs} onChange={(v) => update(e.event_id, { outcome: v })} />}
+                      {outs.length > 0 && <Select clearable label="Resultado" value={e.outcome ?? null} options={outs} onChange={(v) => update(e.event_id, outcomePatch(e, v))} />}
                     </td>
                     <td className="py-1 pr-2 whitespace-nowrap">
-                      {dets.length > 0 && <Select clearable label={DETAIL_TITLES[e.type] ?? "Detalle"} value={e.detail ?? null} options={dets} onChange={(v) => update(e.event_id, { detail: v })} />}
+                      {e.type === "foul" ? (
+                        <CardToggle value={e.detail} onChange={(v) => update(e.event_id, { detail: v })} />
+                      ) : e.type === "substitution" ? (
+                        <span className="flex items-center gap-1 text-[11px] text-faint">
+                          entra
+                          <PlayerPicker variant="cell" value={e.player_in ?? ""} onChange={(v) => update(e.event_id, { player_in: v || null })} choices={players} />
+                        </span>
+                      ) : (
+                        dets.length > 0 && <Select clearable label={DETAIL_TITLES[e.type] ?? "Detalle"} value={e.detail ?? null} options={dets} onChange={(v) => update(e.event_id, { detail: v })} />
+                      )}
                     </td>
                     <td className="py-1 pr-2">
                       <PlayerPicker variant="cell" value={e.player_id ?? ""} onChange={(v) => update(e.event_id, { player_id: v || null })} choices={players} />

@@ -1,12 +1,12 @@
-match_id: partido_ccm_vs_up
+match_id: 2026_10_10_tec_ccm_vs_up
 kind: own                       # own = partido nuestro; rival = scouting
-date: "REEMPLAZAR"              # el video se subió el 2026-10-13; falta la fecha del partido
+date: "2026-10-10"              # el video se subió el 2026-10-13; falta la fecha del partido
 own_team_name: "Tec CCM"
 other_team_name: "UP"         # jornada 2
 analysis_stride: 3
 
 venue:
-  name: "REEMPLAZAR"
+  name: "Estadio ITESM CCM"
   notes: "Sin medir. Cámara más lejana y casi fija: se ve casi toda la cancha (piloto 2 de tracking y calibración)."
 
 # Grabado en 3 partes; por ahora solo la primera.

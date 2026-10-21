@@ -176,3 +176,31 @@ def test_fuera_de_lugar_es_un_tipo_valido_sin_resultado(mock_dir):
     ev.loc[ev["type"] == "offside", "outcome"] = "won"
     with pytest.raises(SchemaError):
         validate_events(ev)
+
+
+def test_tarjetas_atajadas_y_cambios(mock_dir):
+    base = load_events(mock_dir).copy().reset_index(drop=True)
+    base["player_in"] = None
+    # Filas propias para cada regla, sin depender de qué traiga el mock.
+    foul, shot, sub, other = 0, 1, 2, 3
+    base.loc[foul, ["type", "outcome", "detail"]] = ["foul", None, "yellow"]
+    base.loc[shot, ["type", "outcome", "detail"]] = ["shot", "on_target", "saved"]
+    base.loc[sub, ["type", "outcome", "detail", "x", "y", "player_id", "player_in"]] = ["substitution", None, None, None, None, "Sale", "Entra"]
+    base.loc[other, ["type", "outcome", "detail"]] = ["loss", None, None]
+    validate_events(base)
+    ok_red = base.copy()
+    ok_red.loc[foul, "detail"] = "red"
+    validate_events(ok_red)
+
+    def fails(change):
+        ev = base.copy()
+        change(ev)
+        with pytest.raises(SchemaError):
+            validate_events(ev)
+
+    fails(lambda ev: ev.loc.__setitem__((foul, "detail"), "blue"))           # tarjeta que no existe
+    fails(lambda ev: ev.loc.__setitem__((foul, "detail"), "saved"))          # atajada en una falta
+    fails(lambda ev: ev.loc.__setitem__((shot, "outcome"), "off_target"))    # atajado pero fuera
+    fails(lambda ev: ev.loc.__setitem__((shot, "outcome"), None))            # atajado sin resultado
+    fails(lambda ev: ev.loc.__setitem__((other, "player_in"), "Otra"))       # quien entra en otro tipo
+    fails(lambda ev: ev.loc.__setitem__((sub, "x"), 50.0))                   # un cambio con posición

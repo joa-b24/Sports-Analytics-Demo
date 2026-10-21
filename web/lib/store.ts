@@ -88,6 +88,22 @@ export function setPref(key: string, value: string) {
   prefListeners.forEach((l) => l());
 }
 
+// After renaming a match folder: the preferences named after it (direction of attack, crop, chosen match...) follow.
+export function renamePrefs(from: string, to: string) {
+  // Folder names are letters, digits, _ . and -: only the dot needs escaping.
+  const re = new RegExp(`(^|[:|])${from.replaceAll(".", "\\.")}(?=$|[:|])`, "g");
+  const cur = loadPrefs();
+  const next: Record<string, string> = {};
+  for (const [k, v] of Object.entries(cur)) next[k.replace(re, `$1${to}`)] = v === from ? to : v;
+  prefs = next;
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Blocked storage: the change lasts for this session only.
+  }
+  prefListeners.forEach((l) => l());
+}
+
 export function usePref(key: string, fallback = ""): string {
   return useSyncExternalStore(
     (l) => {

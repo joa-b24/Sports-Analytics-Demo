@@ -222,9 +222,11 @@ function EventsTile({ match, count }: { match: Match; count: number }) {
     if (out.events.length === 0) return setNotice({ tone: "bad", text: `Ninguna fila válida: ${out.skipped} sin t_video o con un type que no está en el catálogo.` });
     mutate((s) => ({ ...s, events: [...s.events, ...out.events] }));
     setNotice({
-      tone: out.skipped || out.offPitch ? "warn" : "ok",
+      tone: out.skipped || out.offPitch || out.playerInDropped ? "warn" : "ok",
       text: `${out.events.length} eventos añadidos.${out.skipped ? ` ${out.skipped} filas omitidas (sin t_video o type desconocido).` : ""}${
         out.offPitch ? ` ${out.offPitch} coordenadas fuera de la cancha de 105 × 68 quedaron vacías.` : ""
+      }${
+        out.playerInDropped ? ` ${out.playerInDropped} fila(s) traían player_in sin ser un cambio: se dejó fuera.` : ""
       }`,
     });
   };

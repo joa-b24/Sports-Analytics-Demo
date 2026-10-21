@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { FigureRow, StatList } from "@/components/match/ReportExtra";
 import { COLORS, Pitch } from "@/components/Pitch";
 import type { BallSummary, NetworkData, ReportData, TouchRow } from "@/lib/report";
 import { LANES_5, THIRDS_3 } from "@/lib/stats";
@@ -139,73 +141,96 @@ function shortLabels(names: string[]): Map<string, string> {
   );
 }
 
-export function NetworkBlock({ net, team }: { net: NetworkData; team: string }) {
+export function NetworkBlock({ net, team, side = "own" }: { net: NetworkData; team: string; side?: Side }) {
   const short = shortLabels(net.nodes.map((n) => n.player));
   const byKey = new Map(net.nodes.map((n) => [n.player, n]));
   const maxEdge = Math.max(1, ...net.edges.map((e) => e.count));
+  const c = sideColor(side);
+  const pairs = [...net.edges].sort((a, b) => b.count - a.count).slice(0, 5);
+  const most = [...net.nodes].sort((a, b) => b.touches - a.touches).slice(0, 5);
   return (
-    <div className="break-inside-avoid">
-      <div className="text-sm font-medium text-ink">Red de pases de {team} (leída del balón)</div>
-      <Pitch className="mt-2 md:max-w-[70%]">
+    <FigureRow
+      note={
+        <>
+          {net.passes} pases completos de {team}. Grosor: pases entre las dos, en los dos sentidos. Tamaño: toques. Cada jugadora en su posición media medida.
+          {net.unnamed > 0 && ` ${net.unnamed} pase(s) con una jugadora sin nombre no salen.`}
+        </>
+      }
+      aside={
+        <>
+          <StatList title="Conexiones más usadas" items={pairs.map((e) => ({ label: `${e.a} – ${e.b}`, value: e.count }))} />
+          <div className="mt-4">
+            <StatList title="Más toques" items={most.map((n) => ({ label: n.player, value: n.touches }))} />
+          </div>
+        </>
+      }
+    >
+      <Pitch>
         {net.edges.map((e) => {
           const a = byKey.get(e.a);
           const b = byKey.get(e.b);
           if (!a || !b) return null;
           return (
-            <line key={`${e.a}-${e.b}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={COLORS.own} strokeWidth={0.3 + (2 * e.count) / maxEdge} opacity={0.35 + (0.55 * e.count) / maxEdge} strokeLinecap="round">
+            <line key={`${e.a}-${e.b}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={c} strokeWidth={0.3 + (2 * e.count) / maxEdge} opacity={0.35 + (0.55 * e.count) / maxEdge} strokeLinecap="round">
               <title>{`${e.a} – ${e.b}: ${e.count}`}</title>
             </line>
           );
         })}
         {net.nodes.map((n) => (
           <g key={n.player} transform={`translate(${n.x} ${n.y})`}>
-            <circle r={1.6 + Math.min(2.2, n.touches / 25)} fill={COLORS.own} stroke="var(--color-bg)" strokeWidth={0.4}>
+            <circle r={1.6 + Math.min(2.2, n.touches / 25)} fill={c} stroke="var(--color-bg)" strokeWidth={0.4}>
               <title>{`${n.player}: ${n.touches} toques`}</title>
             </circle>
-            <text y={0.8} textAnchor="middle" fontSize={2.2} fontWeight={700} fill="var(--color-bg)" pointerEvents="none">
+            <text y={0.8} textAnchor="middle" fontSize={2.2} fontWeight={700} fill={side === "own" ? "var(--on-own)" : "var(--on-opp)"} pointerEvents="none">
               {short.get(n.player)}
             </text>
           </g>
         ))}
       </Pitch>
-      <p className="mt-1 text-xs text-faint">
-        {net.passes} pases completos. Grosor: pases entre las dos, en los dos sentidos. Tamaño: toques. Cada jugadora en su posición media medida.
-        {net.unnamed > 0 && ` ${net.unnamed} pase(s) con una jugadora sin nombre no salen.`}
-      </p>
-    </div>
+    </FigureRow>
   );
 }
 
 export function TouchesBlock({ rows, team, other, coverage, print, onPrint }: { rows: TouchRow[]; team: string; other: string; coverage: string; print: boolean; onPrint: (v: boolean) => void }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details className={`mt-4 ${print ? "print:block" : "print:hidden"}`} open={false}>
-      <summary className="cursor-pointer text-sm text-ink print:list-none">Toques por jugadora ({rows.length})</summary>
-      <label className="mt-2 flex items-center gap-1.5 text-xs text-muted print:hidden">
-        <input type="checkbox" checked={print} onChange={(e) => onPrint(e.target.checked)} />
-        Incluir en la impresión
-      </label>
-      <p className="mt-1 text-xs text-faint">Toques leídos del balón, {coverage}. Por 10 min: sobre el tiempo con el balón seguido.</p>
-      <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4 print:grid-cols-4">
-        {rows.map((r) => (
-          <div key={`${r.team}-${r.player}`} className="break-inside-avoid">
-            <div className="flex items-baseline justify-between text-xs">
-              <span style={{ color: sideColor(r.team) }}>{r.player}</span>
-              <span className="num text-ink">
-                {r.touches} <span className="text-faint">· {r.per10 ?? "—"}/10′</span>
-              </span>
-            </div>
-            <Pitch showDirection={false}>
-              {r.points.map(([x, y], i) => (
-                <circle key={i} cx={x} cy={y} r={0.9} fill={sideColor(r.team)} opacity={0.6} />
-              ))}
-            </Pitch>
-          </div>
-        ))}
+    <div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 print:hidden">
+        <button type="button" className="btn" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {open ? "Ocultar" : "Ver"} los {rows.length} mapas
+        </button>
+        <label className="flex items-center gap-1.5 text-xs text-muted">
+          <input type="checkbox" checked={print} onChange={(e) => onPrint(e.target.checked)} />
+          Incluir en la impresión
+        </label>
       </div>
-      <p className="mt-1 text-[11px] text-faint">
-        Color: {team} en azul, {other} en naranja. Cada mapa con su equipo atacando hacia la derecha.
-      </p>
-    </details>
+      <div className={`${open ? "" : "hidden"} ${print ? "print:block" : ""}`}>
+        <p className="mt-3 text-xs text-faint">Toques leídos del balón, {coverage}. Por 10 min: sobre el tiempo con el balón seguido.</p>
+        <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4 print:grid-cols-4">
+          {rows.map((r) => (
+            <div key={`${r.team}-${r.player}`} className="break-inside-avoid">
+              <div className="flex items-baseline justify-between text-xs">
+                <span className="inline-flex items-center gap-1.5 text-ink-2">
+                  <i className="h-2.5 w-1 rounded-full" style={{ background: sideColor(r.team) }} />
+                  {r.player}
+                </span>
+                <span className="num text-ink">
+                  {r.touches} <span className="text-faint">· {r.per10 ?? "—"}/10′</span>
+                </span>
+              </div>
+              <Pitch showDirection={false}>
+                {r.points.map(([x, y], i) => (
+                  <circle key={i} cx={x} cy={y} r={0.9} fill={sideColor(r.team)} opacity={0.6} />
+                ))}
+              </Pitch>
+            </div>
+          ))}
+        </div>
+        <p className="mt-1 text-[11px] text-faint">
+          Barra de color: {team} o {other}. Cada mapa con su equipo atacando hacia la derecha.
+        </p>
+      </div>
+    </div>
   );
 }
 

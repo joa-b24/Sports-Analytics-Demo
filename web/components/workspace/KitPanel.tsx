@@ -60,11 +60,13 @@ type Props = {
   onPick: (k: JerseyKey | null) => void;
   // Names of the two teams of the match.
   teams?: { own: string; opp: string };
+  // One short row (calibration, where the magnifier needs the room).
+  compact?: boolean;
 };
 
 // One circle: the colour chosen (or an empty dashed ring). A click arms the eyedropper: the next click on the video
 // takes the colour of that shirt.
-function Swatch({ k, color, picking, onPick, label }: { k: JerseyKey; color: string; picking: boolean; onPick: () => void; label: string }) {
+function Swatch({ k, color, picking, onPick, label, small = false }: { k: JerseyKey; color: string; picking: boolean; onPick: () => void; label: string; small?: boolean }) {
   return (
     <button
       type="button"
@@ -75,19 +77,19 @@ function Swatch({ k, color, picking, onPick, label }: { k: JerseyKey; color: str
       className="group flex flex-col items-center gap-1"
     >
       <span
-        className={`grid h-8 w-8 place-items-center rounded-full transition-[box-shadow,transform] duration-150 group-hover:scale-105 ${
+        className={`grid ${small ? "h-6 w-6" : "h-8 w-8"} place-items-center rounded-full transition-[box-shadow,transform] duration-150 group-hover:scale-105 ${
           picking ? "animate-pulse shadow-[0_0_0_2px_var(--color-bg),0_0_0_4px_var(--color-own)]" : color ? "shadow-[0_0_0_1px_var(--color-line-strong)]" : "border border-dashed border-line-strong"
         }`}
         style={color ? { background: color } : undefined}
       >
         {(picking || !color) && <Eyedropper size={13} className={color ? "text-white mix-blend-difference" : "text-faint"} />}
       </span>
-      <span className="text-[10px] text-faint">{k.endsWith("_gk") ? "Portera" : k === "ref" ? "Árbitra" : "Jugadoras"}</span>
+      {!small && <span className="text-[10px] text-faint">{k.endsWith("_gk") ? "Portera" : k === "ref" ? "Árbitra" : "Jugadoras"}</span>}
     </button>
   );
 }
 
-export function KitPanel({ kits, picking, onPick, teams }: Props) {
+export function KitPanel({ kits, picking, onPick, teams, compact = false }: Props) {
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [msg, setMsg] = useState("");
   const { colors } = kits;
@@ -105,6 +107,41 @@ export function KitPanel({ kits, picking, onPick, teams }: Props) {
       window.setTimeout(() => setState("idle"), 1800);
     });
   };
+  const saveBtn = (
+    <button
+      type="button"
+      className={`btn !px-2.5 !py-1 text-xs transition-colors ${state === "saved" ? "!border-ok !bg-ok !text-bg" : state === "error" ? "!border-danger !text-danger" : ""}`}
+      disabled={KIT_ORDER.every((k) => !colors[k]) || state === "saving"}
+      title="Escribe los colores en match.yaml (los usa el tracking para separar equipos)"
+      aria-label="Guardar los colores en match.yaml"
+      onClick={save}
+    >
+      {state === "saved" ? <Check size={13} weight="bold" /> : <FloppyDisk size={13} />}
+      {!compact && (state === "saved" ? "Guardado" : "Guardar")}
+    </button>
+  );
+  if (compact)
+    return (
+      <section className="rounded-[10px] bg-surface px-3 py-2">
+        <div className="flex items-center gap-3">
+          <h2 className="text-[13px] text-ink">Uniformes</h2>
+          {rows.map((r) => (
+            <span key={r.name} className="flex items-center gap-1.5" title={r.name}>
+              <i className="h-4 w-1 shrink-0 rounded-full" style={{ background: r.color }} />
+              {r.keys.map((k) => (
+                <Swatch key={k} small k={k} color={colors[k] ?? ""} picking={picking === k} onPick={() => pick(k)} label={`${r.name} · ${k.endsWith("_gk") ? "portera" : "jugadoras"}`} />
+              ))}
+            </span>
+          ))}
+          <span className="flex items-center gap-1.5 border-l border-line-soft pl-3" title="Árbitra">
+            <Swatch small k="ref" color={colors.ref ?? ""} picking={picking === "ref"} onPick={() => pick("ref")} label="Árbitra" />
+          </span>
+          <span className="ml-auto">{saveBtn}</span>
+        </div>
+        {picking && <p className="mt-1.5 text-[11px] text-own">Clic en su camiseta en el video · Esc cancela</p>}
+        {msg && <p className="mt-1 text-[11px] text-danger">{msg}</p>}
+      </section>
+    );
   return (
     <section className="rounded-[10px] bg-surface p-4">
       <div className="mb-3 flex items-center justify-between gap-2">

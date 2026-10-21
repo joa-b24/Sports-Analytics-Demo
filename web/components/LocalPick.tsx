@@ -19,6 +19,7 @@ export function FilePicker({
   describe,
   primary = false,
   title,
+  subdirs = [],
 }: {
   // Folder, repository-relative: "matches/<carpeta>/tracking".
   dir: string;
@@ -33,6 +34,8 @@ export function FilePicker({
   describe?: (name: string) => string;
   primary?: boolean;
   title?: string;
+  // Subfolders listed too (their files show as "subfolder/name").
+  subdirs?: string[];
 }) {
   const [names, setNames] = useState<string[] | null>(null);
   const [open, setOpen] = useState(false);
@@ -41,11 +44,20 @@ export function FilePicker({
   const fileInput = useRef<HTMLInputElement>(null);
   // By its text: a regular expression written inline is a new object on every render.
   const source = pattern.source;
+  const subKey = subdirs.join("|");
   const refresh = useCallback(async () => {
     const files = await listLocal(dir);
     const re = new RegExp(source);
-    setNames(files ? files.filter((f) => !f.dir && re.test(f.name)).map((f) => f.name).sort(byNumber) : null);
-  }, [dir, source]);
+    if (!files) return setNames(null);
+    const own = files.filter((f) => !f.dir && re.test(f.name)).map((f) => f.name).sort(byNumber);
+    const extra: string[] = [];
+    for (const sd of subKey ? subKey.split("|") : []) {
+      if (!files.some((f) => f.dir && f.name === sd)) continue;
+      const inner = (await listLocal(`${dir}/${sd}`)) ?? [];
+      extra.push(...inner.filter((f) => !f.dir && re.test(f.name)).map((f) => `${sd}/${f.name}`).sort(byNumber));
+    }
+    setNames([...own, ...extra]);
+  }, [dir, source, subKey]);
   useEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => {

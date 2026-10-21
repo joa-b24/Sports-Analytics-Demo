@@ -1,5 +1,7 @@
 "use client";
 
+import { ShootoutPanel } from "@/components/match/Shootout";
+import { FolderTools, useYamlSync } from "@/components/match/FolderSync";
 import {
   CalendarBlank,
   CheckCircle,
@@ -219,6 +221,8 @@ function MatchPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [videoTab]);
+  // The match data written into match.yaml by themselves (components/match/FolderSync.tsx).
+  const yamlSync = useYamlSync(match, match?.venue_id ? allVenues(state.venues).find((v) => v.venue_id === match.venue_id) : undefined);
 
   if (!hydrated) return null;
   if (!match) {
@@ -452,13 +456,11 @@ function MatchPage() {
                       </span>,
                       "matches/<carpeta> en el repositorio: ahí viven el video, los tramos y el tracking",
                     )}
-                    {folderOk === false && (
-                      <p className="ml-[7.25rem] text-pretty text-warn">
-                        Renombrar con <code>python -m sportsan.ingest.rename_match {match.folder} &lt;nuevo&gt;</code>
-                      </p>
-                    )}
+                    <FolderTools match={match} sync={yamlSync} />
                   </div>
                 </section>
+
+                <ShootoutPanel match={match} events={allEvents} />
 
                 {/* The videos: one pill each (choosing one opens it), then the data of the one open. */}
                 <section className="border-t border-line p-4" title="Cada video tiene sus propios tiempos, tramos, eventos y jugadas; Análisis e Informe los juntan">
@@ -715,6 +717,7 @@ function MatchPage() {
               segments={timeline.segments}
               videoIds={videos.map((v) => v.video_id)}
               videoEvents={allEvents}
+              segmentsByVideo={segmentsByVideo}
               // On the joined axis the times are no longer video times: tooltips show the original ones.
               timeLabel={
                 videos.length > 1

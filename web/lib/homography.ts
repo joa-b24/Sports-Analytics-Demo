@@ -61,6 +61,14 @@ export function orient(H: Homography, pts: Pt[]): Homography | null {
   return null;
 }
 
+// The calibration of a frame between two calibrated ones (only 1 of every few frames is processed): both matrices scaled
+// so that H[8] = 1 and blended linearly. Close in time, the camera barely moves and this is indistinguishable from
+// computing it. Null when a matrix cannot be scaled.
+export function lerpHomography(A: Homography, B: Homography, t: number): Homography | null {
+  if (Math.abs(A[8]) < 1e-12 || Math.abs(B[8]) < 1e-12) return null;
+  return A.map((a, i) => (a / A[8]) * (1 - t) + (B[i] / B[8]) * t);
+}
+
 // Returns null when the point maps to infinity or behind the camera.
 export function apply(H: Homography, p: Pt): Pt | null {
   const w = H[6] * p[0] + H[7] * p[1] + H[8];

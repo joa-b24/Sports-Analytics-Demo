@@ -3,6 +3,7 @@
 import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
+import { ViewShade } from "@/components/ViewShade";
 import { COLORS, Pitch, toMeters } from "@/components/Pitch";
 import { LABEL_STYLES, PlayerMark, type LabelStyle } from "@/components/PlayerMark";
 import { IconButton, Modal } from "@/components/Modal";
@@ -17,7 +18,7 @@ import { FilePicker, partLabel } from "@/components/LocalPick";
 import { PersonTimeline, RANGE_DRAG, type JoinTarget } from "@/components/workspace/PersonTimeline";
 import { SpeedControl } from "@/components/SpeedControl";
 import { downloadText, fmtT, isTyping } from "@/lib/format";
-import { BALL_FILL_S, autoBall, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, metersPerUnit, pitchToPixel, pixelToPitch, type BallAuto, type Part } from "@/lib/parts";
+import { viewPolygon, BALL_FILL_S, autoBall, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, metersPerUnit, pitchToPixel, pixelToPitch, type BallAuto, type Part } from "@/lib/parts";
 import { anomalyKey, ballAnomalies, playerAnomalies, type Anomaly } from "@/lib/anomalies";
 import { applyHint, applyTeamCuts, cutHints, type CutHint } from "@/lib/cuts";
 import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
@@ -714,6 +715,14 @@ export function Correction({
     if (ballOdd.length === 0) return setMsg("El balón no tiene saltos imposibles en esta parte.");
     goAnomaly(ballOdd.find((a) => a.frame > frame + stride) ?? ballOdd[0]);
   };
+  // Alt + Q: the hand mark just before this frame goes (in an impossible jump it is often the earlier mark that is wrong).
+  const removePrevBall = () => {
+    if (pf === null) return;
+    const prev = (edits.ball ?? []).filter((b) => b.frame < pf).sort((x, y) => y.frame - x.frame)[0];
+    if (!prev) return setMsg("No hay una marca de balón antes de este cuadro.");
+    setEdits(removeBall(edits, prev.frame));
+    setMsg(`Quitada la marca de balón de ${fmtT(prev.frame / fps)}. Ctrl + Z la recupera.`);
+  };
   // Supr: the hand mark of this frame goes; without one, the tracker's ball of this frame is rejected.
   const removeBallHere = () => {
     if (pf === null) return;
@@ -808,7 +817,8 @@ export function Correction({
       else if (e.key === "n") nextMissingBall();
       else if (e.key === "i") startBallLine();
       else if (e.key === "k") holdHere();
-      else if (e.key === "a") nextBallAnomaly();
+      else if (e.key === "a" && !e.altKey) nextBallAnomaly();
+      else if ((e.key === "q" || e.code === "KeyQ") && e.altKey) removePrevBall();
       else if ((e.key === "Backspace" || e.key === "Delete") && pf !== null) removeBallHere();
       else if (e.key === "h") setPref("ball:boxes", ballBoxes ? "0" : "1");
       else return;
@@ -1268,6 +1278,13 @@ export function Correction({
     setMode(null);
     setMsg(`Quitados ${n} cuadro(s) de ${selAnoms.length} salto(s): se rellenan al guardar. Ctrl + Z lo deshace.`);
   };
+  // Alt + Q: the position before the jump goes instead (its box, or her feet marked by hand there).
+  const anomDropPrev = (a: Anomaly) => {
+    if (!data || a.person === undefined || a.before === undefined) return;
+    const hand = edits.manual.some((m) => m.identity === a.person && m.frame === a.before);
+    anomDone(a, hand ? removeManual(edits, a.person, a.before) : dropRange(edits, data, a.person, a.before, a.before));
+    setMsg(`Quitado el cuadro anterior al salto (${fmtT((a.before ?? 0) / fps)}): se rellena al guardar. Ctrl + Z lo deshace.`);
+  };
   const anomOk = (a: Anomaly) => anomDone(a, { ...edits, anomalyOk: [...new Set([...(edits.anomalyOk ?? []), anomalyKey(a)])] });
   const anomFix = (a: Anomaly) => {
     seekFrame(a.frame);
@@ -1278,9 +1295,11 @@ export function Correction({
   const anomKeys = useRef<(e: KeyboardEvent) => void>(() => undefined);
   useEffect(() => {
     anomKeys.current = (e: KeyboardEvent) => {
-      if (!anomOn || isTyping(e.target) || e.ctrlKey || e.metaKey || e.altKey || peek) return;
+      if (!anomOn || isTyping(e.target) || e.ctrlKey || e.metaKey || peek) return;
       const k = e.key.toLowerCase();
-      if (k === "q" && anomCur) anomDrop(anomCur);
+      if ((k === "q" || e.code === "KeyQ") && e.altKey && anomCur) anomDropPrev(anomCur);
+      else if (e.altKey) return;
+      else if (k === "q" && anomCur) anomDrop(anomCur);
       else if (k === "enter" && anomCur && mode === null) anomOk(anomCur);
       else if (k === "a") anomStep(e.shiftKey ? -1 : 1);
       else if (k === "escape" && mode === null) setAnomAt(null);
@@ -1630,7 +1649,11 @@ export function Correction({
       ball: ball.map((b) => ({ frame: b.frame, x: r2(b.x), y: r2(b.y), source: b.source })),
       // Positions in the normalised pitch. source: "auto" (detected), "manual" (feet marked by hand) or "interpolated"
       // (filled inside a short hole; never a measurement). `raw` is the measured position when smoothing moved it.
-      frames: data.frames.map((fr) => ({ frame: fr.frame, positions: byFrameOut.get(fr.frame) ?? [] })),
+      // `view`: what the camera saw in each frame, on the pitch (for the shadow of the animations).
+      frames: data.frames.map((fr) => {
+        const v = viewPolygon(data, fr.H);
+        return { frame: fr.frame, positions: byFrameOut.get(fr.frame) ?? [], ...(v ? { view: v } : {}) };
+      }),
     };
     const note = smoothOn
       ? `Suavizado: ${totals.outliers} microsalto(s) quitado(s), ${totals.filled} posición(es) rellenada(s), ${totals.openGaps} hueco(s) vacío(s).`
@@ -2346,7 +2369,7 @@ export function Correction({
         )}
         <span
           className="inline-flex cursor-help items-center text-faint"
-          title={"Clic en el balón (o en la cancha) marca\n→ paso · Alt → cuadro · Tab dos pasos\nEnter no se ve / fuera · n donde falta\ni recta hasta donde cae · k mantener quieto\na salto imposible · Supr quitar · h marcas · z zoom\ns acepta la sugerencia · x la descarta"}
+          title={"Clic en el balón (o en la cancha) marca\n→ paso · Alt → cuadro · Tab dos pasos\nEnter no se ve / fuera · n donde falta\ni recta hasta donde cae · k mantener quieto\na salto imposible · Supr quitar · Alt+Q quitar la marca anterior · h marcas · z zoom\ns acepta la sugerencia · x la descarta"}
           aria-label="Atajos de teclado"
         >
           <Keyboard size={16} />
@@ -2960,6 +2983,8 @@ export function Correction({
 
   const fileLabel = `${btn} relative cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`;
 
+  // What the camera sees in this frame, as a shadow on the drawing of the pitch.
+  const viewHere = data && row?.H ? viewPolygon(data, row.H) : null;
   const pitchCard = (
             <Card
               title={<span title="Anillo amarillo: marcada a mano · borde naranja: balón (hueco si es una posición rellenada) · de la seleccionada, 4 s antes y después: gris lo medido, blanco lo que se guardará">En la cancha</span>}
@@ -2979,6 +3004,7 @@ export function Correction({
                 ))}
               </div>
               <Pitch showDirection={false} svgRef={pitchSvg} onClick={onPitchClick} className={view === "ball" && pf !== null && row?.H ? "cursor-crosshair" : ""}>
+                <ViewShade poly={viewHere} />
                 {pitchShow !== "ball" && pieces([...selRaw].sort((u, v) => u.frame - v.frame)).map((piece) => (
                   <polyline key={`r${piece[0].frame}`} points={piece.map((q) => `${q.x},${q.y}`).join(" ")} fill="none" stroke="var(--color-faint)" strokeWidth={0.25} opacity={0.7} />
                 ))}
@@ -3978,6 +4004,11 @@ export function Correction({
                         <button type="button" className={btn} onClick={() => anomDrop(anomCur)} title="Sus cajas de esos cuadros no cuentan: al guardar se rellena con una recta">
                           <Eraser size={14} /> Quitar {anomFrames(anomCur) === 1 ? "el cuadro" : `${anomFrames(anomCur)} cuadros`} <kbd className="kbd">Q</kbd>
                         </button>
+                        {anomCur.before !== undefined && (
+                          <button type="button" className={btn} onClick={() => anomDropPrev(anomCur)} title="Muchas veces el que está mal es el cuadro de antes del salto: se quita ese y se rellena al guardar">
+                            <Eraser size={14} /> Quitar el anterior <kbd className="kbd">Alt+Q</kbd>
+                          </button>
+                        )}
                         <button
                           type="button"
                           className={`btn ${mode === "manual" ? "btn-primary" : ""}`}

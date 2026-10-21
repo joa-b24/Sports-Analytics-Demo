@@ -169,3 +169,15 @@ test("balón del tracker: entra donde no hay marca tuya ni lo quitaste, y una ma
   assert.ok(!ballPath([...pts, ...ev], 30, 3).some((p) => p.source === "event"));
   assert.deepEqual(autoBall(f, null, e), []);
 });
+
+test("lo que ve la cámara: el borde de la imagen llevado a la cancha, sin lo que queda sobre el horizonte", async () => {
+  const { viewPolygon } = await import("./parts.ts");
+  // Cámara que mira toda la cancha de frente: imagen de 1000 x 500 que va de x 0 a 105 y de y 0 a 68.
+  const H = [105 / 1000, 0, 0, 0, 68 / 500, 0, 0, 0, 1];
+  const f = { image_w: 1000, image_h: 500, venue: null };
+  const poly = viewPolygon(f, H, 4);
+  const xs = poly.map((p) => p[0]);
+  const ys = poly.map((p) => p[1]);
+  assert.deepEqual([Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)], [0, 105, 0, 68]);
+  assert.equal(viewPolygon(f, null), null);
+});

@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { DownloadSimple, FilmStrip, PencilSimple, Printer, Plus, Trash } from "@phosphor-icons/react";
-import { BinChart, CompareBars, Legend, ZoneMap } from "@/components/charts";
+import { BinChart, Legend, MirrorBars, ZoneMap } from "@/components/charts";
 import { GoalFrame } from "@/components/match/GoalFrame";
 import { BallBlock, LeftoversList, NetworkBlock, TouchesBlock, coverageText } from "@/components/match/ReportBall";
-import { PassMapSection, PhysicalSection, SectionsEditor, TeamBlockSection } from "@/components/match/ReportExtra";
+import { FigureRow, PassMapSection, PhysicalSection, SectionsEditor, StatList, TeamBlockSection } from "@/components/match/ReportExtra";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { btn, btnPrimary, input } from "@/components/Shell";
 import { BIN_MEASURES, type BinMeasure, type Rate, type Tally } from "@/lib/analysis";
@@ -17,9 +17,10 @@ import { downloadText } from "@/lib/format";
 import { writeLocal } from "@/lib/local";
 import { buildReport, clipList, clipsFileName, normalizeReport, reportFileName, type Gate, type Moment, type ReportData, type SetPieceSide, type TransitionRow } from "@/lib/report";
 import type { Segment } from "@/lib/segments";
-import { mutate, useStore } from "@/lib/store";
+import { mutate, setPref, usePref, useStore } from "@/lib/store";
 import { EVENT_DETAILS, EVENT_OUTCOMES, GOAL, type ManualResult, type Match, type MatchEvent, type Play, type Report } from "@/lib/types";
 import { matchVideos } from "@/lib/videos";
+import { setPaper, type Paper } from "@/lib/print";
 
 type Side = "own" | "opp";
 
@@ -32,6 +33,12 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
   const [saved, setSaved] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const report = normalizeReport(match.report);
+  // The PDF keeps the app's colours unless white paper is chosen; it applies to Ctrl+P too while the report is open.
+  const paper = usePref("report:paper", "app") as Paper;
+  useEffect(() => {
+    setPaper(paper);
+    return () => setPaper(null);
+  }, [paper]);
 
   const build = (anonymize: boolean) =>
     buildReport({
@@ -138,7 +145,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
         return <Crosses data={data} side={focus} />;
       case "network": {
         const net = focus === "own" ? data.summary.network : oppNet;
-        return net ? <NetworkBlock net={net} team={F} /> : <GateLine gate={data.summary.network_gate} />;
+        return net ? <NetworkBlock net={net} team={F} side={focus} /> : <GateLine gate={data.summary.network_gate} />;
       }
       case "pass_map":
         return <PassMapSection parts={parts} side={focus} team={F} segmentsByVideo={segmentsByVideo} />;
@@ -170,29 +177,32 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
         return <TextField value={report.jugadoras_clave} hint="Número, posición y qué hacen." onChange={(v) => setReport({ jugadoras_clave: v })} />;
       case "notes":
         return (
-          <>
-            <h4 className="mt-1 text-sm text-ink-2">Fortalezas</h4>
-            <TextField value={report.fortalezas} hint="Qué hacen bien y por dónde generan peligro." onChange={(v) => setReport({ fortalezas: v })} />
-            <h4 className="mt-4 text-sm text-ink-2">Debilidades</h4>
-            <TextField value={report.debilidades} hint="Dónde pierden el balón, espacios que dejan." onChange={(v) => setReport({ debilidades: v })} />
-            <h4 className="mt-4 text-sm text-ink-2">{data.texts.closing.title}</h4>
-            <TextField
-              value={data.texts.closing.text}
-              hint={closingHint}
-              onChange={(v) => setReport(data.texts.closing.key === "plan" ? { plan: v } : { conclusiones: v })}
-            />
-          </>
+          <div className="grid gap-5 md:grid-cols-2 print:grid-cols-2">
+            <Note title="Fortalezas" value={report.fortalezas} hint="Qué hacen bien y por dónde generan peligro." onChange={(v) => setReport({ fortalezas: v })} />
+            <Note title="Debilidades" value={report.debilidades} hint="Dónde pierden el balón, espacios que dejan." onChange={(v) => setReport({ debilidades: v })} />
+            <div className="md:col-span-2 print:col-span-2">
+              <Note
+                title={data.texts.closing.title}
+                value={data.texts.closing.text}
+                hint={closingHint}
+                onChange={(v) => setReport(data.texts.closing.key === "plan" ? { plan: v } : { conclusiones: v })}
+              />
+            </div>
+          </div>
         );
       case "plays":
         return (
-          <ul className="space-y-1 text-sm text-ink">
+          <ul className="divide-y divide-line-soft text-sm text-ink">
             {data.plays.map((p) => (
-              <li key={p.id}>
-                <span className="tc">
+              <li key={p.id} className="grid grid-cols-[minmax(0,10rem)_minmax(0,1fr)_auto] items-baseline gap-3 py-1.5 break-inside-avoid">
+                <span className="tc text-xs text-faint">
                   {p.moment.label}–{p.end_label}
-                </span>{" "}
-                · <strong>{p.title}</strong>
-                {p.note && <> · {p.note}</>} · <See m={p.moment} />
+                </span>
+                <span>
+                  <strong>{p.title}</strong>
+                  {p.note && <span className="text-ink-2"> · {p.note}</span>}
+                </span>
+                <See m={p.moment} />
               </li>
             ))}
           </ul>
@@ -206,9 +216,16 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
 
   const shown = layout.filter((id) => !missing[id]);
   const rest = shown.filter((id) => id !== "general");
+  // On screen they invite to write; on paper a section with nothing written (or a table left out) is not printed.
+  const blank = (...v: (string | undefined)[]) => v.every((x) => !x?.trim());
+  const printEmpty: Record<string, boolean> = {
+    key_players: blank(report.jugadoras_clave),
+    notes: blank(report.fortalezas, report.debilidades, data.texts.closing.text),
+    touches: !data.key_players.print,
+  };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8 print:max-w-none">
+    <div className="print-sheet mx-auto max-w-5xl space-y-8 print:max-w-none print:space-y-6">
       <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
         <label className="mr-auto flex items-center gap-1.5 text-xs text-muted" title="Cambia los nombres por el dorsal, para compartir fuera del cuerpo técnico">
           <input type="checkbox" checked={anon} onChange={(e) => setAnon(e.target.checked)} />
@@ -226,6 +243,18 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
           <FilmStrip size={15} />
           Clips
         </button>
+        <div className="seg" role="group" aria-label="Color del PDF" title="Color del PDF: el de la app o papel blanco (para imprimir en papel)">
+          {(
+            [
+              ["app", "Como la app"],
+              ["white", "Blanco"],
+            ] as const
+          ).map(([k, label]) => (
+            <button key={k} type="button" className="seg-opt" aria-pressed={paper === k} onClick={() => setPref("report:paper", k)}>
+              {label}
+            </button>
+          ))}
+        </div>
         <button type="button" className={btnPrimary} onClick={() => window.print()}>
           <Printer size={15} />
           PDF
@@ -256,7 +285,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       </div>
 
       {rest.map((id) => (
-        <Block key={id} title={sectionDef(id)?.title ?? id} note={sectionDef(id)?.both ? "Los dos equipos" : F} pageBreak={id === "notes"}>
+        <Block key={id} title={sectionDef(id)?.title ?? id} note={sectionDef(id)?.both ? "Los dos equipos" : F} side={sectionDef(id)?.both ? null : focus} printHidden={printEmpty[id]}>
           {section(id)}
         </Block>
       ))}
@@ -286,17 +315,24 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
 
 // --------------------------------------------------------------------------------------------- pieces
 
-function Block({ title, note, gate, pageBreak, children }: { title: string; note?: string; gate?: Gate; pageBreak?: boolean; children?: React.ReactNode }) {
+// A section flows across pages (a long table may split); its title stays with what follows and each figure inside keeps
+// itself whole (break-inside-avoid on the figures).
+function Block({ title, note, side, gate, printHidden, children }: { title: string; note?: string; side?: Side | null; gate?: Gate; printHidden?: boolean; children?: React.ReactNode }) {
   // A section with nothing but its level line is left out of the printout.
   const onlyGate = gate && !gate.ok && !children;
   return (
-    <section className={`break-inside-avoid ${pageBreak ? "print:break-before-page" : ""} ${onlyGate ? "print:hidden" : ""}`}>
-      <div className="flex flex-wrap items-center gap-3">
+    <section className={onlyGate || printHidden ? "print:hidden" : ""}>
+      <div className="flex flex-wrap items-center gap-3 break-after-avoid">
         <h3 className="sec-tag">{title}</h3>
         <span className="h-px flex-1 bg-line" />
-        {note && <span className="text-xs text-faint">{note}</span>}
+        {note && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-faint">
+            {side && <i className="h-2.5 w-1 rounded-full" style={{ background: sideColor(side) }} />}
+            {note}
+          </span>
+        )}
       </div>
-      <div className="mt-4 rounded-[10px] bg-surface p-5 print:bg-transparent print:p-0">
+      <div className="mt-3 rounded-[10px] border border-line-soft bg-surface p-5 print:p-4">
         {gate && <GateLine gate={gate} />}
         {children}
       </div>
@@ -306,34 +342,71 @@ function Block({ title, note, gate, pageBreak, children }: { title: string; note
 
 function Cover({ data, report, setReport, loading }: { data: ReportData; report: Report; setReport: (p: Partial<Report>) => void; loading: boolean }) {
   const c = data.cover;
+  const kpis = coverKpis(data);
   return (
-    <header className="space-y-4">
-      <div>
-        <div className="text-sm text-faint">{c.title}</div>
-        <h2 className="mt-1 text-3xl leading-tight text-ink">{c.name}</h2>
-      </div>
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-        <div className="cond flex h-11 items-stretch text-xl font-bold uppercase" title="Goles etiquetados de cada equipo">
-          <span className="flex items-center gap-2 rounded-l-md bg-surface px-4 whitespace-nowrap">
-            <i className="h-5 w-1 rounded-full bg-own" />
-            {c.focus_team}
-          </span>
-          <span className="grid w-11 place-items-center bg-ink text-2xl font-extrabold text-bg">{c.score ? c.score.own : "–"}</span>
-          <span className="grid w-11 place-items-center border-l border-bg bg-ink text-2xl font-extrabold text-bg">{c.score ? c.score.opp : "–"}</span>
-          <span className="flex items-center gap-2 rounded-r-md bg-surface px-4 whitespace-nowrap">
-            {c.other_team}
-            <i className="h-5 w-1 rounded-full bg-opp" />
-          </span>
+    <header className="space-y-3 break-inside-avoid">
+      <div className="overflow-hidden rounded-[14px] border border-line-soft bg-surface">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4 px-6 pt-5 pb-5">
+          <div className="min-w-0">
+            <div className="text-xs font-medium tracking-wide text-faint uppercase">{c.title}</div>
+            <h2 className="mt-1 text-3xl leading-tight text-ink">{c.name}</h2>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
+              <span className="tc">{c.date || "sin fecha"}</span>
+              {c.jornada && <span>Jornada {c.jornada}</span>}
+              <label className="flex items-center gap-1.5 print:hidden">
+                {!c.jornada && "Jornada"}
+                <input className={`${input} w-16 !py-0.5`} value={report.jornada ?? ""} placeholder="3" aria-label="Jornada" onChange={(e) => setReport({ jornada: e.target.value })} />
+              </label>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="cond flex h-12 items-stretch text-xl font-bold uppercase" title="Goles etiquetados de cada equipo">
+              <span className="flex items-center gap-2 rounded-l-md bg-raised px-4 whitespace-nowrap">
+                <i className="h-5 w-1 rounded-full bg-own" />
+                {c.focus_team}
+              </span>
+              <span className="grid w-12 place-items-center bg-ink text-3xl font-extrabold text-bg">{c.score ? c.score.own : "–"}</span>
+              <span className="grid w-12 place-items-center border-l border-bg bg-ink text-3xl font-extrabold text-bg">{c.score ? c.score.opp : "–"}</span>
+              <span className="flex items-center gap-2 rounded-r-md bg-raised px-4 whitespace-nowrap">
+                {c.other_team}
+                <i className="h-5 w-1 rounded-full bg-opp" />
+              </span>
+            </div>
+            {c.shootout && (
+              <span className="cond text-lg font-bold text-ink-2" title={`Tanda de penales: ${c.shootout.kicks.length} tiros`}>
+                Penales {c.shootout.own}–{c.shootout.opp}
+              </span>
+            )}
+          </div>
         </div>
-        <span className="tc text-sm text-muted">{c.date || "sin fecha"}</span>
-        <label className="flex items-center gap-1.5 text-sm text-muted print:hidden">
-          Jornada
-          <input className={`${input} w-20`} value={report.jornada ?? ""} placeholder="3" onChange={(e) => setReport({ jornada: e.target.value })} />
-        </label>
-        {c.jornada && <span className="hidden text-sm print:inline">Jornada {c.jornada}</span>}
+        {kpis.length > 0 && (
+          <dl className="grid grid-cols-2 border-t border-line-soft sm:grid-cols-3 lg:grid-cols-5 print:grid-cols-5">
+            {kpis.map((k) => (
+              <div key={k.label} className="border-line-soft px-5 py-3.5 not-first:border-l" title={`${k.label} · ${c.focus_team}: ${k.own} · ${c.other_team}: ${k.opp}`}>
+                <dt className="text-xs text-muted">{k.label}</dt>
+                <dd className="mt-1 flex flex-wrap items-baseline gap-x-2">
+                  <span className="num text-3xl whitespace-nowrap text-ink">{k.own}</span>
+                  <span className="text-xs whitespace-nowrap text-faint">vs {k.opp}</span>
+                </dd>
+                <div className="mt-2 flex h-1 gap-0.5 overflow-hidden rounded-full">
+                  {k.share === null ? (
+                    <span className="h-full w-full bg-line-soft" />
+                  ) : (
+                    <>
+                      <span className="h-full rounded-full" style={{ width: `${100 * k.share}%`, background: COLORS.own }} />
+                      <span className="h-full flex-1 rounded-full" style={{ background: COLORS.opp }} />
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </dl>
+        )}
       </div>
-      <div className="text-sm text-ink-2">{c.level.label}</div>
-      {c.level.next && <p className="-mt-3 text-xs text-faint print:hidden">{c.level.next}</p>}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+        <span className="tag">Datos {c.level.label.replace(/^Nivel de datos:\s*/, "")}</span>
+      </div>
+      {c.level.next && <p className="text-xs text-faint print:hidden">{c.level.next}</p>}
       {loading && <p className="text-xs text-faint print:hidden">Leyendo el tracking de la carpeta del partido…</p>}
       {c.is_demo && (
         <div className="rounded-md bg-warn-900 px-3 py-1.5 text-sm text-warn">
@@ -344,6 +417,36 @@ function Cover({ data, report, setReport, loading }: { data: ReportData; report:
   );
 }
 
+// The headline figures under the scoreboard: only those this match has (no ball followed, no possession tile).
+function coverKpis(data: ReportData): { label: string; own: string; opp: string; share: number | null }[] {
+  const out: { label: string; own: string; opp: string; share: number | null }[] = [];
+  const share = (a: number, b: number) => (a + b > 0 ? a / (a + b) : null);
+  const b = data.summary.ball;
+  if (b) {
+    const s = share(b.possession.own, b.possession.opp);
+    if (s !== null) out.push({ label: "Posesión", own: `${Math.round(100 * s)} %`, opp: `${100 - Math.round(100 * s)} %`, share: s });
+  }
+  if (data.cover.level.events > 0) {
+    const row = (k: string) => data.summary.rows.find((r) => r.key === k);
+    for (const [k, label] of [
+      ["shots", "Tiros"],
+      ["on_target", "A puerta"],
+      ["recoveries", "Recuperaciones"],
+    ] as const) {
+      const r = row(k);
+      if (r) out.push({ label, own: String(r.own), opp: String(r.opp), share: share(r.own, r.opp) });
+    }
+  }
+  if (b) {
+    const p = (s: Side) => b.passes[s].completed + b.passes[s].cut;
+    if (p("own") + p("opp") > 0) {
+      const pc = (s: Side) => (p(s) > 0 ? Math.round((100 * b.passes[s].completed) / p(s)) : null);
+      out.push({ label: "Pases completos", own: pc("own") === null ? "—" : `${pc("own")} %`, opp: pc("opp") === null ? "—" : `${pc("opp")} %`, share: share(b.passes.own.completed, b.passes.opp.completed) });
+    }
+  }
+  return out;
+}
+
 // General: both teams side by side (figures, by 5 or 10 min, possession and passes read from the ball).
 function General({ data }: { data: ReportData }) {
   const [binMin, setBinMin] = useState<"5" | "10">("5");
@@ -352,14 +455,19 @@ function General({ data }: { data: ReportData }) {
   const B = data.cover.other_team;
   const box = data.summary.rows.find((r) => r.rate);
   const bins = data.summary.bins[binMin];
+  // A row where neither team has anything says nothing; it is listed in a line under the chart instead.
+  const rows = data.summary.rows.filter((r) => r.own + r.opp > 0);
+  const zero = data.summary.rows.filter((r) => r.own + r.opp === 0).map((r) => r.label.toLowerCase());
+  const binsAny = bins.bins.some((x) => x.own[measure] + x.opp[measure] > 0);
   return (
     <div className="space-y-6">
       {data.cover.level.events === 0 ? (
         <p className="text-sm text-faint">Sin eventos etiquetados todavía.</p>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2 print:grid-cols-2">
-          <div>
-            <CompareBars aLabel={A} bLabel={B} rows={data.summary.rows.map((r) => ({ label: r.label, a: r.own, b: r.opp }))} />
+        <div className="space-y-6">
+          <div className="mx-auto max-w-3xl break-inside-avoid">
+            <MirrorBars aLabel={A} bLabel={B} rows={rows.map((r) => ({ label: r.label, a: r.own, b: r.opp }))} />
+            {zero.length > 0 && <p className="mt-2 text-xs text-faint">Ninguno de los dos: {zero.join(", ")}.</p>}
             {box?.rate && (
               <p className="mt-2 text-xs text-faint">
                 Entradas al área que acaban en tiro (15 s): {A} {rate(box.rate.own)} · {B} {rate(box.rate.opp)}.
@@ -369,28 +477,50 @@ function General({ data }: { data: ReportData }) {
               <GateLine gate={data.summary.possession} />
             </div>
           </div>
-          <div>
-            <div className="mb-2 flex flex-wrap items-center gap-2 print:hidden">
-              <div className="seg">
-                {(["5", "10"] as const).map((b) => (
-                  <button key={b} type="button" className="seg-opt" aria-pressed={binMin === b} onClick={() => setBinMin(b)}>
-                    {b} min
-                  </button>
-                ))}
+          <div className={`grid gap-8 ${data.summary.substitutions.length > 0 ? "md:grid-cols-[minmax(0,1fr)_16rem] print:grid-cols-[minmax(0,1fr)_14rem]" : ""}`}>
+            <div className="break-inside-avoid">
+              <div className="mb-2 flex flex-wrap items-center gap-2 print:hidden">
+                <div className="seg">
+                  {(["5", "10"] as const).map((b) => (
+                    <button key={b} type="button" className="seg-opt" aria-pressed={binMin === b} onClick={() => setBinMin(b)}>
+                      {b} min
+                    </button>
+                  ))}
+                </div>
+                <select className={input} value={measure} onChange={(e) => setMeasure(e.target.value as BinMeasure)} aria-label="Qué contar">
+                  {Object.entries(BIN_MEASURES).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <select className={input} value={measure} onChange={(e) => setMeasure(e.target.value as BinMeasure)} aria-label="Qué contar">
-                {Object.entries(BIN_MEASURES).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
-                  </option>
-                ))}
-              </select>
+              <div className="mb-1 text-sm font-medium text-ink">
+                {BIN_MEASURES[measure]} cada {binMin} min {bins.basis === "juego" ? "de juego" : "de video"}
+              </div>
+              {binsAny ? (
+                <BinChart aLabel={A} bLabel={B} bins={bins.bins.map((x) => ({ label: x.label, a: x.own[measure], b: x.opp[measure] }))} />
+              ) : (
+                <p className="text-sm text-faint">Ningún equipo tiene {BIN_MEASURES[measure].toLowerCase()} en este partido.</p>
+              )}
+              {bins.skipped > 0 && <p className="mt-1 text-xs text-faint">{bins.skipped} evento(s) fuera de los tramos de juego no se cuentan.</p>}
             </div>
-            <div className="mb-1 text-sm font-medium text-ink">
-              {BIN_MEASURES[measure]} cada {binMin} min {bins.basis === "juego" ? "de juego" : "de video"}
-            </div>
-            <BinChart aLabel={A} bLabel={B} bins={bins.bins.map((x) => ({ label: x.label, a: x.own[measure], b: x.opp[measure] }))} />
-            {bins.skipped > 0 && <p className="mt-1 text-xs text-faint">{bins.skipped} evento(s) fuera de los tramos de juego no se cuentan.</p>}
+            {data.summary.substitutions.length > 0 && (
+              <div className="break-inside-avoid">
+                <div className="mb-1 text-sm font-medium text-ink">Cambios</div>
+                <ul className="m-0 space-y-0.5 p-0 text-xs text-muted">
+                  {data.summary.substitutions.map((s, i) => (
+                    <li key={i} className="flex items-center gap-2">
+                      <i className={`h-3 w-1 shrink-0 rounded-full ${s.team === "own" ? "bg-own" : "bg-opp"}`} />
+                      <span className="tc w-12 shrink-0 text-faint">{s.moment.minute !== null ? `${s.moment.minute}'` : s.moment.label}</span>
+                      <span className="text-ink-2">{s.in ?? "¿?"}</span>
+                      <span className="text-faint">por</span>
+                      <span>{s.out ?? "¿?"}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -450,10 +580,23 @@ function Crosses({ data, side }: { data: ReportData; side: Side }) {
   const crossLabels = EVENT_OUTCOMES.cross ?? {};
   const arrows = m.crosses.filter((c) => c.team === side);
   const t = m.crosses_outcome[side];
+  const missingNote = [m.crosses_no_end[side] > 0 && `${m.crosses_no_end[side]} sin destino marcado`, m.crosses_no_pos[side] > 0 && `${m.crosses_no_pos[side]} sin posición`]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <div className="break-inside-avoid md:max-w-[75%]">
-      <Legend items={[...Object.entries(crossLabels).map(([k, v]) => ({ color: OUTCOME_COLOR[k], label: `${v} (${t.counts[k] ?? 0})` })), { color: "var(--color-faint)", label: `Sin resultado (${t.unknown})`, hollow: true }]} />
-      <Pitch className="mt-2">
+    <FigureRow
+      note={`${arrows.length} de ${t.total} centro(s) en el mapa${missingNote ? ` · ${missingNote}` : ""}. Línea discontinua: sin resultado anotado.`}
+      aside={
+        <StatList
+          items={[
+            { label: "Centros", value: t.total },
+            ...Object.entries(crossLabels).map(([k, v]) => ({ label: v, value: t.counts[k] ?? 0, mark: OUTCOME_COLOR[k] })),
+            ...(t.unknown > 0 ? [{ label: "Sin resultado", value: t.unknown, mark: "var(--color-faint)", hollow: true }] : []),
+          ]}
+        />
+      }
+    >
+      <Pitch>
         <defs>
           <marker id={`arrow-${side}`} viewBox="0 0 6 6" refX={5} refY={3} markerWidth={4} markerHeight={4} orient="auto-start-reverse">
             <path d="M0 0L6 3L0 6z" fill="context-stroke" />
@@ -475,12 +618,7 @@ function Crosses({ data, side }: { data: ReportData; side: Side }) {
           </line>
         ))}
       </Pitch>
-      <p className="mt-1 text-xs text-faint">
-        {t.total} centro(s): {arrows.length} en el mapa
-        {m.crosses_no_end[side] > 0 && ` · ${m.crosses_no_end[side]} sin destino marcado`}
-        {m.crosses_no_pos[side] > 0 && ` · ${m.crosses_no_pos[side]} sin posición`}.
-      </p>
-    </div>
+    </FigureRow>
   );
 }
 
@@ -488,33 +626,40 @@ function Duels({ data, side }: { data: ReportData; side: Side }) {
   const d = data.maps.duels;
   if (!d) return null;
   const c = sideColor(side);
+  const mine = d.points.filter((p) => p.team === side);
+  const aerial = mine.filter((p) => p.detail === "aerial");
+  const won = d.won[side];
+  const lost = d.lost[side];
   return (
-    <div className="break-inside-avoid md:max-w-[70%]">
-      <Legend
-        items={[
-          { color: c, label: `${d.won[side]} ganados` },
-          { color: c, label: `${d.lost[side]} perdidos`, hollow: true },
-        ]}
-      />
-      <Pitch className="mt-2">
-        {d.points
-          .filter((p) => p.team === side)
-          .map((p) => {
-            const fill = p.outcome === "won" ? c : "var(--color-surface)";
-            const title = `${p.outcome ? EVENT_OUTCOMES.duel?.[p.outcome] : "sin resultado"} · ${p.detail ? EVENT_DETAILS.duel?.[p.detail] : "tipo sin anotar"} · ${when(p.moment)}`;
-            return p.detail === "aerial" ? (
-              <rect key={p.id} x={p.x - 1.3} y={p.y - 1.3} width={2.6} height={2.6} fill={fill} stroke={c} strokeWidth={0.5}>
-                <title>{title}</title>
-              </rect>
-            ) : (
-              <circle key={p.id} cx={p.x} cy={p.y} r={1.4} fill={fill} stroke={c} strokeWidth={0.5}>
-                <title>{title}</title>
-              </circle>
-            );
-          })}
+    <FigureRow
+      note={<>Cuadrado: aéreo · círculo: en el suelo o sin anotar.{d.no_pos > 0 && ` ${d.no_pos} sin posición no salen en el mapa.`}</>}
+      aside={
+        <StatList
+          items={[
+            { label: "Ganados", value: won, mark: c },
+            { label: "Perdidos", value: lost, mark: c, hollow: true },
+            { label: "% ganados", value: won + lost > 0 ? `${Math.round((100 * won) / (won + lost))} %` : "—" },
+            { label: "Aéreos ganados", value: `${aerial.filter((p) => p.outcome === "won").length} de ${aerial.length}` },
+          ]}
+        />
+      }
+    >
+      <Pitch>
+        {mine.map((p) => {
+          const fill = p.outcome === "won" ? c : "var(--color-surface)";
+          const title = `${p.outcome ? EVENT_OUTCOMES.duel?.[p.outcome] : "sin resultado"} · ${p.detail ? EVENT_DETAILS.duel?.[p.detail] : "tipo sin anotar"} · ${when(p.moment)}`;
+          return p.detail === "aerial" ? (
+            <rect key={p.id} x={p.x - 1.3} y={p.y - 1.3} width={2.6} height={2.6} fill={fill} stroke={c} strokeWidth={0.5}>
+              <title>{title}</title>
+            </rect>
+          ) : (
+            <circle key={p.id} cx={p.x} cy={p.y} r={1.4} fill={fill} stroke={c} strokeWidth={0.5}>
+              <title>{title}</title>
+            </circle>
+          );
+        })}
       </Pitch>
-      <p className="mt-1 text-xs text-faint">Cuadrado: aéreo · círculo: en el suelo o sin anotar.{d.no_pos > 0 && ` ${d.no_pos} sin posición no salen en el mapa.`}</p>
-    </div>
+    </FigureRow>
   );
 }
 
@@ -536,10 +681,10 @@ function Zones({ data, side }: { data: ReportData; side: Side }) {
 function TransitionList({ rows, empty, what }: { rows: TransitionRow[]; empty: string; what: string }) {
   if (rows.length === 0) return <p className="text-sm text-faint">{empty}</p>;
   return (
-    <ul className="space-y-1 text-sm text-ink">
+    <ul className="divide-y divide-line-soft text-sm text-ink">
       {rows.map((r) => (
-        <li key={r.id} className="flex flex-wrap items-baseline gap-x-2">
-          <span className="tc w-10 text-faint">{when(r.moment)}</span>
+        <li key={r.id} className="grid grid-cols-[2.75rem_minmax(0,1fr)_auto] items-baseline gap-2 py-1 break-inside-avoid">
+          <span className="tc text-xs text-faint">{when(r.moment)}</span>
           <span>
             {what} {r.zone ? <span className="text-ink-2">en {r.zone.toLowerCase()}</span> : <span className="text-faint">sin zona</span>}
             {r.player && <span className="text-faint"> · {r.player}</span>} → {r.goal ? <strong>gol</strong> : "tiro"} a los {r.seconds} s
@@ -598,11 +743,20 @@ function GateLine({ gate }: { gate: Gate }) {
   return <p className="text-sm text-faint print:hidden">{gate.need}</p>;
 }
 
+function Note({ title, value, hint, onChange }: { title: string; value: string; hint: string; onChange: (v: string) => void }) {
+  return (
+    <div className={`break-inside-avoid ${value.trim() ? "" : "print:hidden"}`}>
+      <h4 className="text-sm font-medium text-ink">{title}</h4>
+      <TextField value={value} hint={hint} onChange={onChange} />
+    </div>
+  );
+}
+
 function TextField({ value, hint, onChange }: { value: string; hint: string; onChange: (v: string) => void }) {
   return (
     <>
       <textarea className={`${input} mt-2 w-full print:hidden`} rows={4} placeholder={hint} value={value} onChange={(e) => onChange(e.target.value)} />
-      <p className="mt-2 hidden text-sm whitespace-pre-wrap text-ink print:block">{value || "—"}</p>
+      {value.trim() && <p className="mt-2 hidden text-sm whitespace-pre-wrap text-ink print:block">{value}</p>}
     </>
   );
 }
@@ -760,9 +914,13 @@ function SetPieces({ data }: { data: ReportData }) {
           <div className="mb-1 text-xs text-ink-2">Jugadas de balón parado guardadas</div>
           <ul className="space-y-1 text-sm text-ink">
             {data.set_pieces.plays.map((p) => (
-              <li key={p.id}>
-                <span className="tc text-faint">{p.moment.label}</span> · <strong>{p.title}</strong>
-                {p.note && <> · {p.note}</>} · <See m={p.moment} />
+              <li key={p.id} className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)_auto] items-baseline gap-3">
+                <span className="tc text-xs text-faint">{p.moment.label}</span>
+                <span>
+                  <strong>{p.title}</strong>
+                  {p.note && <span className="text-ink-2"> · {p.note}</span>}
+                </span>
+                <See m={p.moment} />
               </li>
             ))}
           </ul>

@@ -5,10 +5,11 @@ import { BoardView } from "@/components/board/BoardView";
 import { btnPrimary } from "@/components/Shell";
 import { keyframePositions, resolveAll } from "@/lib/annotations";
 import { sheetLayout, sheetPages } from "@/lib/boards";
+import { printWith } from "@/lib/print";
 import { setPref, usePref } from "@/lib/store";
 import { BOARD_CATEGORY_LABELS, BOARD_SIDE_LABELS, type Board } from "@/lib/types";
 
-// One sheet per step, with its drawings and its note, ready to print (or save as PDF from the print dialog).
+// One sheet per step, with its drawings and its note, ready to print on white paper (or save as PDF from the print dialog).
 export function BoardSheets({ board }: { board: Board }) {
   const perPage = usePref("board:perPage", "4");
   // As large as the steps of one page allow on A4 or letter (lib/boards.ts sheetLayout).
@@ -19,7 +20,7 @@ export function BoardSheets({ board }: { board: Board }) {
   const kind = `${BOARD_CATEGORY_LABELS[board.category]} ${BOARD_SIDE_LABELS[board.side].toLowerCase()}`;
 
   return (
-    <div className="space-y-5">
+    <div className="print-sheet space-y-5">
       <div className="flex flex-wrap items-center gap-3 print:hidden">
         <div className="seg" aria-label="Pasos por página">
           {["2", "3", "4"].map((n) => (
@@ -28,7 +29,7 @@ export function BoardSheets({ board }: { board: Board }) {
             </button>
           ))}
         </div>
-        <button type="button" className={btnPrimary} onClick={() => window.print()}>
+        <button type="button" className={btnPrimary} onClick={() => printWith("white")}>
           <Printer size={15} />
           Imprimir o guardar PDF
         </button>
