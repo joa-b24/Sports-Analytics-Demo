@@ -31,6 +31,7 @@ import numpy as np
 
 from ..schema import MARGIN_M, PITCH_LENGTH_M, PITCH_WIDTH_M
 from .detect import DEFAULT_TRACKER, LOOSE_ID, Chunk, FrameTracker, chunk_quality, default_model, estimate_seconds, fmt_duration, jersey_color, load_model, plan_chunks
+from .feet import FEET_CORRECTION, correct_rows
 from .propagate import apply_h, estimate_motion, propagate, venue_grid
 from .stitch import absorb_loose, duplicate_loose, fragments_from_boxes, stitch
 from .team import JERSEY_KEYS, MAX_COLOR_DISTANCE, classify_team, hex_to_lab, lab_to_hex, team_changes, track_teams, track_teams_legacy, vote_teams  # noqa: F401  (se usan desde aquí)
@@ -316,8 +317,12 @@ def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray
     meters: list[np.ndarray] = []
     positions: list[np.ndarray] = []
     insides: list[np.ndarray] = []
-    for H, row in zip(Hs, rows):
-        feet = np.array([[(r["box"][0] + r["box"][2]) / 2, r["box"][3]] for r in row], dtype=float).reshape(-1, 2)
+    # Feet: the bottom of the box, or under the head where that bottom is not reliable (feet.py, FEET_CORRECTION).
+    if FEET_CORRECTION:
+        feet_rows, _ = correct_rows(frames, rows, fps)
+    else:
+        feet_rows = [np.array([[(r["box"][0] + r["box"][2]) / 2, r["box"][3]] for r in row], dtype=float).reshape(-1, 2) for row in rows]
+    for H, row, feet in zip(Hs, rows, feet_rows):
         m = to_meters(H, feet)
         xy = m * np.array([PITCH_LENGTH_M / length, PITCH_WIDTH_M / width])
         meters.append(m)

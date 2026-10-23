@@ -1,0 +1,22 @@
+{
+  "equipo": "Tec CCM",
+  "nota": "Dada por la analista (2026-10-22). Nombres tal como los escribió; resolver contra config/roster.json y los nombres de labels_*.json. Hay dos «Zoe»: la portera es «Zoe S.»; la del medio (MCO izquierda) es «Zoe». Segundo tiempo (videos v2, v3): hay cambios y NO se conoce la formación; no asumir la del primer tiempo.",
+  "primer_tiempo": {
+    "video": "v1",
+    "formacion": "4-3-3",
+    "roles": {
+      "GK": "Zoe S.",
+      "LB": "Ivonne",
+      "CB_izq": "Kat",
+      "CB_der": "Regi",
+      "RB": "Shu",
+      "MC": "Paz",
+      "MCO_izq": "Zoe",
+      "MCO_der": "Lelo",
+      "LW": "Ceci",
+      "DC": "Citla",
+      "RW": "Quiroz"
+    }
+  },
+  "segundo_tiempo": {"videos": ["v2", "v3"], "formacion": null, "roles": null}
+}
