@@ -426,6 +426,8 @@ export interface TrackEdits {
   anomalyOk?: string[];
   // Events suggested from the ball (lib/autoEvents.ts) rejected here, by suggestion id.
   autoRejected?: string[];
+  // Anchors mode (lib/anchors.ts): doubts of links_<part>.json already resolved, by doubtKey. Absent in older edits.
+  anchorDoubts?: string[];
 }
 
 // A pass tagged by hand (pass 4 of the tagging): who to whom. to_id is null when it did not reach a teammate.
@@ -475,6 +477,31 @@ export interface State {
   edits: ClipEdit[];
   // Shirt colours by match_id of the match folder, as #rrggbb.
   jerseys: Record<string, { own: string; opp: string; ref: string; own_gk?: string; opp_gk?: string }>;
+  // Comparison of two fills of one part (Revisión, lib/compare.ts). Absent in older data.
+  reviews?: PartReview[];
+}
+
+export type ReviewVersionId = "A" | "B";
+// One version of a part under comparison. The edits of the open version live in trackEdits; the other one's here.
+export interface ReviewVersion {
+  edits?: TrackEdits;
+  // Fill loaded (links file name) and whether it was the example made in the app.
+  loaded?: string;
+  example?: boolean;
+  // Edits right after «Resolver automático» (or the start of the verification): what is counted as work by hand.
+  checkpoint?: TrackEdits;
+  auto?: { doubts: string[]; byReason: Record<string, { boxes: number; doubts: number }> };
+  // Players verified by hand in this version.
+  verified?: string[];
+}
+export interface PartReview {
+  // Same key as the TrackEdits of the part.
+  key: string;
+  active: ReviewVersionId;
+  // The edits of the part before any fill was loaded: where both versions start.
+  base: TrackEdits;
+  A: ReviewVersion;
+  B: ReviewVersion;
 }
 
 export const PITCH = { length: 105, width: 68 };

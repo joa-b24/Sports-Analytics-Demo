@@ -24,6 +24,8 @@ const READABLE = [/^matches$/, /^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.js
 const WRITABLE = [
   /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors|labels)_[\w.-]+\.json$/,
   /^matches\/[\w.-]+\/(match\.yaml|segments\.csv)$/,
+  // Anchors named in the anchors mode of the table (lib/anchors.ts); suggest_ and links_ are written by Python.
+  /^matches\/[\w.-]+\/tracking\/auto\/(ejemplo\/)?anchors_[\w.-]+\.json$/,
   // Data of the report (lib/report.ts), kept next to the match; out of git (it carries player names).
   /^matches\/[\w.-]+\/report_[\w.-]+\.json$/,
   // Drawings over the video of a play (lib/clips.ts) and the list of clips of the report; out of git (names).
@@ -42,6 +44,7 @@ const TYPES: Record<string, string> = {
   ".json": "application/json",
   ".jpg": "image/jpeg",
   ".csv": "text/csv; charset=utf-8",
+  ".log": "text/plain; charset=utf-8",
   ".yaml": "text/yaml; charset=utf-8",
   ".yml": "text/yaml; charset=utf-8",
 };

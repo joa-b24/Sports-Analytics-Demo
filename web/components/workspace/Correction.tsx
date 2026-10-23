@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard, Anchor, Table, Scales } from "@phosphor-icons/react";
+import { Pager } from "@/components/Paged";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
 import { ViewShade } from "@/components/ViewShade";
@@ -69,10 +70,24 @@ import { autoEvents, pending as pendingAuto, reviewedStretches, AUTO, type Sugge
 import type { FixedFile } from "@/lib/positions";
 import { matchVideos } from "@/lib/videos";
 import { AutoSuggestions } from "@/components/workspace/AutoSuggestions";
+import { AnchorsPanel, type BoxPick } from "@/components/workspace/AnchorsPanel";
+import { ReviewPanel } from "@/components/workspace/ReviewPanel";
+import { exampleExpPath } from "@/lib/compare";
+import { FOCUS_COLORS, focusBoxes, partOfData, type AnchorFocus } from "@/lib/anchors";
 import { NOBODY, PLAYERS_DONE, SAMPLE_S, applyQuick, applyQuickOnto, leftovers, namedCount, nextCheckpoint, partStatus, quickModel, sampleFrames, type QuickLabel } from "@/lib/quick";
 
 const TEAM_LABELS: Record<TeamCode, string> = { own: "Analizado", opp: "Contrario", ref: "Árbitra", unk: "Sin equipo" };
 const TEAM_COLORS: Record<TeamCode, string> = { own: COLORS.own, opp: COLORS.opp, ref: "var(--color-warn)", unk: "var(--color-faint)" };
+// Boxes of an anchor or a doubt, by their number (1, 2, 3...).
+const CHECK_PER_PAGE = 3;
+// The ways of working on the players, always in this order (Alt + 1/2/3/4).
+type PlayerView = "players" | "quick" | "anchors" | "review";
+const PLAYER_VIEWS: { v: PlayerView; name: string; key: string; title: string; Icon: typeof Table }[] = [
+  { v: "players", name: "Mesa", key: "1", title: "Mesa: corregir cajas, unir y separar a mano", Icon: Table },
+  { v: "quick", name: "Revisión rápida", key: "2", title: "Revisión rápida: nombrar a cada jugadora siguiéndola por la parte", Icon: Lightning },
+  { v: "anchors", name: "Anclas", key: "3", title: "Anclas: nombrar momentos sugeridos, rellenar con Python y revisar sus dudas", Icon: Anchor },
+  { v: "review", name: "Revisión", key: "4", title: "Revisión: comparar el relleno actual (A) con el experimento (B) en esta parte", Icon: Scales },
+];
 // Same value as LOOSE_ID in sportsan/tracking/detect.py.
 const LOOSE_ID = 1_000_000;
 const NO_COLORS: JerseyColors = { own: "", opp: "", ref: "", own_gk: "", opp_gk: "" };
@@ -137,8 +152,8 @@ const SIDE_MIN_PX = 260;
 const SIDE_MAX_PX = 640;
 const SIDE_DEFAULT_PX = 336;
 // The panels that can go beside the video or under it (dragged by their grip).
-type ModuleId = "ball" | "pitch" | "quick" | "squad" | "person" | "auto";
-const MODULE_NAMES: Record<ModuleId, string> = { ball: "Balón", pitch: "En la cancha", quick: "Revisión rápida", squad: "Plantilla", person: "Jugadora", auto: "Sugerencias" };
+type ModuleId = "ball" | "pitch" | "quick" | "squad" | "person" | "auto" | "anchors" | "review";
+const MODULE_NAMES: Record<ModuleId, string> = { ball: "Balón", pitch: "En la cancha", quick: "Revisión rápida", squad: "Plantilla", person: "Jugadora", auto: "Sugerencias", anchors: "Anclas", review: "Revisión" };
 const MODULE_DRAG = "application/x-sportsan-module";
 // Held keys: an arrow plays (or rewinds) at this speed; Space held steps one processed frame every CREEP_MS.
 const FAST_RATE = 4;
@@ -221,7 +236,8 @@ export function Correction({
   // Used for the kit colours while no tracks file (which names its match) is loaded.
   const [matchIdText, setMatchIdText] = useState(folder || "partido_2026_09_25");
   // Previous states of the corrections of this part, for undo.
-  const [history, setHistory] = useState<TrackEdits[]>([]);
+  // By part and version of the Revisión tab: Ctrl + Z never crosses from one version to the other.
+  const [historyBy, setHistoryBy] = useState<Record<string, TrackEdits[]>>({});
   const [notice, setNotice] = useState<string | null>(null);
   // A merge that was stopped because the two people appear at the same time.
   // Cleaning applied to each person's path when exporting (lib/smooth.ts).
@@ -233,7 +249,14 @@ export function Correction({
   const [extra, setExtra] = useState<TracksFile[]>([]);
   const [blocked, setBlocked] = useState<{ into: number; from: number; frames: number[]; same: number } | null>(null);
   // Players or ball: two views of the same part.
-  const [view, setView] = useState<"players" | "ball" | "quick">(step ?? "players");
+  const [view, setView] = useState<"players" | "ball" | "quick" | "anchors" | "review">(step ?? "players");
+  // Anchors mode: the box being asked about (suggested moment or doubt), highlighted on the video.
+  const [anchorFocus, setAnchorFocus] = useState<AnchorFocus | null>(null);
+  const [checkPage, setCheckPage] = useState(0);
+  // Pending doubts of the anchors mode, as last said by its panel (null: not read yet).
+  const [anchorPending, setAnchorPending] = useState<number | null>(null);
+  // Set by the anchors panel: a click on a highlighted box of the open doubt resolves it.
+  const anchorPick = useRef<BoxPick | null>(null);
   // Inside a match the step chooses players or ball; the quick review is a mode of the players step.
   const [prevStep, setPrevStep] = useState(step);
   if (step !== prevStep) {
@@ -324,15 +347,19 @@ export function Correction({
   const mid = data?.match_id ?? matchIdText;
   const colors = state.jerseys[mid] || NO_COLORS;
   const writeEdits = (next: TrackEdits) => mutate((s) => ({ ...s, trackEdits: [...s.trackEdits.filter((e) => e.key !== next.key), next] }));
+  // Comparison of two fills of this part (Revisión): the version open decides which undo history is used.
+  const review = (state.reviews ?? []).find((r) => r.key === key);
+  const hKey = `${key}|${review?.active ?? "-"}`;
+  const history = historyBy[hKey] ?? [];
   // Every correction can be undone: the state before it is kept (the last 100).
   const setEdits = (next: TrackEdits) => {
-    setHistory((h) => [...h.slice(-99), edits]);
+    setHistoryBy((h) => ({ ...h, [hKey]: [...(h[hKey] ?? []).slice(-99), edits] }));
     writeEdits(next);
   };
   const undo = () => {
     const prev = history[history.length - 1];
     if (!prev) return;
-    setHistory((h) => h.slice(0, -1));
+    setHistoryBy((h) => ({ ...h, [hKey]: (h[hKey] ?? []).slice(0, -1) }));
     writeEdits(prev);
     setNotice(null);
   };
@@ -555,7 +582,7 @@ export function Correction({
       setData(d as TracksFile);
       setSel(null);
       setMode(null);
-      setHistory([]);
+      setHistoryBy({});
       setNotice(null);
       setMsg("");
       setBIdx(0);
@@ -1376,6 +1403,8 @@ export function Correction({
   };
   // A few people worth a look without the whole list: named and not yet verified, the longest first.
   const namedToCheck = ppl.filter((p) => p.player_id && !p.done && !refIds.has(p.id)).sort((a, b) => b.frames.length - a.frames.length);
+  const checkPages = Math.max(1, Math.ceil(namedToCheck.length / CHECK_PER_PAGE));
+  const checkPageNow = Math.min(checkPage, checkPages - 1);
 
   // Only the kits that have a colour: an empty one would be read as a colour by nobody.
   const defaultLabel = (id: number) => (id >= LOOSE_ID ? `s${id - LOOSE_ID}` : `#${id}`);
@@ -1956,6 +1985,29 @@ export function Correction({
     setQPicked(null);
     if (qSamples[j] !== undefined) seekFrame(qSamples[j]);
   };
+  // Mesa / Revisión rápida / Anclas (the segmented control and Alt + 1/2/3).
+  const switchView = (v: PlayerView) => {
+    if (v === view) return;
+    setView(v);
+    setMode(null);
+    if (v === "anchors") setSel(null);
+    if (v === "quick") qGo(qIdx);
+  };
+  const viewKeys = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  useEffect(() => {
+    viewKeys.current = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || !data || view === "ball" || isTyping(e.target)) return;
+      const pv = PLAYER_VIEWS.find((x) => e.code === `Digit${x.key}` || e.key === x.key);
+      if (!pv) return;
+      e.preventDefault();
+      switchView(pv.v);
+    };
+  });
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => viewKeys.current(e);
+    window.addEventListener("keydown", on, true);
+    return () => window.removeEventListener("keydown", on, true);
+  }, []);
   const qName = (n: number) => (qTeam === "own" ? (qRoster.find((r) => r.number === n)?.player_id ?? `#${n}`) : `R${n}`);
   const qGive = (name: string, track = qSel) => {
     if (qFrame === null || track === null) return;
@@ -2139,7 +2191,24 @@ export function Correction({
   // the yellow ring (one at a time) or the box being named (samples). Without any, the whole video.
   const quickBox = view === "quick" ? (qMode === "player" ? qBoxOfPlayer : qBoxes.find((b) => b[0] === qSel)) : undefined;
   const quickCenter: [number, number] | null = quickBox ? [(quickBox[1] + quickBox[3]) / 2, (quickBox[2] + quickBox[4]) / 2] : null;
-  const zoomTransform = zoomTo(view === "players" ? zoomCenter : view === "ball" ? ballCenter : view === "quick" ? quickCenter : null);
+  // Anchors mode: every box of the suggestion or of the open doubt, numbered; the rest dimmed.
+  const anchorHere = view === "anchors" && anchorFocus && pf !== null && Math.abs(pf - anchorFocus.frame) <= stride ? anchorFocus : null;
+  const anchorHits = anchorHere ? focusBoxes(anchorHere.marks, shown, (id) => personById.get(id)?.player_id || undefined) : null;
+  const anchorTracks = new Set(anchorHits?.found.map((f) => f.b[0]) ?? []);
+  const anchorMissing =
+    [
+      anchorHits?.missing.length ? `No sale en este cuadro: ${anchorHits.missing.map((m) => (m.label === "?" ? m.what : `${m.label} ${m.what}`)).join(", ")}.` : "",
+      ...(anchorHits?.same ?? []).map((x) => `${x.mark.label} (${x.mark.what}) es la misma caja que ${x.as.label}.`),
+    ]
+      .filter(Boolean)
+      .join(" ") || null;
+  const anchorCenter: [number, number] | null = anchorHits?.found.length
+    ? (() => {
+        const bs = anchorHits.found.map((f) => f.b);
+        return [(Math.min(...bs.map((b) => b[1])) + Math.max(...bs.map((b) => b[3]))) / 2, (Math.min(...bs.map((b) => b[2])) + Math.max(...bs.map((b) => b[4]))) / 2];
+      })()
+    : null;
+  const zoomTransform = zoomTo(view === "players" ? zoomCenter : view === "ball" ? ballCenter : view === "quick" ? quickCenter : view === "anchors" ? anchorCenter : null);
 
   // ---------------------------------------------------------------- events suggested from the reviewed ball
   // Only in the ball view, on what the ball review went through, with the direction of play said for this video.
@@ -3218,8 +3287,9 @@ export function Correction({
                   <p className="text-sm text-ink-2">Clic sobre una jugadora en el video.</p>
                   {namedToCheck.length > 0 && (
                     <>
-                      <div className="mt-3 mb-1 text-xs text-faint">Con nombre, por verificar</div>
-                      <ul className="space-y-0.5">{namedToCheck.slice(0, 8).map((p) => renderRow(p))}</ul>
+                      <div className="mt-3 mb-1 text-xs text-faint">Con nombre, por verificar · {namedToCheck.length}</div>
+                      <ul className="space-y-0.5">{namedToCheck.slice(checkPageNow * CHECK_PER_PAGE, (checkPageNow + 1) * CHECK_PER_PAGE).map((p) => renderRow(p))}</ul>
+                      <Pager page={checkPageNow} pages={checkPages} setPage={setCheckPage} />
                     </>
                   )}
                   {shortIds.length > 0 && (
@@ -3261,8 +3331,56 @@ export function Correction({
     </div>
   );
   // Which modules this view has, where each one goes, and the grip that moves it.
-  const viewModules: ModuleId[] = view === "ball" ? ["pitch", "ball", "auto"] : view === "quick" ? ["quick", "squad"] : ["pitch", "person"];
-  const moduleNode: Record<ModuleId, React.ReactNode> = { ball: ballBar, pitch: pitchCard, quick: quickPanel, squad: squadPanel, person: personModule, auto: autoPanel };
+  const viewModules: ModuleId[] = view === "ball" ? ["pitch", "ball", "auto"] : view === "quick" ? ["quick", "squad"] : view === "anchors" ? ["anchors"] : view === "review" ? ["review"] : ["pitch", "person"];
+  const anchorsPanel =
+    view === "anchors" && data ? (
+      folder ? (
+        <AnchorsPanel
+          key={`${folder}|${partOfData(data)}|${review?.active ?? "-"}|${review?.B.example ? "ej" : ""}`}
+          version={review?.active}
+          videoUrl={fileUrl}
+          linksPath={review?.active === "B" && review.B.example ? exampleExpPath(folder, partOfData(data)) : undefined}
+          folder={folder}
+          matchId={folder}
+          part={partOfData(data)}
+          data={data}
+          roster={state.roster ?? []}
+          edits={edits}
+          named={new Map(ppl.filter((p) => p.player_id).map((p) => [p.player_id, p.id]))}
+          setEdits={setEdits}
+          undoEdits={undo}
+          onSeek={seekFrame}
+          onFocus={setAnchorFocus}
+          focusMissing={anchorMissing}
+          onPending={setAnchorPending}
+          pickRef={anchorPick}
+          people={ppl}
+          playerOfId={(id) => personById.get(id)?.player_id || undefined}
+          onMsg={setMsg}
+        />
+      ) : (
+        <p className="card !p-3 text-xs text-ink-2">El modo anclas lee y escribe la carpeta del partido: ábrelo desde la pestaña del partido.</p>
+      )
+    ) : null;
+  const reviewPanel =
+    view === "review" && data ? (
+      folder ? (
+        <ReviewPanel
+          folder={folder}
+          part={partOfData(data)}
+          data={data}
+          edits={edits}
+          review={review}
+          people={ppl}
+          named={new Map(ppl.filter((p) => p.player_id).map((p) => [p.player_id, p.id]))}
+          setEdits={setEdits}
+          onMsg={setMsg}
+        />
+      ) : (
+        <p className="card !p-3 text-xs text-ink-2">La revisión lee la carpeta del partido: ábrela desde la pestaña del partido.</p>
+      )
+    ) : null;
+  const moduleNode: Record<ModuleId, React.ReactNode> = { ball: ballBar, pitch: pitchCard, quick: quickPanel, squad: squadPanel, person: personModule, auto: autoPanel, anchors: anchorsPanel, review: reviewPanel };
   const sideMods = viewModules.filter((m) => !belowSet.has(m));
   const belowMods = viewModules.filter((m) => belowSet.has(m));
   // With the table fitting the window, the window is a limit, not a size: the video as large as fits above its controls
@@ -3387,7 +3505,7 @@ export function Correction({
                   <button
                     key={v}
                     type="button"
-                    aria-pressed={view === v || (v === "players" && view === "quick")}
+                    aria-pressed={view === v || (v === "players" && view !== "ball")}
                     className="seg-opt inline-flex items-center gap-1.5"
                     onClick={() => {
                       setView(v);
@@ -3401,21 +3519,27 @@ export function Correction({
               </div>
             )}
             {view !== "ball" && (
-              <button
-                type="button"
-                className={`btn ${view === "quick" ? "btn-primary" : ""}`}
-                aria-pressed={view === "quick"}
-                title="Revisión rápida: nombrar a cada jugadora siguiéndola por la parte"
-                onClick={() => {
-                  const q = view !== "quick";
-                  setView(q ? "quick" : "players");
-                  setMode(null);
-                  if (q) qGo(qIdx);
-                }}
-              >
-                <Lightning size={15} />
-                Revisión rápida
-              </button>
+              <div className="seg" role="group" aria-label="Forma de trabajo con las jugadoras">
+                {PLAYER_VIEWS.map(({ v, name, key, title, Icon }) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className="seg-opt inline-flex items-center gap-1.5"
+                    aria-pressed={view === v}
+                    title={`${title} (Alt + ${key})`}
+                    onClick={() => switchView(v)}
+                  >
+                    <Icon size={14} weight={view === v ? "fill" : "regular"} />
+                    {name}
+                    {v === "anchors" && anchorPending !== null && (
+                      <span className={`tc rounded-full px-1.5 text-[10px] ${anchorPending ? "bg-warn-900/70 text-warn" : "text-ok"}`} title="Dudas pendientes del relleno">
+                        {anchorPending}
+                      </span>
+                    )}
+                    <kbd className="tc hidden text-[10px] opacity-60 xl:inline">Alt+{key}</kbd>
+                  </button>
+                ))}
+              </div>
             )}
             {status && (
               <span className={`tag ${status.complete ? "tag-accent" : ""}`} title={`Completa con al menos ${PLAYERS_DONE} jugadoras verificadas y balón en el 95 % del tiempo en juego.`}>
@@ -3761,6 +3885,18 @@ export function Correction({
                       }}
                     >
                       {view === "quick" && quickOverlay}
+                      {anchorHits?.found.map(({ b, mark, index }) => {
+                        const c = FOCUS_COLORS[index % FOCUS_COLORS.length];
+                        return (
+                          <g key={`af${b[0]}`} pointerEvents="none">
+                            <rect x={b[1] - 2 * dotR} y={b[2] - 2 * dotR} width={b[3] - b[1] + 4 * dotR} height={b[4] - b[2] + 4 * dotR} rx={dotR} fill="none" stroke={c} strokeWidth={dotR * 0.9} />
+                            <circle cx={b[1] - 2 * dotR} cy={b[2] - 2 * dotR} r={dotR * 2.4} fill={c} />
+                            <text x={b[1] - 2 * dotR} y={b[2] - 2 * dotR} dy={dotR * 0.9} textAnchor="middle" fontSize={dotR * 2.6} fontWeight={700} fill="var(--color-bg)">
+                              {mark.label}
+                            </text>
+                          </g>
+                        );
+                      })}
                       {view !== "quick" && (view !== "ball" || ballBoxes) && shown.map(({ b, id }) => {
                         const p = personById.get(id);
                         const isSel = id === sel;
@@ -3769,10 +3905,15 @@ export function Correction({
                         return (
                           <g
                             key={b[0]}
-                            className={`cursor-pointer ${focusSel && sel !== null && !isSel && id !== pinned ? "mark-dim" : ""}`}
+                            className={`cursor-pointer ${(anchorHits ? !anchorTracks.has(b[0]) : focusSel && sel !== null && !isSel && id !== pinned) ? "mark-dim" : ""}`}
                             opacity={b[11] ? 1 : 0.35}
                             onPointerDown={(e) => startBoxDrag(e, id, b)}
-                            onClick={(e) => (mode === "manual" || mode === "ball" || pickKit ? undefined : (e.stopPropagation(), pickBox(id, b[0])))}
+                            onClick={(e) => {
+                              if (mode === "manual" || mode === "ball" || pickKit) return;
+                              e.stopPropagation();
+                              if (anchorHits && anchorTracks.has(b[0]) && pf !== null && anchorPick.current?.({ track: b[0], id }, anchorHits.found.map((f) => ({ track: f.b[0], id: f.id })), pf)) return;
+                              pickBox(id, b[0]);
+                            }}
                           >
                             <rect x={b[1]} y={b[2]} width={b[3] - b[1]} height={b[4] - b[2]} fill="transparent" stroke="none" />
                             <PlayerMark
