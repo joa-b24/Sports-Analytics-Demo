@@ -5,7 +5,6 @@ import {
   ArrowUpRight,
   Circle,
   CircleDashed,
-  CornersOut,
   CursorClick,
   FloppyDisk,
   HandPalm,
@@ -20,14 +19,15 @@ import {
   X,
   type Icon,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { DRAW_COLOR_VAR } from "@/components/board/BoardView";
 import { ClipDrawings } from "@/components/clip/ClipOverlay";
 import { useClipData } from "@/components/clip/useClipData";
 import { IconButton } from "@/components/Modal";
 import { btn, btnPrimary, input } from "@/components/Shell";
-import { FitAspect, RailButton, SidePanel, StudioFrame, ToolRail, useWide } from "@/components/studio/Studio";
+import { ColorPick, FitAspect, PanelTitle, RailButton, SidePanel, StudioFrame, TimeField, ToolRail, useWide } from "@/components/studio/Studio";
+import { Timeline } from "@/components/studio/Timeline";
 import { VideoPlayer, type PlayerHandle } from "@/components/VideoPlayer";
 import {
   ANNOTATION_LABELS,
@@ -83,13 +83,6 @@ const PICK_PX = 45;
 // How far off the pitch (m) a point of a drawing may be.
 const OFF_PITCH_M = 5;
 
-type Panel = "selected" | "drawings" | "freezes";
-const PANEL_TABS: [Panel, string][] = [
-  ["selected", "Dibujo"],
-  ["drawings", "Dibujos"],
-  ["freezes", "Pausas"],
-];
-
 type Stop = { freeze: Freeze; start: number; hold: boolean };
 type Pending = { kind: "arrow" | "line" | "zone"; anchors: Anchor[]; cursor: Pt | null; startPx: Pt | null };
 
@@ -110,7 +103,7 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
   const [playing, setPlaying] = useState(false);
   const [view, setView] = useState<{ t: number; stop: { freeze: Freeze; shown: number; hold: boolean } | null }>({ t: edit.t_start, stop: null });
   const [msg, setMsg] = useState<string | null>(null);
-  const [panel, setPanel] = useState<Panel>("selected");
+  const [selectedFreeze, setSelectedFreeze] = useState<string | null>(null);
   const wide = useWide();
 
   const save = (next: ClipEdit) => mutate((s) => ({ ...s, edits: (s.edits ?? []).map((x) => (x.edit_id === next.edit_id ? next : x)) }));
@@ -317,7 +310,7 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
     if (!isValidAnnotation(a)) return;
     save(addToEdit(edit, a, t));
     setSelected(a.id);
-    setPanel("selected");
+    setSelectedFreeze(null);
   };
   const patchAnnotation = (id: string, p: Partial<Annotation>) => save({ ...edit, annotations: edit.annotations.map((a) => (a.id === id ? { ...a, ...p } : a)) });
 
@@ -365,6 +358,8 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
     const at = Math.round((playerRef.current?.getTime() ?? t) * 100) / 100;
     if (edit.freezes.some((f) => Math.abs(f.t - at) < 0.05)) return;
     save({ ...edit, freezes: [...edit.freezes, { t: at, duration_s: NEW_FREEZE_S, reveal: [] }].sort((a, b) => a.t - b.t) });
+    setSelectedFreeze(String(at));
+    setSelected(null);
     setMsg(`Pausa en ${fmtT(at)}: lo que dibujes ahora aparece en ella, uno a uno.`);
   };
 
@@ -442,6 +437,11 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         save(removeFromEdit(edit, selected));
         return setSelected(null);
       }
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedFreeze) {
+        take();
+        save({ ...edit, freezes: edit.freezes.filter((f) => String(f.t) !== selectedFreeze) });
+        return setSelectedFreeze(null);
+      }
       if (e.key === "p") {
         take();
         addFreeze();
@@ -466,7 +466,6 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
 
   const tl = timeline(edit);
   const span = Math.max(0.1, edit.t_end - edit.t_start);
-  const pct = (v: number) => `${((Math.min(edit.t_end, Math.max(edit.t_start, v)) - edit.t_start) / span) * 100}%`;
   const sel = edit.annotations.find((a) => a.id === selected) ?? null;
   const pendingPx: Pt[] = [];
   for (const a of pending?.anchors ?? []) {
@@ -526,13 +525,6 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         <PencilSimpleLine size={18} />
       </span>
       <input className={`${input} min-w-48 flex-1 font-medium`} value={edit.title} aria-label="Título del clip" onChange={(e) => save({ ...edit, title: e.target.value })} />
-      <div className="seg" aria-label="Rótulo de las jugadoras">
-        {LABEL_MODES.map(([m, label]) => (
-          <button key={m} type="button" className="seg-opt" aria-pressed={edit.label_mode === m} onClick={() => save({ ...edit, label_mode: m })}>
-            {label}
-          </button>
-        ))}
-      </div>
       <button type="button" className={btn} onClick={() => void saveFile()} title="Escribe edit_<id>.json en matches/<partido>/edits/ (con las posiciones y la calibración del tramo, para exportar a MP4)">
         <FloppyDisk size={15} />
         Guardar en la carpeta
@@ -551,14 +543,38 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
     </>
   );
 
-  const selectedPanel = !sel ? (
-    <p className="text-xs text-faint">Ninguno: elige uno con la herramienta Elegir, en el video o en «Dibujos».</p>
-  ) : (
-    <div className="space-y-3 text-xs">
+  const ICONS: Record<AnnotationKind, Icon> = { highlight: Circle, arrow: ArrowUpRight, line: LineSegments, zone: Polygon, text: TextT };
+  const freezeSel = edit.freezes.find((f) => String(f.t) === selectedFreeze) ?? null;
+  const seek = (to: number) => {
+    pausePlay();
+    playerRef.current?.seek(Math.min(edit.t_end, Math.max(edit.t_start, to)));
+  };
+  // A stop moved: the drawings that appear in it go with it.
+  const moveFreeze = (from: number, to: number) => {
+    if (edit.freezes.some((f) => f.t !== from && Math.abs(f.t - to) < 0.05)) return;
+    save({
+      ...edit,
+      freezes: edit.freezes.map((f) => (f.t === from ? { ...f, t: to } : f)).sort((x, y) => x.t - y.t),
+      annotations: edit.annotations.map((a) => (a.t_in === from ? { ...a, t_in: to, t_out: Math.max(a.t_out, to + 0.1) } : a)),
+    });
+    setSelectedFreeze(String(to));
+  };
+  const clampIn = (v: number, a: Annotation) => Math.min(a.t_out - 0.1, Math.max(edit.t_start, Math.round(v * 100) / 100));
+  const clampOut = (v: number, a: Annotation) => Math.max(a.t_in + 0.1, Math.min(edit.t_end, Math.round(v * 100) / 100));
+
+  const inspector = sel ? (
+    <div className="space-y-4 text-xs">
       <div className="flex items-center gap-2">
-        <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: DRAW_COLOR_VAR[sel.style.color] ?? DRAW_COLOR_VAR.accent }} />
-        <span className="text-sm font-medium text-ink">{ANNOTATION_LABELS[sel.kind]}</span>
-        <span className="text-faint">{sel.anchors.some((x) => x.kind === "player") ? "sigue a jugadoras" : sel.anchors[0].kind === "screen" ? "fijo en pantalla" : "fijo en el césped"}</span>
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${DRAW_COLOR_VAR[sel.style.color] ?? DRAW_COLOR_VAR.accent} 35%, transparent)` }}>
+          {(() => {
+            const I = ICONS[sel.kind];
+            return <I size={15} weight="bold" />;
+          })()}
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-ink">{ANNOTATION_LABELS[sel.kind]}</span>
+          <span className="block text-faint">{sel.anchors.some((x) => x.kind === "player") ? "sigue a jugadoras" : sel.anchors[0].kind === "screen" ? "fijo en pantalla" : "fijo en el césped"}</span>
+        </span>
         <span className="ml-auto">
           <IconButton
             label="Borrar el dibujo (Supr)"
@@ -578,98 +594,211 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         value={sel.style.label ?? ""}
         onChange={(e) => patchAnnotation(sel.id, { style: { ...sel.style, label: e.target.value || undefined } })}
       />
-      <div className="grid grid-cols-2 gap-2">
-        <button type="button" className={`${btn} !justify-between`} title="Entra en el momento actual" onClick={() => patchAnnotation(sel.id, { t_in: Math.min(Math.round(t * 100) / 100, sel.t_out - 0.1) })}>
-          <span className="text-faint">Entra</span>
-          <span className="tc">{fmtT(sel.t_in)}</span>
-        </button>
-        <button type="button" className={`${btn} !justify-between`} title="Sale en el momento actual" onClick={() => patchAnnotation(sel.id, { t_out: Math.max(Math.round(t * 100) / 100, sel.t_in + 0.1) })}>
-          <span className="text-faint">Sale</span>
-          <span className="tc">{fmtT(sel.t_out)}</span>
-        </button>
+      <div className="space-y-2">
+        <PanelTitle>Estilo</PanelTitle>
+        <ColorPick value={sel.style.color} onChange={(c) => patchAnnotation(sel.id, { style: { ...sel.style, color: c } })} />
+        {sel.kind !== "text" && (
+          <label className="flex items-center gap-1.5 text-muted">
+            <input type="checkbox" checked={!!sel.style.dashed} onChange={(e) => patchAnnotation(sel.id, { style: { ...sel.style, dashed: e.target.checked || undefined } })} />
+            Línea discontinua
+          </label>
+        )}
       </div>
-      <p className="text-faint">Pulsa «Entra» o «Sale» para llevarlo al momento actual del video. El color y la línea discontinua se cambian en la barra de herramientas.</p>
+      <div className="space-y-1.5">
+        <PanelTitle right={<span className="tc text-faint">{Math.round((sel.t_out - sel.t_in) * 10) / 10} s</span>}>Tiempo</PanelTitle>
+        <TimeField label="Entra" value={sel.t_in} fmt={fmtT} now={t} onChange={(v) => patchAnnotation(sel.id, { t_in: clampIn(v, sel) })} />
+        <TimeField label="Sale" value={sel.t_out} fmt={fmtT} now={t} onChange={(v) => patchAnnotation(sel.id, { t_out: clampOut(v, sel) })} />
+        {edit.freezes.some((f) => f.reveal.includes(sel.id)) && <p className="text-faint">Aparece en la pausa de {fmtT(sel.t_in)}.</p>}
+      </div>
+      <p className="text-faint">En la línea de tiempo: arrastra la barra para moverla y sus bordes para recortarla; se pegan al cabezal y a las pausas.</p>
+    </div>
+  ) : freezeSel ? (
+    <div className="space-y-4 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-warn/25 text-warn">
+          <HandPalm size={15} weight="bold" />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-ink">Pausa</span>
+          <button type="button" className="tc link" onClick={() => seek(freezeSel.t)}>
+            {fmtT(freezeSel.t)}
+          </button>
+        </span>
+        <span className="ml-auto">
+          <IconButton
+            label="Quitar la pausa"
+            tone="danger"
+            onClick={() => {
+              save({ ...edit, freezes: edit.freezes.filter((x) => x !== freezeSel) });
+              setSelectedFreeze(null);
+            }}
+          >
+            <Trash size={14} />
+          </IconButton>
+        </span>
+      </div>
+      <TimeField label="Dura" value={freezeSel.duration_s} fmt={(v) => `${v} s`} onChange={(v) => save({ ...edit, freezes: edit.freezes.map((x) => (x === freezeSel ? { ...x, duration_s: Math.max(0.5, Math.round(v * 2) / 2) } : x)) })} />
+      <div>
+        <PanelTitle right={<span className="text-faint">en este orden</span>}>Aparecen</PanelTitle>
+        {freezeSel.reveal.length === 0 ? (
+          <p className="text-faint">Nada todavía: con el cabezal en la pausa, lo que dibujes aparece en ella, uno a uno.</p>
+        ) : (
+          <ol className="space-y-1">
+            {freezeSel.reveal.map((id, i) => {
+              const a = edit.annotations.find((x) => x.id === id);
+              if (!a) return null;
+              const move = (d: number) => {
+                const r = [...freezeSel.reveal];
+                [r[i], r[i + d]] = [r[i + d], r[i]];
+                save({ ...edit, freezes: edit.freezes.map((x) => (x === freezeSel ? { ...x, reveal: r } : x)) });
+              };
+              return (
+                <li key={id} className="flex items-center gap-2 rounded-md bg-raised px-2 py-1">
+                  <span className="tc w-4 text-faint">{i + 1}</span>
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent }} />
+                  <button type="button" className="min-w-0 flex-1 truncate text-left text-ink-2 hover:text-ink" onClick={() => setSelected(a.id)}>
+                    {a.style.label || ANNOTATION_LABELS[a.kind]}
+                  </button>
+                  <button type="button" className="px-1 text-faint hover:text-ink disabled:opacity-30" disabled={i === 0} aria-label="Antes" onClick={() => move(-1)}>
+                    ↑
+                  </button>
+                  <button type="button" className="px-1 text-faint hover:text-ink disabled:opacity-30" disabled={i === freezeSel.reveal.length - 1} aria-label="Después" onClick={() => move(1)}>
+                    ↓
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </div>
+      <p className="text-faint">Arrastra la pausa en la línea de tiempo para cambiarla de momento: sus dibujos se van con ella.</p>
+    </div>
+  ) : (
+    <div className="space-y-4 text-xs">
+      <dl className="grid grid-cols-2 gap-2">
+        {(
+          [
+            ["Clip", `${Math.round(span * 10) / 10} s`],
+            ["Con pausas", `${Math.round(tl.duration * 10) / 10} s`],
+            ["Dibujos", String(edit.annotations.length)],
+            ["Pausas", String(edit.freezes.length)],
+          ] as const
+        ).map(([k2, v]) => (
+          <div key={k2} className="rounded-lg bg-raised px-2.5 py-2">
+            <dt className="text-faint">{k2}</dt>
+            <dd className="num text-lg text-ink">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <div>
+        <PanelTitle>Rótulo de las jugadoras</PanelTitle>
+        <div className="seg flex" aria-label="Rótulo de las jugadoras">
+          {LABEL_MODES.map(([m, label]) => (
+            <button key={m} type="button" className="seg-opt flex-1 text-center" aria-pressed={edit.label_mode === m} onClick={() => save({ ...edit, label_mode: m })}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <PanelTitle>Teclas</PanelTitle>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-faint">
+          {(
+            [
+              ["Espacio", "reproducir / pausar"],
+              ["← →", "1 s (Mayús: un cuadro)"],
+              ["p", "pausa aquí"],
+              ["m r f l z t", "herramientas"],
+              ["Enter / Esc", "terminar / cancelar"],
+              ["Supr", "borrar lo elegido"],
+            ] as const
+          ).map(([k2, v]) => (
+            <Fragment key={k2}>
+              <dt className="tc text-ink-2">{k2}</dt>
+              <dd className="m-0">{v}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      </div>
+      <p className="text-faint">Elige un dibujo o una pausa en el video o en la línea de tiempo para editarlo aquí.</p>
     </div>
   );
 
-  const drawingsPanel =
-    edit.annotations.length === 0 ? (
-      <p className="text-xs text-faint">Ninguno todavía. Elige una herramienta en la barra y dibuja sobre el video.</p>
-    ) : (
-      <ul className="space-y-1">
-        {edit.annotations.map((a) => (
-          <li key={a.id}>
-            <button
-              type="button"
-              onClick={() => setSelected(a.id)}
-              aria-pressed={a.id === selected}
-              className={`w-full rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors ${a.id === selected ? "bg-accent-900 text-ink ring-1 ring-accent/60" : "text-ink-2 hover:bg-raised"}`}
-            >
-              <span className="flex items-center gap-2">
-                <span className="font-medium">{a.style.label || ANNOTATION_LABELS[a.kind]}</span>
-                <span className="tc ml-auto text-faint">
-                  {fmtT(a.t_in)}–{fmtT(a.t_out)}
-                </span>
-              </span>
-              <span className="relative mt-1 block h-1.5 rounded-full bg-raised">
-                <span
-                  className="absolute top-0 h-full rounded-full"
-                  style={{ left: pct(a.t_in), width: `calc(${pct(a.t_out)} - ${pct(a.t_in)})`, background: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent }}
-                />
-              </span>
+  const timelinePanel = (
+    <Timeline
+      min={edit.t_start}
+      max={edit.t_end}
+      now={t}
+      fmt={fmtT}
+      onSeek={seek}
+      lanes={wide && typeof window !== "undefined" && window.innerHeight < 860 ? 2 : 3}
+      transport={
+        <>
+          <button
+            type="button"
+            className={`${btnPrimary} h-9 w-9 !p-0`}
+            onClick={() => (playing ? pausePlay() : startPlay())}
+            aria-label={playing ? "Pausar el clip (espacio)" : "Reproducir el clip (espacio)"}
+            title={playing ? "Pausar el clip (espacio)" : "Reproducir el clip (espacio)"}
+          >
+            {playing ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
+          </button>
+          <span className="tc rounded-md bg-raised px-2 py-1 text-xs text-ink">
+            {fmtT(t)} <span className="text-faint">/ {Math.round(span * 10) / 10} s</span>
+          </span>
+          <button type="button" className={btn} onClick={addFreeze} title="Congela la imagen en este momento al reproducir (p)">
+            <HandPalm size={14} />
+            Pausa aquí
+          </button>
+          {pending && pending.kind !== "arrow" && (
+            <button type="button" className={btnPrimary} onClick={finish} disabled={pending.anchors.length < (pending.kind === "zone" ? 3 : 2)}>
+              Terminar {ANNOTATION_LABELS[pending.kind].toLowerCase()}
             </button>
-          </li>
-        ))}
-      </ul>
-    );
-
-  const freezesPanel = (
-    <div className="space-y-3 text-xs">
-      {edit.freezes.length === 0 ? (
-        <p className="text-faint">Ninguna. Detén el video en un momento clave y pulsa «Pausa aquí» en la barra (p): la imagen se congela y lo que dibujes ahí aparece uno a uno.</p>
-      ) : (
-        <ul className="space-y-1.5">
-          {edit.freezes.map((f) => (
-            <li key={f.t} className={`flex flex-wrap items-center gap-2 rounded-lg px-2 py-1 ${stopHere === f ? "bg-warn/10" : ""}`}>
-              <button
-                type="button"
-                className="tc link"
-                onClick={() => {
-                  pausePlay();
-                  playerRef.current?.seek(f.t);
-                }}
-              >
-                {fmtT(f.t)}
-              </button>
-              <label className="flex items-center gap-1 text-muted">
-                <input
-                  type="number"
-                  min={0.5}
-                  step={0.5}
-                  aria-label="Duración de la pausa"
-                  className={`${input} h-7 w-16 px-2 py-0 text-xs`}
-                  value={f.duration_s}
-                  onChange={(e) => save({ ...edit, freezes: edit.freezes.map((x) => (x === f ? { ...x, duration_s: Math.max(0.5, Number(e.target.value) || 0.5) } : x)) })}
-                />
-                s
-              </label>
-              <span className="text-faint">
-                {f.reveal.length} {f.reveal.length === 1 ? "dibujo" : "dibujos"}
-              </span>
-              <span className="ml-auto">
-                <IconButton label="Quitar la pausa" tone="danger" onClick={() => save({ ...edit, freezes: edit.freezes.filter((x) => x !== f) })}>
-                  <Trash size={13} />
-                </IconButton>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      <button type="button" className={btn} onClick={present}>
-        <CornersOut size={14} />
-        Probar en pantalla completa
-      </button>
-    </div>
+          )}
+        </>
+      }
+      right={
+        <>
+          <TimeRange start={edit.t_start} end={edit.t_end} now={t} onChange={setRange} />
+          <span className="tc text-xs text-muted" title="Duración del clip con las pausas">
+            con pausas {Math.round(tl.duration * 10) / 10} s
+          </span>
+        </>
+      }
+      markers={{
+        label: "Pausas",
+        icon: HandPalm,
+        items: edit.freezes.map((f) => ({ id: String(f.t), t: f.t, label: `${f.duration_s} s · ${f.reveal.length}`, title: `Pausa en ${fmtT(f.t)}: ${f.duration_s} s, ${f.reveal.length} dibujo(s) que aparecen en ella` })),
+        selected: selectedFreeze,
+        onPick: (id) => {
+          setSelectedFreeze(id);
+          setSelected(null);
+          seek(Number(id));
+        },
+        onMove: (id, to) => moveFreeze(Number(id), to),
+      }}
+      items={{
+        label: "Dibujos",
+        icon: PencilSimpleLine,
+        items: edit.annotations.map((a) => ({
+          id: a.id,
+          start: a.t_in,
+          end: a.t_out,
+          color: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent,
+          label: a.style.label || ANNOTATION_LABELS[a.kind],
+          icon: ICONS[a.kind],
+          dashed: !!a.style.dashed,
+        })),
+        selected,
+        onPick: (id) => {
+          setSelected(id);
+          setSelectedFreeze(null);
+        },
+        onChange: (id, start, end) => patchAnnotation(id, { t_in: start, t_out: end }),
+        snaps: edit.freezes.map((f) => f.t),
+        empty: "Elige una herramienta y dibuja sobre el video",
+      }}
+    />
   );
 
   return createPortal(
@@ -712,60 +841,9 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
             </div>
           </div>
         }
-        controls={
-          <>
-            <button
-              type="button"
-              className={`${btnPrimary} h-9 w-9 !p-0`}
-              onClick={() => (playing ? pausePlay() : startPlay())}
-              aria-label={playing ? "Pausar el clip (espacio)" : "Reproducir el clip (espacio)"}
-              title={playing ? "Pausar el clip (espacio)" : "Reproducir el clip (espacio)"}
-            >
-              {playing ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
-            </button>
-            <span className="tag tc">{fmtT(t)}</span>
-            {/* Timeline of the clip: the playhead and the stops; each drawing has its own bar in «Dibujos». */}
-            <div
-              className="relative h-7 min-w-40 flex-1 cursor-pointer rounded-md bg-raised"
-              role="slider"
-              aria-label="Momento del clip"
-              aria-valuemin={edit.t_start}
-              aria-valuemax={edit.t_end}
-              aria-valuenow={Math.round(t * 10) / 10}
-              tabIndex={-1}
-              onPointerDown={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                pausePlay();
-                playerRef.current?.seek(edit.t_start + ((e.clientX - r.left) / r.width) * span);
-              }}
-            >
-              {edit.annotations.map((a) => (
-                <span
-                  key={a.id}
-                  className="pointer-events-none absolute bottom-1 h-1 rounded-full opacity-70"
-                  style={{ left: pct(a.t_in), width: `calc(${pct(a.t_out)} - ${pct(a.t_in)})`, background: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent }}
-                />
-              ))}
-              {edit.freezes.map((f) => (
-                <span key={f.t} className="absolute top-0 h-full w-1 -translate-x-1/2 rounded bg-warn" style={{ left: pct(f.t) }} title={`Pausa ${fmtT(f.t)} · ${f.duration_s} s`} />
-              ))}
-              <span className="absolute top-0 h-full w-0.5 bg-ink" style={{ left: pct(t) }} />
-            </div>
-            <TimeRange start={edit.t_start} end={edit.t_end} now={t} onChange={setRange} />
-            <span className="tc text-xs text-muted" title="Duración del clip con las pausas">
-              con pausas {Math.round(tl.duration * 10) / 10} s
-            </span>
-            {pending && pending.kind !== "arrow" && (
-              <button type="button" className={btnPrimary} onClick={finish} disabled={pending.anchors.length < (pending.kind === "zone" ? 3 : 2)}>
-                Terminar {ANNOTATION_LABELS[pending.kind].toLowerCase()}
-              </button>
-            )}
-          </>
-        }
+        timeline={timelinePanel}
         side={
-          <SidePanel tabs={PANEL_TABS} value={panel} onChange={setPanel} footer={<p className="m-0 text-[11px] text-faint">← → 1 s (con Mayús, un cuadro) · Supr borra el dibujo elegido</p>}>
-            {panel === "selected" ? selectedPanel : panel === "drawings" ? drawingsPanel : freezesPanel}
-          </SidePanel>
+          <SidePanel title={sel ? "Dibujo" : freezeSel ? "Pausa" : "Clip"}>{inspector}</SidePanel>
         }
       />
     </div>,

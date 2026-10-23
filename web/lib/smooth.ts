@@ -32,6 +32,8 @@ export interface SmoothOptions {
   maxFillS: number;
   // Width of the smoothing window (s). 0 = no smoothing.
   windowS: number;
+  // Longest excursion taken out as a wrong position (s); EXCURSION_MAX_S when absent.
+  excursionS?: number;
 }
 
 export const SMOOTH_DEFAULTS = { maxSpeedMs: 9, maxFillS: 2, windowS: 0.5 };
@@ -92,7 +94,7 @@ export function dropJumps(points: TrackPoint[], o: SmoothOptions): { points: Tra
   }
   // Short excursions: a few points that jump away too fast and later jump back, while going straight from the point
   // before to the point after is possible. Usually the feet of a box were hidden and landed metres away.
-  const maxPts = Math.max(2, Math.round((EXCURSION_MAX_S * o.fps) / o.stride));
+  const maxPts = Math.max(2, Math.round(((o.excursionS ?? EXCURSION_MAX_S) * o.fps) / o.stride));
   for (let i = 1; i < pts.length - 1; i++) {
     const a = pts[i - 1];
     if (pts[i].source === "manual" || speed(a, pts[i], o) <= o.maxSpeedMs) continue;
@@ -109,8 +111,10 @@ export function dropJumps(points: TrackPoint[], o: SmoothOptions): { points: Tra
   return { points: pts, removed };
 }
 
-// Longest excursion (s) that is taken out as a wrong position (see dropJumps).
-export const EXCURSION_MAX_S = 0.5;
+// Longest excursion (s) that is taken out as a wrong position (see dropJumps). 0.8 s since 2026-10-21: in the review of
+// 30 impossible jumps, 12 of the 13 wrong stretches the analyst marked lasted 0.8 s or less (median 0.5 s), mostly a box
+// whose feet were cut or stretched to the player in front (docs/propuesta_union_tracks.md, 8d).
+export const EXCURSION_MAX_S = 0.8;
 
 // Step 2. Fills the holes that are short and physically possible, one position per processed frame.
 export function fillGaps(points: TrackPoint[], o: SmoothOptions): { points: TrackPoint[]; filled: number; open: number } {

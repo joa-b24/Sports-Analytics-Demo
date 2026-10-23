@@ -2,25 +2,30 @@
 
 import {
   ArrowUpRight,
+  CaretLeft,
+  CaretRight,
   Circle,
   CircleDashed,
   CursorClick,
   LineSegments,
+  PencilSimpleLine,
   Polygon,
   Plus,
+  Stack,
   TextT,
   Trash,
+  X,
   type Icon,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode } from "react";
-import { BoardView, DRAW_COLOR_LABELS, DRAW_COLOR_VAR } from "@/components/board/BoardView";
+import { BoardView, DRAW_COLOR_VAR } from "@/components/board/BoardView";
 import { IconButton } from "@/components/Modal";
 import { toMeters } from "@/components/Pitch";
-import { btnPrimary, input } from "@/components/Shell";
-import { FitAspect, PanelTitle, SidePanel, StudioFrame, ToolRail, type FrameLayout } from "@/components/studio/Studio";
+import { btn, btnPrimary, input } from "@/components/Shell";
+import { Timeline } from "@/components/studio/Timeline";
+import { ColorPick, FitAspect, PanelTitle, SidePanel, StudioFrame, ToolRail, type FrameLayout } from "@/components/studio/Studio";
 import {
   ANNOTATION_LABELS,
-  DRAW_COLORS,
   isValidAnnotation,
   resolve,
   resolveAll,
@@ -30,7 +35,7 @@ import {
   type Pt,
   type ResolveContext,
 } from "@/lib/annotations";
-import { addStep, framingBox, moveToken, removeStep, spanOfSteps, stepsOf, toggleToken } from "@/lib/boards";
+import { addStep, boardDuration, framingBox, moveToken, removeStep, spanOfSteps, stepSpan, stepsOf, toggleToken } from "@/lib/boards";
 import { isTyping } from "@/lib/format";
 import { uid } from "@/lib/store";
 import type { Board } from "@/lib/types";
@@ -50,6 +55,8 @@ const TOOLS: { id: Tool; label: string; key: string; icon: Icon; hint: string }[
 const PICK_M = 2.4;
 // A drag shorter than this is a click (m).
 const MIN_ARROW_M = 1.5;
+
+const KIND_ICON: Record<AnnotationKind, Icon> = { highlight: Circle, arrow: ArrowUpRight, line: LineSegments, zone: Polygon, text: TextT };
 
 type Pending = { kind: "arrow" | "line" | "zone"; anchors: Anchor[]; cursor: Pt | null };
 type HandleDrag = { index: number; insert: boolean; x: number; y: number };
@@ -87,6 +94,11 @@ export function BoardEditor({ board, save, header, boardPanel, listPanel, layout
   const kf = board.keyframes[k];
   const pos = kf?.pos ?? {};
   const t = kf?.t ?? 0;
+  const duration = Math.max(boardDuration(board), 0.5);
+  const goStep = (i: number) => {
+    setStep(Math.max(0, Math.min(board.keyframes.length, i)));
+    setPending(null);
+  };
 
   // Positions of this step, with the piece being dragged where the pointer is: the drawings tied to it follow it.
   const ctx: ResolveContext = {
@@ -364,84 +376,141 @@ export function BoardEditor({ board, save, header, boardPanel, listPanel, layout
           </div>
         </div>
       }
-      controls={
-        <>
-          <span className="cond px-1 text-[12px] font-bold tracking-wide text-muted uppercase">Pasos</span>
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-            {board.keyframes.map((s, i) => (
+      timeline={
+        <Timeline
+          min={0}
+          max={duration}
+          now={t}
+          fmt={(v) => `${Math.round(v * 10) / 10} s`}
+          onSeek={(v) => goStep(Math.max(0, board.keyframes.filter((x) => x.t <= v + 1e-6).length - 1))}
+          lanes={typeof window !== "undefined" && window.innerHeight < 860 ? 2 : 3}
+          transport={
+            <>
+              <IconButton label="Paso anterior (←)" disabled={k === 0} onClick={() => goStep(k - 1)}>
+                <CaretLeft size={15} />
+              </IconButton>
+              <span className="tc rounded-md bg-raised px-2 py-1 text-xs text-ink">
+                Paso {k + 1} <span className="text-faint">de {board.keyframes.length}</span>
+              </span>
+              <IconButton label="Paso siguiente (→)" disabled={k >= board.keyframes.length - 1} onClick={() => goStep(k + 1)}>
+                <CaretRight size={15} />
+              </IconButton>
               <button
-                key={`${s.t}_${i}`}
                 type="button"
-                aria-pressed={i === k}
-                aria-label={`Paso ${i + 1}`}
-                title={s.note || `Paso ${i + 1}`}
+                className={btn}
+                title="Añade un paso al final con las posiciones del último"
                 onClick={() => {
-                  setStep(i);
-                  setPending(null);
+                  save(addStep(board));
+                  goStep(board.keyframes.length);
                 }}
-                className={`tc h-8 min-w-8 rounded-md px-2 text-xs font-semibold transition-colors ${
-                  i === k ? "bg-accent-900 text-accent-300 ring-1 ring-accent/60" : "bg-raised text-ink-2 hover:bg-line"
-                }`}
               >
-                {i + 1}
+                <Plus size={14} />
+                Paso
               </button>
-            ))}
-            <IconButton
-              label="Añadir un paso (copia las posiciones del último)"
-              onClick={() => {
-                save(addStep(board));
-                setStep(board.keyframes.length);
-              }}
-            >
-              <Plus size={15} />
-            </IconButton>
-          </div>
-          <span className="hidden text-xs text-faint 2xl:inline">← → cambia de paso</span>
-          {pending && pending.kind !== "arrow" && (
-            <button type="button" className={btnPrimary} onClick={finish} disabled={pending.anchors.length < (pending.kind === "zone" ? 3 : 2)}>
-              Terminar {ANNOTATION_LABELS[pending.kind].toLowerCase()}
-            </button>
-          )}
-          <IconButton
-            label={board.keyframes.length > 1 ? `Borrar el paso ${k + 1} y los dibujos que empiezan en él` : "La jugada necesita al menos un paso"}
-            tone="danger"
-            disabled={board.keyframes.length <= 1}
-            onClick={() => {
-              save(removeStep(board, k));
-              setStep(Math.max(0, k - 1));
-              setSelected(null);
-            }}
-          >
-            <Trash size={15} />
-          </IconButton>
-        </>
+              {pending && pending.kind !== "arrow" && (
+                <button type="button" className={btnPrimary} onClick={finish} disabled={pending.anchors.length < (pending.kind === "zone" ? 3 : 2)}>
+                  Terminar {ANNOTATION_LABELS[pending.kind].toLowerCase()}
+                </button>
+              )}
+            </>
+          }
+          right={
+            <>
+              <span className="hidden text-xs text-faint 2xl:inline">← → cambia de paso</span>
+              <IconButton
+                label={board.keyframes.length > 1 ? `Borrar el paso ${k + 1} y los dibujos que empiezan en él` : "La jugada necesita al menos un paso"}
+                tone="danger"
+                disabled={board.keyframes.length <= 1}
+                onClick={() => {
+                  save(removeStep(board, k));
+                  goStep(Math.max(0, k - 1));
+                  setSelected(null);
+                }}
+              >
+                <Trash size={15} />
+              </IconButton>
+            </>
+          }
+          blocks={{
+            label: "Pasos",
+            icon: Stack,
+            items: board.keyframes.map((x, i) => ({ id: String(i), start: x.t, end: stepSpan(board, i).t_out, label: String(i + 1), sub: x.note || undefined })),
+            active: String(k),
+            onPick: (id) => goStep(Number(id)),
+          }}
+          items={{
+            label: "Dibujos",
+            icon: PencilSimpleLine,
+            items: board.annotations.map((a) => ({
+              id: a.id,
+              start: a.t_in,
+              end: a.t_out,
+              color: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent,
+              label: a.style.label || ANNOTATION_LABELS[a.kind],
+              icon: KIND_ICON[a.kind],
+              dashed: !!a.style.dashed,
+            })),
+            selected,
+            onPick: (id) => {
+              setSelected(id);
+              if (id) setPanel("step");
+            },
+            // A drawing always covers whole steps: from the step nearest its start to the one nearest its end.
+            onChange: (id, start, end) => {
+              const from = nearest(board.keyframes.map((x) => x.t), start);
+              const ends = board.keyframes.map((_, i) => stepSpan(board, i).t_out);
+              const to = Math.max(from, nearest(ends, end));
+              patchAnnotation(id, spanOfSteps(board, from, to));
+            },
+            snaps: [...board.keyframes.map((x) => x.t), duration],
+            minLength: 0.5,
+            empty: "Elige una herramienta y dibuja sobre la cancha",
+          }}
+        />
       }
       side={
         <SidePanel tabs={PANEL_TABS} value={panel} onChange={setPanel}>
           {panel === "step" ? (
-            <div className="space-y-4">
-              {stepNote}
-              <div>
-                <PanelTitle>Dibujos del paso</PanelTitle>
-                {here.length === 0 ? (
-                  <p className="text-xs text-faint">Ninguno. Elige una herramienta en la barra y dibuja sobre la cancha.</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {here.map((a) => (
-                      <DrawingRow
-                        key={a.id}
-                        a={a}
-                        board={board}
-                        active={a.id === selected}
-                        onSelect={() => setSelected(a.id)}
-                        onPatch={(p) => patchAnnotation(a.id, p)}
-                        onRemove={() => removeAnnotation(a.id)}
-                      />
-                    ))}
-                  </ul>
-                )}
+            sel ? (
+              <DrawingInspector
+                a={sel}
+                board={board}
+                onPatch={(p) => patchAnnotation(sel.id, p)}
+                onRemove={() => removeAnnotation(sel.id)}
+                onClose={() => setSelected(null)}
+              />
+            ) : (
+              <div className="space-y-4">
+                {stepNote}
+                <div>
+                  <PanelTitle right={<span className="text-xs text-faint">{here.length}</span>}>Dibujos del paso</PanelTitle>
+                  {here.length === 0 ? (
+                    <p className="text-xs text-faint">Ninguno. Elige una herramienta en la barra y dibuja sobre la cancha.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {here.map((a) => {
+                        const I = KIND_ICON[a.kind];
+                        const st = stepsOf(board, a);
+                        return (
+                          <li key={a.id}>
+                            <button
+                              type="button"
+                              onClick={() => setSelected(a.id)}
+                              className="flex w-full items-center gap-2 rounded-lg bg-raised px-2.5 py-1.5 text-left text-xs text-ink-2 transition-colors hover:text-ink"
+                            >
+                              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent }} />
+                              <I size={13} aria-hidden />
+                              <span className="min-w-0 flex-1 truncate">{a.style.label || ANNOTATION_LABELS[a.kind]}</span>
+                              <span className="tc text-faint">{st.length > 1 ? `pasos ${st[0] + 1}–${st[st.length - 1] + 1}` : `paso ${st[0] + 1}`}</span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
               </div>
-            </div>
+            )
           ) : panel === "board" ? (
             <div className="space-y-4">
               {boardPanel}
@@ -484,90 +553,72 @@ export function BoardEditor({ board, save, header, boardPanel, listPanel, layout
   );
 }
 
-function DrawingRow({
-  a,
-  board,
-  active,
-  onSelect,
-  onPatch,
-  onRemove,
-}: {
-  a: Annotation;
-  board: Board;
-  active: boolean;
-  onSelect: () => void;
-  onPatch: (p: Partial<Annotation>) => void;
-  onRemove: () => void;
-}) {
+// The drawing chosen, in the inspector: as in the clip editor, plus the steps it covers.
+function DrawingInspector({ a, board, onPatch, onRemove, onClose }: { a: Annotation; board: Board; onPatch: (p: Partial<Annotation>) => void; onRemove: () => void; onClose: () => void }) {
   const steps = stepsOf(board, a);
   const from = steps[0] ?? 0;
   const to = steps[steps.length - 1] ?? from;
+  const I = KIND_ICON[a.kind];
+  const stepSelect = (label: string, value: number, min: number, onChange: (v: number) => void) => (
+    <label className="flex items-center gap-1.5 text-xs">
+      <span className="w-12 shrink-0 text-faint">{label}</span>
+      <select className={`${input} h-8 flex-1 py-0 text-xs`} value={value} onChange={(e) => onChange(Number(e.target.value))}>
+        {board.keyframes.map((_, i) =>
+          i >= min ? (
+            <option key={i} value={i}>
+              Paso {i + 1}
+            </option>
+          ) : null,
+        )}
+      </select>
+    </label>
+  );
   return (
-    <li
-      onClick={onSelect}
-      className={`rounded-xl border p-2 text-xs transition-colors ${active ? "border-accent bg-accent/10" : "border-line-soft hover:border-line"}`}
-    >
+    <div className="space-y-4 text-xs">
       <div className="flex items-center gap-2">
-        <span className="font-medium text-ink">{ANNOTATION_LABELS[a.kind]}</span>
-        <span className="text-faint">{a.anchors.filter((x) => x.kind === "player").length > 0 ? "sigue a fichas" : "fijo"}</span>
-        <span className="ml-auto">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent} 35%, transparent)` }}>
+          <I size={15} weight="bold" />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-ink">{ANNOTATION_LABELS[a.kind]}</span>
+          <span className="block text-faint">{a.anchors.some((x) => x.kind === "player") ? "sigue a fichas" : "fijo"}</span>
+        </span>
+        <span className="ml-auto flex items-center gap-1">
           <IconButton label="Borrar el dibujo (Supr)" tone="danger" onClick={onRemove}>
-            <Trash size={13} />
+            <Trash size={14} />
+          </IconButton>
+          <IconButton label="Volver al paso (Esc)" onClick={onClose}>
+            <X size={14} />
           </IconButton>
         </span>
       </div>
       <input
-        className={`${input} mt-1.5 h-7 w-full px-2 py-0 text-xs`}
+        className={`${input} h-8 w-full text-xs`}
         placeholder={a.kind === "text" ? "Texto" : "Rótulo (opcional)"}
         value={a.style.label ?? ""}
         onChange={(e) => onPatch({ style: { ...a.style, label: e.target.value || undefined } })}
       />
-      <div className="mt-1.5 flex flex-wrap items-center gap-2">
-        <ColorPick value={a.style.color} onChange={(c) => onPatch({ style: { ...a.style, color: c } })} small />
+      <div className="space-y-2">
+        <PanelTitle>Estilo</PanelTitle>
+        <ColorPick value={a.style.color} onChange={(c) => onPatch({ style: { ...a.style, color: c } })} />
         {a.kind !== "text" && (
-          <label className="flex items-center gap-1 text-muted">
+          <label className="flex items-center gap-1.5 text-muted">
             <input type="checkbox" checked={!!a.style.dashed} onChange={(e) => onPatch({ style: { ...a.style, dashed: e.target.checked || undefined } })} />
-            Discontinua
+            Línea discontinua
           </label>
         )}
-        <label className="flex items-center gap-1 text-muted">
-          Hasta el paso
-          <select className={`${input} h-7 py-0 text-xs`} value={to} onChange={(e) => onPatch(spanOfSteps(board, from, Number(e.target.value)))}>
-            {board.keyframes.map((_, i) =>
-              i >= from ? (
-                <option key={i} value={i}>
-                  {i + 1}
-                </option>
-              ) : null,
-            )}
-          </select>
-        </label>
       </div>
-    </li>
-  );
-}
-
-function ColorPick({ value, onChange, small = false }: { value: string; onChange: (c: string) => void; small?: boolean }) {
-  return (
-    <div className="flex items-center gap-1" role="radiogroup" aria-label="Color">
-      {DRAW_COLORS.map((c) => (
-        <button
-          key={c}
-          type="button"
-          role="radio"
-          aria-checked={value === c}
-          title={DRAW_COLOR_LABELS[c]}
-          onClick={(e) => {
-            e.stopPropagation();
-            onChange(c);
-          }}
-          className={`rounded-full transition-transform ${small ? "h-4 w-4" : "h-5 w-5"} ${value === c ? "scale-110 ring-2 ring-ink ring-offset-2 ring-offset-bg" : "hover:scale-110"}`}
-          style={{ background: DRAW_COLOR_VAR[c] }}
-        />
-      ))}
+      <div className="space-y-1.5">
+        <PanelTitle right={<span className="text-faint">{steps.length} {steps.length === 1 ? "paso" : "pasos"}</span>}>Pasos</PanelTitle>
+        {stepSelect("Desde", from, 0, (v) => onPatch(spanOfSteps(board, v, Math.max(v, to))))}
+        {stepSelect("Hasta", to, from, (v) => onPatch(spanOfSteps(board, from, v)))}
+      </div>
+      <p className="text-faint">En la línea de tiempo: arrastra la barra para moverla de paso y sus bordes para que dure más o menos pasos.</p>
     </div>
   );
 }
+
+const nearest = (list: number[], v: number) => list.reduce((best, x, i) => (Math.abs(x - v) < Math.abs(list[best] - v) ? i : best), 0);
 
 // The drawing with a fixed point moved (or a point added in the middle of an arrow, to curve it).
 function withHandle(a: Annotation, h: HandleDrag): Annotation {

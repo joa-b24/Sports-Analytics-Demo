@@ -32,12 +32,15 @@ const WRITABLE = [
   // A board play exported for the render (sportsan.clips.render --board).
   /^data\/boards\/board_[\w.-]+\.json$/,
   /^config\/roster\.json$/,
+  // Answers of a review sample (sportsan.tracking.links_review / jumps_review, page /revision).
+  /^matches\/[\w.-]+\/tracking\/revision\/[\w.-]+\/respuestas\.json$/,
 ];
 const TYPES: Record<string, string> = {
   ".mp4": "video/mp4",
   ".webm": "video/webm",
   ".mkv": "video/x-matroska",
   ".json": "application/json",
+  ".jpg": "image/jpeg",
   ".csv": "text/csv; charset=utf-8",
   ".yaml": "text/yaml; charset=utf-8",
   ".yml": "text/yaml; charset=utf-8",

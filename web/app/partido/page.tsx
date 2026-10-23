@@ -660,7 +660,7 @@ function MatchPage() {
               />
             </span>
           </div>
-          <div ref={setBelowSlot} className={tab === "tag" || tab === "segments" ? "" : "hidden"} />
+          <div ref={setBelowSlot} className={tab === "tag" || tab === "segments" || tab === "plays" ? "" : "hidden"} />
           </div>
         </div>
 
@@ -708,7 +708,17 @@ function MatchPage() {
             />
           )}
           {tab === "plays" && (
-            <PlaysTab key={video.video_id} match={match} videoId={video.video_id} plays={plays} time={time} playerRef={playerRef} playClip={playClip} />
+            <PlaysTab
+              key={video.video_id}
+              match={match}
+              videoId={video.video_id}
+              plays={plays}
+              time={time}
+              duration={duration}
+              playerRef={playerRef}
+              playClip={playClip}
+              belowSlot={belowSlot}
+            />
           )}
           {tab === "analysis" && (
             <AnalysisTab

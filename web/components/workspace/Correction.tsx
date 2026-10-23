@@ -196,7 +196,8 @@ export function Correction({
   // What each part of the table needs: the width of the video column, and the height of the content of the side
   // column, of the modules under the video and of the timeline panel.
   const [colRef, colBox] = useBox();
-  const [sideRef] = useBox();
+  const [sideRef, sideBox] = useBox();
+  const [pitchBoxRef, pitchBox] = useBox();
   const [belowRef, belowBox] = useBox();
   const [bottomRef, bottomBox] = useBox();
   // Who has a candidate on screen in the badge of suggestions.
@@ -2985,6 +2986,9 @@ export function Correction({
 
   // What the camera sees in this frame, as a shadow on the drawing of the pitch.
   const viewHere = data && row?.H ? viewPolygon(data, row.H) : null;
+  // In the side column the pitch is as large as the window leaves after the other modules there (no page scroll).
+  const sideAvail = fitH ? fitH - 16 - (bottomBox.h + 24) : 0;
+  const pitchMaxW = fitH && sideBox.h > 0 && pitchBox.h > 0 && !belowSet.has("pitch") ? Math.max(200, Math.floor((sideAvail - (sideBox.h - pitchBox.h)) * (109 / 72))) : null;
   const pitchCard = (
             <Card
               title={<span title="Anillo amarillo: marcada a mano · borde naranja: balón (hueco si es una posición rellenada) · de la seleccionada, 4 s antes y después: gris lo medido, blanco lo que se guardará">En la cancha</span>}
@@ -3003,6 +3007,7 @@ export function Correction({
                   </button>
                 ))}
               </div>
+              <div ref={pitchBoxRef} className="mx-auto" style={pitchMaxW ? { maxWidth: pitchMaxW } : undefined}>
               <Pitch showDirection={false} svgRef={pitchSvg} onClick={onPitchClick} className={view === "ball" && pf !== null && row?.H ? "cursor-crosshair" : ""}>
                 <ViewShade poly={viewHere} />
                 {pitchShow !== "ball" && pieces([...selRaw].sort((u, v) => u.frame - v.frame)).map((piece) => (
@@ -3054,6 +3059,7 @@ export function Correction({
                   return p ? <circle key={`m${m.identity}`} cx={p[0]} cy={p[1]} r={1.5} fill="none" stroke="#fde047" strokeWidth={0.5} /> : null;
                 })}
               </Pitch>
+              </div>
               {!row?.H && pitchShow !== "named" && <p className="mt-1 text-[11px] text-warn">Este cuadro no tiene calibración: no hay posiciones.</p>}
             </Card>
   );

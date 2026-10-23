@@ -2,6 +2,7 @@
 
 import { type Icon, ClockClockwise, DownloadSimple, FlagCheckered, Pause, Play as PlayIcon, Trash, UploadSimple, Warning } from "@phosphor-icons/react";
 import { IconButton } from "@/components/Modal";
+import { Pager, usePaged } from "@/components/Paged";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Card, btn } from "@/components/Shell";
@@ -50,6 +51,15 @@ export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, 
   const segments = segmentsFromMarks(marks);
   const sorted = [...marks].sort((a, b) => a.t_video - b.t_video);
   const current = segmentAt(segments, time);
+  // The marks fill the card in pages (no scroll inside); the page follows the mark the video is in.
+  const curIdx = (() => {
+    let i = -1;
+    sorted.forEach((m, j) => {
+      if (m.t_video <= time + 1e-6) i = j;
+    });
+    return i;
+  })();
+  const { boxRef: marksBox, rows: markRows, page: markPage, pages: markPages, setPage: setMarkPage } = usePaged(sorted, 38, curIdx);
   const open = segments.find((s) => s.end === null) ?? null;
   const span = Math.max(1, duration ?? 0, time, ...marks.map((m) => m.t_video));
 
@@ -171,8 +181,9 @@ export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, 
         {sorted.length === 0 ? (
           <p className="flex-1 text-sm text-faint">Aún no hay marcas.</p>
         ) : (
-          <ol className="-mx-1 max-h-[26rem] min-h-0 flex-1 space-y-1 overflow-auto px-1 xl:max-h-none">
-            {sorted.map((m) => {
+          <div ref={marksBox} className="-mx-1 min-h-[9rem] flex-1 overflow-hidden px-1">
+          <ol className="space-y-1">
+            {markRows.map((m) => {
               const seg = m.tipo === "fin" ? undefined : segments.find((s) => s.start === m.t_video);
               const k = kindOf(m.tipo);
               const on = seg !== undefined && current?.segment_id === seg.segment_id;
@@ -180,7 +191,7 @@ export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, 
                 <li
                   key={m.mark_id}
                   className={`group flex items-center gap-3 rounded-lg py-1.5 pr-1.5 pl-3 transition-colors ${on ? "bg-raised" : "hover:bg-raised/60"}`}
-                  style={{ boxShadow: `inset 3px 0 0 ${k.color}` }}
+                  style={{ boxShadow: `inset 3px 0 0 ${k.color}`, height: 34 }}
                 >
                   <span className="tc w-8 shrink-0 text-xs text-faint">{seg?.segment_id ?? ""}</span>
                   <button type="button" className="tc shrink-0 text-sm text-ink hover:text-accent-300" title="Ir a esta marca" onClick={() => playerRef.current?.seek(m.t_video)}>
@@ -218,8 +229,10 @@ export function SegmentsTab({ match, videoId, marks, videoIds, segmentsByVideo, 
               );
             })}
           </ol>
+          </div>
         )}
-        <div className="mt-4 flex shrink-0 flex-wrap items-center gap-2">
+        <Pager page={markPage} pages={markPages} setPage={setMarkPage} />
+        <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
           <button
             type="button"
             className={btn}

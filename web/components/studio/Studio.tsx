@@ -5,10 +5,10 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefO
 import { DRAW_COLOR_LABELS, DRAW_COLOR_VAR } from "@/components/board/BoardView";
 import { DRAW_COLORS } from "@/lib/annotations";
 
-// The common frame of the two editors of Estudio (drawings over a clip and the board): a bar on top (title and what
-// applies to the whole piece), a vertical tool rail beside the canvas, the canvas, one line of controls under it and a
-// side panel with tabs. On a wide screen it fills the window: the rail, the canvas column and the panel share one
-// height and only the panel scrolls inside.
+// The common frame of the two editors of Estudio (drawings over a clip and the board), laid out as a video editor: a
+// bar on top (title and what applies to the whole piece), a vertical tool rail, the canvas with the inspector beside it
+// and the timeline (components/studio/Timeline.tsx) across the bottom. On a wide screen it fills the window and the
+// canvas takes whatever the rest leaves.
 
 // Wide screens (Tailwind xl) get the fixed-height layout; narrower ones stack and scroll as a page.
 const WIDE = "(min-width: 1280px)";
@@ -165,32 +165,85 @@ export function ToolRail<T extends string>({
   );
 }
 
-// The side panel: tabs on top, the content scrolling under them.
+// The side panel (the inspector): tabs on top when there are several views, the content under them.
 export function SidePanel<T extends string>({
   tabs,
   value,
   onChange,
+  title,
   children,
   footer,
 }: {
-  tabs: [T, string][];
-  value: T;
-  onChange: (t: T) => void;
+  tabs?: [T, string][];
+  value?: T;
+  onChange?: (t: T) => void;
+  title?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
 }) {
   return (
     <aside className="flex min-h-0 flex-col overflow-hidden rounded-xl bg-surface">
-      <div className="seg m-2 mb-0 flex" role="tablist" aria-label="Panel">
-        {tabs.map(([id, label]) => (
-          <button key={id} type="button" role="tab" aria-selected={value === id} className="seg-opt flex-1 text-center" onClick={() => onChange(id)}>
-            {label}
-          </button>
-        ))}
-      </div>
+      {tabs && tabs.length > 1 ? (
+        <div className="seg m-2 mb-0 flex" role="tablist" aria-label="Panel">
+          {tabs.map(([id, label]) => (
+            <button key={id} type="button" role="tab" aria-selected={value === id} className="seg-opt flex-1 text-center" onClick={() => onChange?.(id)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        title && <div className="cond border-b border-line-soft px-3 py-2.5 text-[12px] font-bold tracking-wide text-muted uppercase">{title}</div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">{children}</div>
       {footer && <div className="border-t border-line-soft p-3">{footer}</div>}
     </aside>
+  );
+}
+
+// The colour of a drawing, as dots (the same colours as the rail).
+export function ColorPick({ value, onChange, small = false }: { value: string; onChange: (c: string) => void; small?: boolean }) {
+  return (
+    <div className="flex items-center gap-1.5" role="radiogroup" aria-label="Color">
+      {DRAW_COLORS.map((c) => (
+        <button
+          key={c}
+          type="button"
+          role="radio"
+          aria-checked={value === c}
+          aria-label={DRAW_COLOR_LABELS[c]}
+          title={DRAW_COLOR_LABELS[c]}
+          onClick={(e) => {
+            e.stopPropagation();
+            onChange(c);
+          }}
+          className={`rounded-full transition-transform ${small ? "h-4 w-4" : "h-5 w-5"} ${value === c ? "scale-110 ring-2 ring-ink ring-offset-2 ring-offset-surface" : "hover:scale-110"}`}
+          style={{ background: DRAW_COLOR_VAR[c] }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// A time in the inspector: its value, one step back or forward, and "to the playhead".
+export function TimeField({ label, value, fmt, onChange, now, step = 0.5 }: { label: string; value: number; fmt: (t: number) => string; onChange: (t: number) => void; now?: number; step?: number }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="w-12 shrink-0 text-xs text-faint">{label}</span>
+      <div className="flex flex-1 items-center rounded-lg bg-raised">
+        <button type="button" className="px-2 py-1 text-muted hover:text-ink" aria-label={`${label}: ${step} s antes`} onClick={() => onChange(value - step)}>
+          −
+        </button>
+        <span className="tc flex-1 text-center text-xs text-ink">{fmt(value)}</span>
+        <button type="button" className="px-2 py-1 text-muted hover:text-ink" aria-label={`${label}: ${step} s después`} onClick={() => onChange(value + step)}>
+          +
+        </button>
+      </div>
+      {now !== undefined && (
+        <button type="button" className="rounded-lg bg-raised px-2 py-1 text-[11px] text-muted hover:text-ink" title="Al momento del cabezal" onClick={() => onChange(now)}>
+          aquí
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -210,6 +263,8 @@ type FrameProps = {
   canvas: ReactNode;
   controls?: ReactNode;
   side?: ReactNode;
+  // Across the bottom, under the canvas and the side panel.
+  timeline?: ReactNode;
   // Fixed height (wide screens): the canvas fits the room left by the rest.
   fixed: boolean;
   className?: string;
@@ -217,12 +272,16 @@ type FrameProps = {
   frameRef?: RefObject<HTMLDivElement | null>;
 };
 
-export function StudioFrame({ header, rail, canvas, controls, side, fixed, className = "", style, frameRef }: FrameProps) {
+export function StudioFrame({ header, rail, canvas, controls, side, timeline, fixed, className = "", style, frameRef }: FrameProps) {
   return (
     <div ref={frameRef} className={`flex flex-col gap-3 ${className}`} style={style}>
       {header && <div className="flex flex-wrap items-center gap-2">{header}</div>}
-      <div className={`grid gap-3 ${fixed ? "min-h-0 flex-1" : ""} ${side ? "xl:grid-cols-[auto_minmax(0,1fr)_21rem]" : "xl:grid-cols-[auto_minmax(0,1fr)]"}`}>
-        <div className={rail ? "" : "hidden xl:block xl:w-0"}>{rail}</div>
+      <div
+        className={`grid gap-3 ${fixed ? "min-h-0 flex-1" : ""} ${side ? "xl:grid-cols-[auto_minmax(0,1fr)_21rem]" : "xl:grid-cols-[auto_minmax(0,1fr)]"} ${
+          timeline ? "xl:grid-rows-[minmax(0,1fr)_auto]" : ""
+        }`}
+      >
+        <div className={`${rail ? "" : "hidden xl:block xl:w-0"} ${timeline ? "xl:row-span-2" : ""}`}>{rail}</div>
         <div className={`flex min-w-0 flex-col gap-3 ${fixed ? "min-h-0" : ""}`}>
           <div className={`relative overflow-hidden rounded-xl bg-surface p-2 ${fixed ? "min-h-0 flex-1" : ""}`}>
             {fixed ? <div className="absolute inset-2">{canvas}</div> : canvas}
@@ -230,6 +289,7 @@ export function StudioFrame({ header, rail, canvas, controls, side, fixed, class
           {controls && <div className="flex min-h-12 flex-wrap items-center gap-2 rounded-xl bg-surface px-2 py-1.5">{controls}</div>}
         </div>
         {side}
+        {timeline && <div className={`min-w-0 ${side ? "xl:col-span-2" : ""}`}>{timeline}</div>}
       </div>
     </div>
   );

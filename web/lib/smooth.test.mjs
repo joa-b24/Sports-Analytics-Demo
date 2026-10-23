@@ -95,6 +95,37 @@ test("a short excursion of a few points is taken out; a real change of place is 
   assert.equal(dropJumps(away, O).removed, 0);
 });
 
+test("an excursion of 0.7 s to another player and back is taken out (it was kept with the old 0.5 s)", () => {
+  const pts = run(0, 20, 20, 2);
+  // 7 positions (0.7 s) on the feet of a player 6 m in front, then back on her way.
+  for (let k = 6; k <= 12; k++) pts[k] = pt(k * 3, 20 + (2 * k * 3) / 30, 36);
+  const { points, removed } = dropJumps(pts, O);
+  assert.equal(removed, 7);
+  assert.ok(points.every((p) => p.y === 30));
+  assert.equal(dropJumps(pts, { ...O, excursionS: 0.5 }).removed, 0);
+});
+
+test("a real sprint or curve of 0.7 s is not an excursion", () => {
+  // Jogging, a curve at 7 m/s for 0.7 s (every step possible), and jogging again from where she got to.
+  const curve = [...run(0, 6, 20, 2)];
+  let x = curve[5].x;
+  let y = 30;
+  for (let i = 1; i <= 7; i++) {
+    x += 0.5;
+    y += 0.5;
+    curve.push(pt(15 + i * 3, x, y));
+  }
+  curve.push(...run(15 + 8 * 3, 6, x + 0.2, 2).map((p) => ({ ...p, y })));
+  assert.equal(dropJumps(curve, O).removed, 0);
+});
+
+test("a hand-marked position inside a long excursion is never removed", () => {
+  const pts = run(0, 20, 20, 2);
+  for (let k = 6; k <= 12; k++) pts[k] = pt(k * 3, 20 + (2 * k * 3) / 30, 36, k === 9 ? "manual" : "auto");
+  const { points } = dropJumps(pts, O);
+  assert.ok(points.some((p) => p.frame === 27 && p.source === "manual"));
+});
+
 test("open holes: only those the export cannot fill", () => {
   const o = { fps: 30, stride: 3, metersPerUnit: [1, 1], ...SMOOTH_DEFAULTS };
   const p = (frame, x) => ({ frame, x, y: 30, source: "auto" });

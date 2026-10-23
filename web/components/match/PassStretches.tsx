@@ -43,7 +43,7 @@ export function PassStretchesCard({ match }: { match: Match }) {
       ) : rows.length === 0 ? (
         <p className="text-sm text-faint">Marca los tramos de juego (pestaña Tramos) para ver qué partes tienen pases.</p>
       ) : (
-        <div className="max-h-80 overflow-y-auto">
+        <div>
           <table className="w-full text-xs">
             <thead className="text-left text-faint">
               <tr>
