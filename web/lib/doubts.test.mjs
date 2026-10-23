@@ -73,3 +73,13 @@ test("answers: 1 / 2 / none / ok / both / join / no join", () => {
   const apart = answerDoubt(joined, f, ub, "nojoin").edits;
   assert.notEqual(who(f, apart, 60, 4), who(f, apart, 57, 3));
 });
+
+test("dos_sitios «Ninguna»: neither box stays hers", () => {
+  const { f, e } = ana();
+  const her = who(f, e, 15, 1);
+  const two = [{ role: "a", frame: 15, track: 1 }, { role: "b", frame: 15, track: 2 }];
+  const r = answerDoubt(e, f, two, "none");
+  assert.equal(r.changed, 2);
+  assert.notEqual(who(f, r.edits, 15, 1), her);
+  assert.notEqual(who(f, r.edits, 15, 2), her);
+});

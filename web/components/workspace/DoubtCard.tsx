@@ -130,7 +130,7 @@ export function DoubtCard({
       <>
         <button type="button" className={`${b} btn-primary`} onClick={() => onAnswer("pick", 0)}>A es ella {kb("A")}</button>
         <button type="button" className={`${b} btn-primary`} onClick={() => onAnswer("pick", 1)}>B es ella {kb("B")}</button>
-        <button type="button" className={b} onClick={() => onAnswer("none")}>Ninguna {kb("0")}</button>
+        <button type="button" className={b} title="Ninguna es ella: las dos cajas se separan de ella (cada una pasa a ser otra persona) y pasa a la siguiente duda" onClick={() => onAnswer("none")}>Ninguna (sepáralas) {kb("0")}</button>
         <button type="button" className={b} onClick={() => onAnswer("both")}>Las dos (doble) {kb("Enter")}</button>
       </>
     ) : d.kind === "union_dudosa" ? (

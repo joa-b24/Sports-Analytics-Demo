@@ -77,6 +77,19 @@ export interface LinksFile {
   };
 }
 
+// What a fill would leave out, by reason (exclusión, ruta, ambas, salto), before applying it: for the warnings.
+export const DROP_REASON_NAMES: Record<string, string> = { exclusion: "exclusión", ruta: "fuera de su ruta", ambas: "ambas cajas", salto: "salto" };
+export function dropsByReason(links: Pick<LinksFile, "drops">): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of links.drops ?? []) out[d.reason] = (out[d.reason] ?? 0) + 1;
+  return out;
+}
+export const reasonsText = (by: Record<string, number>) =>
+  Object.entries(by)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} por ${DROP_REASON_NAMES[k] ?? k}`)
+    .join(", ");
+
 export const DENSITIES = [1, 2, 3, 4, 5] as const;
 export const DEFAULT_DENSITY = 2;
 export type Density = (typeof DENSITIES)[number];
@@ -87,7 +100,7 @@ export const partOfData = (f: Pick<TracksFile, "video_id" | "start_frame" | "end
 
 // Repository paths of the three files of a part; the example files (written by hand, labelled in the app) live in
 // tracking/auto/ejemplo/ so that the real ones are never mistaken for them.
-// variant "exp": the experimental fill (version B of the Revisión tab), links_<part>_exp.json.
+// variant "exp": fill B, the recommended mode (fewer jumps), links_<part>_exp.json; A (links_<part>.json) is kept to compare.
 export function anchorPaths(folder: string, part: string, example = false, variant?: "exp") {
   const dir = `matches/${folder}/tracking/auto${example ? "/ejemplo" : ""}`;
   return { dir, suggest: `${dir}/suggest_${part}.json`, anchors: `${dir}/anchors_${part}.json`, links: `${dir}/links_${part}${variant ? "_exp" : ""}.json` };
@@ -169,7 +182,7 @@ export function editsFromLinks(
   named: Map<string, number>,
   // When given: these people (and their tracks) are left as they are (see linksProtection).
   protect?: { ids: Set<number>; tracks: Set<number> },
-): { edits: TrackEdits; players: number; tracks: number; conflicts: number[]; skipped: number; dropped: number } {
+): { edits: TrackEdits; players: number; tracks: number; conflicts: number[]; skipped: number; dropped: number; droppedBy: Record<string, number> } {
   const owners = new Map<number, Set<string>>();
   for (const id of links.identities) for (const t of id.tracks) owners.set(t, (owners.get(t) ?? new Set()).add(id.player));
   const conflicts = [...owners].filter(([, s]) => s.size > 1).map(([t]) => t).sort((a, b) => a - b);
@@ -211,10 +224,19 @@ export function editsFromLinks(
     if (protect && protect.ids.has(named.get(id.player) ?? Number.NaN)) continue;
     applied.set(id.player, new Set(id.tracks.filter((t) => !bad.has(t) && present.has(t) && !(protect && protect.tracks.has(t)))));
   }
-  const drops = (links.drops ?? []).filter((d) => applied.get(d.player)?.has(d.track)).map((d) => ({ track: d.track, frame: d.frame }));
+  const had = new Set((next.dropped ?? []).map((d) => `${d.track}:${d.frame}`));
+  const droppedBy: Record<string, number> = {};
+  const drops: { track: number; frame: number }[] = [];
+  for (const d of links.drops ?? []) {
+    const k = `${d.track}:${d.frame}`;
+    if (!applied.get(d.player)?.has(d.track) || had.has(k)) continue;
+    had.add(k);
+    drops.push({ track: d.track, frame: d.frame });
+    droppedBy[d.reason] = (droppedBy[d.reason] ?? 0) + 1;
+  }
   const before = (next.dropped ?? []).length;
   next = dropBoxes(next, drops);
-  return { edits: next, players, tracks, conflicts, skipped, dropped: (next.dropped ?? []).length - before };
+  return { edits: next, players, tracks, conflicts, skipped, dropped: (next.dropped ?? []).length - before, droppedBy };
 }
 
 // Who the fill must not touch unless asked: people verified (done) or with a name in the table. `list` is what the
@@ -383,7 +405,7 @@ export interface TimedAction {
   s: number;
   at: number;
   part?: string;
-  // Version of the Revisión tab open when the action was done (A or B); absent outside a comparison.
+  // Version of the old comparison tab (A or B) in actions measured with it; absent since.
   version?: "A" | "B";
 }
 // A pause longer than this is not work on the action (she stepped away): it counts as this much.

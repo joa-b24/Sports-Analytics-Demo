@@ -428,6 +428,8 @@ export interface TrackEdits {
   autoRejected?: string[];
   // Anchors mode (lib/anchors.ts): doubts of links_<part>.json already resolved, by doubtKey. Absent in older edits.
   anchorDoubts?: string[];
+  // Double boxes of a player skipped in the table («Siguiente / saltar»), as "<identity>:<frame>" (lib/doubles.ts).
+  twiceSeen?: string[];
 }
 
 // A pass tagged by hand (pass 4 of the tagging): who to whom. to_id is null when it did not reach a teammate.
@@ -477,7 +479,7 @@ export interface State {
   edits: ClipEdit[];
   // Shirt colours by match_id of the match folder, as #rrggbb.
   jerseys: Record<string, { own: string; opp: string; ref: string; own_gk?: string; opp_gk?: string }>;
-  // Comparison of two fills of one part (Revisión, lib/compare.ts). Absent in older data.
+  // Comparison of two fills of one part, from a tab that no longer exists: only read by «Empezar de cero» (lib/reset.ts).
   reviews?: PartReview[];
 }
 

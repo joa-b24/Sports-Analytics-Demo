@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard, Anchor, Table, Scales } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard, Anchor, Table } from "@phosphor-icons/react";
 import { Pager } from "@/components/Paged";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
@@ -71,8 +71,9 @@ import type { FixedFile } from "@/lib/positions";
 import { matchVideos } from "@/lib/videos";
 import { AutoSuggestions } from "@/components/workspace/AutoSuggestions";
 import { AnchorsPanel, type BoxPick } from "@/components/workspace/AnchorsPanel";
-import { ReviewPanel } from "@/components/workspace/ReviewPanel";
-import { exampleExpPath } from "@/lib/compare";
+import { Notice } from "@/components/workspace/Notice";
+import { nextTwice, noneIsHer, pendingTwice, skipTwice } from "@/lib/doubles";
+import { dropHalfFrames } from "@/lib/anchors";
 import { FOCUS_COLORS, focusBoxes, partOfData, type AnchorFocus } from "@/lib/anchors";
 import { NOBODY, PLAYERS_DONE, SAMPLE_S, applyQuick, applyQuickOnto, leftovers, namedCount, nextCheckpoint, partStatus, quickModel, sampleFrames, type QuickLabel } from "@/lib/quick";
 
@@ -80,13 +81,15 @@ const TEAM_LABELS: Record<TeamCode, string> = { own: "Analizado", opp: "Contrari
 const TEAM_COLORS: Record<TeamCode, string> = { own: COLORS.own, opp: COLORS.opp, ref: "var(--color-warn)", unk: "var(--color-faint)" };
 // Boxes of an anchor or a doubt, by their number (1, 2, 3...).
 const CHECK_PER_PAGE = 3;
-// The ways of working on the players, always in this order (Alt + 1/2/3/4).
-type PlayerView = "players" | "quick" | "anchors" | "review";
+// Players selected at once in the table, and the colours of the second and third (the first is white).
+const MAX_SELECTED = 3;
+const MULTI_COLORS = ["var(--color-accent-300)", "var(--color-ok)"];
+// The ways of working on the players, in the order of the work: anchors or quick review first, then the table (Alt + 1/2/3).
+type PlayerView = "players" | "quick" | "anchors";
 const PLAYER_VIEWS: { v: PlayerView; name: string; key: string; title: string; Icon: typeof Table }[] = [
-  { v: "players", name: "Mesa", key: "1", title: "Mesa: corregir cajas, unir y separar a mano", Icon: Table },
+  { v: "anchors", name: "Anclas", key: "1", title: "Anclas: nombrar momentos sugeridos, rellenar con Python y revisar sus dudas", Icon: Anchor },
   { v: "quick", name: "Revisión rápida", key: "2", title: "Revisión rápida: nombrar a cada jugadora siguiéndola por la parte", Icon: Lightning },
-  { v: "anchors", name: "Anclas", key: "3", title: "Anclas: nombrar momentos sugeridos, rellenar con Python y revisar sus dudas", Icon: Anchor },
-  { v: "review", name: "Revisión", key: "4", title: "Revisión: comparar el relleno actual (A) con el experimento (B) en esta parte", Icon: Scales },
+  { v: "players", name: "Mesa", key: "3", title: "Mesa: corregir cajas, unir y separar a mano", Icon: Table },
 ];
 // Same value as LOOSE_ID in sportsan/tracking/detect.py.
 const LOOSE_ID = 1_000_000;
@@ -152,8 +155,8 @@ const SIDE_MIN_PX = 260;
 const SIDE_MAX_PX = 640;
 const SIDE_DEFAULT_PX = 336;
 // The panels that can go beside the video or under it (dragged by their grip).
-type ModuleId = "ball" | "pitch" | "quick" | "squad" | "person" | "auto" | "anchors" | "review";
-const MODULE_NAMES: Record<ModuleId, string> = { ball: "Balón", pitch: "En la cancha", quick: "Revisión rápida", squad: "Plantilla", person: "Jugadora", auto: "Sugerencias", anchors: "Anclas", review: "Revisión" };
+type ModuleId = "ball" | "pitch" | "quick" | "squad" | "person" | "auto" | "anchors";
+const MODULE_NAMES: Record<ModuleId, string> = { ball: "Balón", pitch: "En la cancha", quick: "Revisión rápida", squad: "Plantilla", person: "Jugadora", auto: "Sugerencias", anchors: "Anclas" };
 const MODULE_DRAG = "application/x-sportsan-module";
 // Held keys: an arrow plays (or rewinds) at this speed; Space held steps one processed frame every CREEP_MS.
 const FAST_RATE = 4;
@@ -192,6 +195,19 @@ export function Correction({
     return () => clearTimeout(t);
   }, [msg]);
   const [sel, setSel] = useState<number | null>(null);
+  // Up to two more players selected with the first one (Ctrl/Shift + clic): verified together, each with her colour.
+  const [multi, setMulti] = useState<number[]>([]);
+  const groupColor = (id: number): string | null => (id === sel ? "#ffffff" : multi.includes(id) ? MULTI_COLORS[multi.indexOf(id) % MULTI_COLORS.length] : null);
+  const toggleMulti = (id: number) => {
+    if (sel === null) return setSel(id);
+    if (id === sel) {
+      setSel(multi[0] ?? null);
+      return setMulti(multi.slice(1));
+    }
+    if (multi.includes(id)) return setMulti(multi.filter((x) => x !== id));
+    if (multi.length >= MAX_SELECTED - 1) return setMsg(`Máximo ${MAX_SELECTED} jugadoras a la vez: quita una (Ctrl + clic sobre ella) antes de añadir otra.`);
+    setMulti([...multi, id]);
+  };
   const [mode, setMode] = useState<Mode>(null);
   const [goTo, setGoTo] = useState("");
   const [showShort] = useState(false);
@@ -236,7 +252,7 @@ export function Correction({
   // Used for the kit colours while no tracks file (which names its match) is loaded.
   const [matchIdText, setMatchIdText] = useState(folder || "partido_2026_09_25");
   // Previous states of the corrections of this part, for undo.
-  // By part and version of the Revisión tab: Ctrl + Z never crosses from one version to the other.
+  // Undo history by part.
   const [historyBy, setHistoryBy] = useState<Record<string, TrackEdits[]>>({});
   const [notice, setNotice] = useState<string | null>(null);
   // A merge that was stopped because the two people appear at the same time.
@@ -249,7 +265,7 @@ export function Correction({
   const [extra, setExtra] = useState<TracksFile[]>([]);
   const [blocked, setBlocked] = useState<{ into: number; from: number; frames: number[]; same: number } | null>(null);
   // Players or ball: two views of the same part.
-  const [view, setView] = useState<"players" | "ball" | "quick" | "anchors" | "review">(step ?? "players");
+  const [view, setView] = useState<"players" | "ball" | "quick" | "anchors">(step === "ball" ? "ball" : "players");
   // Anchors mode: the box being asked about (suggested moment or doubt), highlighted on the video.
   const [anchorFocus, setAnchorFocus] = useState<AnchorFocus | null>(null);
   const [checkPage, setCheckPage] = useState(0);
@@ -347,9 +363,14 @@ export function Correction({
   const mid = data?.match_id ?? matchIdText;
   const colors = state.jerseys[mid] || NO_COLORS;
   const writeEdits = (next: TrackEdits) => mutate((s) => ({ ...s, trackEdits: [...s.trackEdits.filter((e) => e.key !== next.key), next] }));
-  // Comparison of two fills of this part (Revisión): the version open decides which undo history is used.
-  const review = (state.reviews ?? []).find((r) => r.key === key);
-  const hKey = `${key}|${review?.active ?? "-"}`;
+  const hKey = key;
+  // The mode of each part is remembered (the last used; Anclas the first time).
+  const modePref = usePref(`correction:mode:${key}`, "anchors");
+  const [prevKey, setPrevKey] = useState(key);
+  if (key !== prevKey) {
+    setPrevKey(key);
+    if (key && view !== "ball") setView(PLAYER_VIEWS.some((x) => x.v === modePref) ? (modePref as PlayerView) : "anchors");
+  }
   const history = historyBy[hKey] ?? [];
   // Every correction can be undone: the state before it is kept (the last 100).
   const setEdits = (next: TrackEdits) => {
@@ -489,7 +510,10 @@ export function Correction({
         }, HOLD_MS);
       } else if (e.key === "Escape") {
         setMode((m) => {
-          if (m === null) setSel(null);
+          if (m === null) {
+            setSel(null);
+            setMulti([]);
+          }
           return null;
         });
         setPickKit(null);
@@ -1563,6 +1587,34 @@ export function Correction({
     const f = frames.find((x) => x > frame + stride) ?? frames[0];
     seekFrame(f);
   };
+  // Double boxes of the selected one still to look at (the skipped ones are remembered for this part).
+  // Of every selected player (up to 3), in one walk ordered by time.
+  const group = [selected, ...multi.map((id) => personById.get(id))].filter((p): p is Person => !!p);
+  const twiceOf = (e: typeof edits) => group.flatMap((p) => pendingTwice(p.conflicts, p.id, e).map((f) => ({ id: p.id, frame: f }))).sort((a, b) => a.frame - b.frame || a.id - b.id);
+  const twiceList = twiceOf(edits);
+  const selTwice = twiceList.map((x) => x.frame);
+  // The double box being looked at: the one at this frame, or the next.
+  const twiceAt = () => twiceList.find((x) => Math.abs(x.frame - frame) <= stride) ?? null;
+  const afterTwice = (next: typeof edits, at: { id: number; frame: number }, note: string) => {
+    setEdits(next);
+    const from = at.frame;
+    const left = twiceOf(next).filter((x) => !(x.id === at.id && x.frame === from)).map((x) => x.frame);
+    const n = nextTwice(left, from);
+    if (n !== null) seekFrame(n);
+    setMsg(`${note}${n !== null ? ` Quedan ${left.length}.` : " No quedan cajas dobles de ella."} Ctrl + Z lo deshace.`);
+  };
+  // e: «Siguiente / saltar» (nothing edited, not shown again); 0: «Ninguna es ella» (both boxes out of her ±0.5 s).
+  const twiceSkip = () => {
+    const at = twiceAt();
+    if (at === null) return nextOf(selTwice);
+    afterTwice(skipTwice(edits, at.id, at.frame), at, "Caja doble saltada.");
+  };
+  const twiceNone = () => {
+    const at = twiceAt();
+    if (at === null) return setMsg("Ve primero a un cuadro con dos cajas de ella (d).");
+    const r = noneIsHer(edits, data!, at.id, at.frame, dropHalfFrames(fps));
+    afterTwice(skipTwice(r.edits, at.id, at.frame), at, `Ninguna era ${label(personById.get(at.id), at.id)}: ${r.boxes} caja(s) quitada(s) de ella (±0.5 s).`);
+  };
   // What is left to check on a person, and the first place where it is.
   const problemsOf = (p: Person) => ({ gaps: gapsOf(p), conflicts: p.conflicts, hints: hintsByPerson.get(p.id) ?? [] });
   const firstProblem = (p: Person): number | null => {
@@ -1622,7 +1674,9 @@ export function Correction({
         peekAt(list[(peek ? list.indexOf(peek) + 1 : 0) % list.length]);
       } else if (k === "g") nextGap();
       else if (k === "c") nextOf((hintsByPerson.get(selected.id) ?? []).map((h) => Math.max(data?.start_frame ?? 0, h.frame - Math.round(fps))));
-      else if (k === "d") nextOf(selected.conflicts);
+      else if (k === "d") nextOf(selTwice);
+      else if (k === "e" && selTwice.length) twiceSkip();
+      else if (k === "0" && selTwice.length) twiceNone();
       else if (k === "v") toggleChecked();
       // m: where her two boxes sit in the same place, keep one (the more confident).
       else if (k === "m") unifySelf();
@@ -1790,9 +1844,18 @@ export function Correction({
   // One person of the list (also the selected one, in her own panel above the list).
   const renderRow = (p: Person) => {
     const isSel = p.id === sel;
+    const mc = multi.includes(p.id) ? groupColor(p.id) : null;
     return (
       <li
         key={p.id}
+        onClickCapture={(e) => {
+          if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          toggleMulti(p.id);
+        }}
+        title="Ctrl/Shift + clic: añadir o quitar de la selección (hasta 3)"
+        style={mc ? { boxShadow: `inset 3px 0 0 ${mc}` } : undefined}
         {...dropOn(isSel ? null : p.id)}
         className={`grid grid-cols-[5.5rem_1.15rem_minmax(4rem,1fr)_auto] items-center gap-2 rounded-lg px-2 py-1 transition-colors ${
           dropOver === p.id ? "bg-accent/25" : isSel ? "bg-accent/15 shadow-[inset_0_0_0_1px_rgba(74,114,255,.5)]" : "hover:bg-raised/50"
@@ -1988,6 +2051,7 @@ export function Correction({
   // Mesa / Revisión rápida / Anclas (the segmented control and Alt + 1/2/3).
   const switchView = (v: PlayerView) => {
     if (v === view) return;
+    if (key) setPref(`correction:mode:${key}`, v);
     setView(v);
     setMode(null);
     if (v === "anchors") setSel(null);
@@ -3098,8 +3162,8 @@ export function Correction({
                     const p = personById.get(id);
                     return (
                       <g key={`n${id}`} className={view === "ball" ? "" : "cursor-pointer"} onClick={() => view !== "ball" && pickBox(id)}>
-                        <circle cx={q.x} cy={q.y} r={id === sel ? 2.1 : 1.5} fill={q.source === "interpolated" ? "var(--color-surface)" : TEAM_COLORS[p?.team ?? "unk"]}
-                          stroke={id === sel ? "#ffffff" : TEAM_COLORS[p?.team ?? "unk"]} strokeWidth={id === sel ? 0.6 : 0.4} />
+                        <circle cx={q.x} cy={q.y} r={groupColor(id) ? 2.1 : 1.5} fill={q.source === "interpolated" ? "var(--color-surface)" : TEAM_COLORS[p?.team ?? "unk"]}
+                          stroke={groupColor(id) ?? TEAM_COLORS[p?.team ?? "unk"]} strokeWidth={groupColor(id) ? 0.6 : 0.4} />
                         <text x={q.x} y={q.y - 2.4} textAnchor="middle" fontSize={2.4} fontFamily="var(--font-mono)" fill="var(--color-muted)">
                           {label(p, id)}
                         </text>
@@ -3113,7 +3177,7 @@ export function Correction({
                     const p = personById.get(id);
                     return (
                       <g key={b[0]} className={view === "ball" ? "" : "cursor-pointer"} onClick={() => view !== "ball" && pickBox(id)}>
-                        <circle cx={b[9] as number} cy={b[10] as number} r={id === sel ? 2.1 : 1.5} fill={TEAM_COLORS[p?.team ?? "unk"]} stroke={id === sel ? "#ffffff" : "var(--color-bg)"} strokeWidth={id === sel ? 0.6 : 0.3} />
+                        <circle cx={b[9] as number} cy={b[10] as number} r={groupColor(id) ? 2.1 : 1.5} fill={TEAM_COLORS[p?.team ?? "unk"]} stroke={groupColor(id) ?? "var(--color-bg)"} strokeWidth={groupColor(id) ? 0.6 : 0.3} />
                         <text x={b[9] as number} y={(b[10] as number) - 2.4} textAnchor="middle" fontSize={2.4} fontFamily="var(--font-mono)" fill="var(--color-muted)">
                           {label(p, id)}
                         </text>
@@ -3246,13 +3310,13 @@ export function Correction({
                             onClick={() => absorb(absorbForSel)}
                           />
                         )}
-                        {selected.conflicts.length > 0 && (
+                        {selTwice.length > 0 && (
                           <Badge
                             icon={<Warning size={13} />}
-                            n={selected.conflicts.length}
+                            n={selTwice.length}
                             tone="warn"
-                            title={`Dos cajas a la vez en ${selected.conflicts.length} cuadro(s): ir al primero y hacer clic en la que es ella (m deja una donde están en el mismo sitio)`}
-                            onClick={() => seekFrame(selected.conflicts[0])}
+                            title={`Dos cajas a la vez en ${selTwice.length} cuadro(s) por revisar: ir al siguiente (d) y hacer clic en la que es ella; e salta, 0 ninguna es ella (m deja una donde están en el mismo sitio)`}
+                            onClick={() => nextOf(selTwice)}
                           />
                         )}
                         {selAnoms.length > 0 && (
@@ -3331,15 +3395,13 @@ export function Correction({
     </div>
   );
   // Which modules this view has, where each one goes, and the grip that moves it.
-  const viewModules: ModuleId[] = view === "ball" ? ["pitch", "ball", "auto"] : view === "quick" ? ["quick", "squad"] : view === "anchors" ? ["anchors"] : view === "review" ? ["review"] : ["pitch", "person"];
+  const viewModules: ModuleId[] = view === "ball" ? ["pitch", "ball", "auto"] : view === "quick" ? ["quick", "squad"] : view === "anchors" ? ["anchors"] : ["pitch", "person"];
   const anchorsPanel =
     view === "anchors" && data ? (
       folder ? (
         <AnchorsPanel
-          key={`${folder}|${partOfData(data)}|${review?.active ?? "-"}|${review?.B.example ? "ej" : ""}`}
-          version={review?.active}
+          key={`${folder}|${partOfData(data)}`}
           videoUrl={fileUrl}
-          linksPath={review?.active === "B" && review.B.example ? exampleExpPath(folder, partOfData(data)) : undefined}
           folder={folder}
           matchId={folder}
           part={partOfData(data)}
@@ -3362,25 +3424,7 @@ export function Correction({
         <p className="card !p-3 text-xs text-ink-2">El modo anclas lee y escribe la carpeta del partido: ábrelo desde la pestaña del partido.</p>
       )
     ) : null;
-  const reviewPanel =
-    view === "review" && data ? (
-      folder ? (
-        <ReviewPanel
-          folder={folder}
-          part={partOfData(data)}
-          data={data}
-          edits={edits}
-          review={review}
-          people={ppl}
-          named={new Map(ppl.filter((p) => p.player_id).map((p) => [p.player_id, p.id]))}
-          setEdits={setEdits}
-          onMsg={setMsg}
-        />
-      ) : (
-        <p className="card !p-3 text-xs text-ink-2">La revisión lee la carpeta del partido: ábrela desde la pestaña del partido.</p>
-      )
-    ) : null;
-  const moduleNode: Record<ModuleId, React.ReactNode> = { ball: ballBar, pitch: pitchCard, quick: quickPanel, squad: squadPanel, person: personModule, auto: autoPanel, anchors: anchorsPanel, review: reviewPanel };
+  const moduleNode: Record<ModuleId, React.ReactNode> = { ball: ballBar, pitch: pitchCard, quick: quickPanel, squad: squadPanel, person: personModule, auto: autoPanel, anchors: anchorsPanel };
   const sideMods = viewModules.filter((m) => !belowSet.has(m));
   const belowMods = viewModules.filter((m) => belowSet.has(m));
   // With the table fitting the window, the window is a limit, not a size: the video as large as fits above its controls
@@ -3901,16 +3945,18 @@ export function Correction({
                         const p = personById.get(id);
                         const isSel = id === sel;
                         const twice = twiceHere.has(id);
-                        const c = twice ? "#fb7185" : isSel ? "#ffffff" : TEAM_COLORS[p?.team ?? "unk"];
+                        const gc = groupColor(id);
+                        const c = twice ? "#fb7185" : (gc ?? TEAM_COLORS[p?.team ?? "unk"]);
                         return (
                           <g
                             key={b[0]}
-                            className={`cursor-pointer ${(anchorHits ? !anchorTracks.has(b[0]) : focusSel && sel !== null && !isSel && id !== pinned) ? "mark-dim" : ""}`}
+                            className={`cursor-pointer ${(anchorHits ? !anchorTracks.has(b[0]) : focusSel && sel !== null && !gc && id !== pinned) ? "mark-dim" : ""}`}
                             opacity={b[11] ? 1 : 0.35}
                             onPointerDown={(e) => startBoxDrag(e, id, b)}
                             onClick={(e) => {
                               if (mode === "manual" || mode === "ball" || pickKit) return;
                               e.stopPropagation();
+                              if ((e.ctrlKey || e.metaKey || e.shiftKey) && view === "players") return toggleMulti(id);
                               if (anchorHits && anchorTracks.has(b[0]) && pf !== null && anchorPick.current?.({ track: b[0], id }, anchorHits.found.map((f) => ({ track: f.b[0], id: f.id })), pf)) return;
                               pickBox(id, b[0]);
                             }}
@@ -3922,7 +3968,7 @@ export function Correction({
                               label={label(p, id)}
                               style={labelStyle}
                               unit={dotR}
-                              strong={isSel || twice}
+                              strong={isSel || !!gc || twice}
                               dashed={twice}
                             />
                           </g>
@@ -4135,104 +4181,125 @@ export function Correction({
                   </IconButton>
                 </div>
                 {anomOn && selected && (
-                  <div className="enter flex flex-wrap items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-sm shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-danger)_40%,transparent)]">
-                    <Warning size={16} weight="fill" className="shrink-0 text-danger" />
+                  <Notice
+                    tone="danger"
+                    icon={<Warning size={16} weight="fill" className="text-danger" />}
+                    title={
+                      anomCur
+                        ? `Salta ${Math.round(anomCur.meters)} m (${Math.round(anomCur.speed)} m/s)${anomCur.until !== undefined ? ` y vuelve en ${((anomCur.until - anomCur.frame) / fps).toFixed(1)} s` : ""} · ${anomCur.until !== undefined ? "casi siempre la caja perdió sus pies" : "si desde aquí es otra persona, parte con S"}`
+                        : "Corregido. Siguiente con A."
+                    }
+                    actions={
+                      <>
+                        {anomCur && (
+                          <>
+                            <button type="button" className={btn} onClick={() => anomDrop(anomCur)} title={`Quitar ${anomFrames(anomCur) === 1 ? "el cuadro" : `${anomFrames(anomCur)} cuadros`}: sus cajas de esos cuadros no cuentan; al guardar se rellena con una recta (Q)`}>
+                              <Eraser size={14} /> Quitar {anomFrames(anomCur)} <kbd className="kbd">Q</kbd>
+                            </button>
+                            <button type="button" className={btn} disabled={anomCur.before === undefined} onClick={() => anomCur.before !== undefined && anomDropPrev(anomCur)} title="Quitar el anterior: muchas veces el que está mal es el cuadro de antes del salto (Alt + Q)">
+                              <Eraser size={14} /> <span className="hidden min-[1700px]:inline">Anterior</span> <kbd className="kbd">Alt+Q</kbd>
+                            </button>
+                            <button type="button" className={`btn ${mode === "manual" ? "btn-primary" : ""}`} onClick={() => (mode === "manual" ? setMode(null) : anomFix(anomCur))} title="Marcar sus pies: clic donde están en cada cuadro del salto (P)">
+                              <HandPointing size={14} /> <span className="hidden min-[1700px]:inline">Pies</span> <kbd className="kbd">P</kbd>
+                            </button>
+                            <button type="button" className={btnPrimary} onClick={() => anomOk(anomCur)} title="Está bien así (por ejemplo, una corrida real): no vuelve a marcarse (Enter)">
+                              <Check size={14} /> Bien <kbd className="kbd">Enter</kbd>
+                            </button>
+                          </>
+                        )}
+                        <button type="button" className="btn btn-ghost !px-2 hover:text-danger" disabled={selAnoms.length < 2} onClick={anomDropAll} title="Quitar todos: los cuadros de todos sus saltos imposibles de una vez (se rellenan al guardar)">
+                          Todos
+                        </button>
+                        <span className="tc w-12 text-center text-xs text-faint">
+                          {anomCur ? selAnoms.indexOf(anomCur) + 1 : "–"}/{selAnoms.length}
+                        </span>
+                        <IconButton label="Anterior (Mayús + A)" onClick={() => anomStep(-1)}>
+                          <SkipBack size={14} />
+                        </IconButton>
+                        <IconButton label="Siguiente (A)" onClick={() => anomStep(1)}>
+                          <SkipForward size={14} />
+                        </IconButton>
+                        <IconButton label="Terminar la revisión de saltos (Esc)" onClick={() => setAnomAt(null)}>
+                          <X size={14} />
+                        </IconButton>
+                      </>
+                    }
+                  >
                     {anomCur ? (
-                      <span className="min-w-0 flex-1 text-ink-2">
+                      <>
                         Salta <strong className="text-ink">{Math.round(anomCur.meters)} m</strong> ({Math.round(anomCur.speed)} m/s)
                         {anomCur.until !== undefined && ` y vuelve en ${((anomCur.until - anomCur.frame) / fps).toFixed(1)} s`}
                         <span className="text-faint"> · {anomCur.until !== undefined ? "casi siempre la caja perdió sus pies" : "si desde aquí es otra persona, parte con S"}</span>
-                      </span>
-                    ) : (
-                      <span className="min-w-0 flex-1 text-ok">Corregido. Siguiente con A.</span>
-                    )}
-                    {anomCur && (
-                      <>
-                        <button type="button" className={btn} onClick={() => anomDrop(anomCur)} title="Sus cajas de esos cuadros no cuentan: al guardar se rellena con una recta">
-                          <Eraser size={14} /> Quitar {anomFrames(anomCur) === 1 ? "el cuadro" : `${anomFrames(anomCur)} cuadros`} <kbd className="kbd">Q</kbd>
-                        </button>
-                        {anomCur.before !== undefined && (
-                          <button type="button" className={btn} onClick={() => anomDropPrev(anomCur)} title="Muchas veces el que está mal es el cuadro de antes del salto: se quita ese y se rellena al guardar">
-                            <Eraser size={14} /> Quitar el anterior <kbd className="kbd">Alt+Q</kbd>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className={`btn ${mode === "manual" ? "btn-primary" : ""}`}
-                          onClick={() => (mode === "manual" ? setMode(null) : anomFix(anomCur))}
-                          title="Clic donde están sus pies en cada cuadro del salto"
-                        >
-                          <HandPointing size={14} /> Marcar sus pies <kbd className="kbd">P</kbd>
-                        </button>
-                        <button type="button" className={btnPrimary} onClick={() => anomOk(anomCur)} title="Está bien así (por ejemplo, una corrida real): no vuelve a marcarse">
-                          <Check size={14} /> Está bien <kbd className="kbd">Enter</kbd>
-                        </button>
                       </>
+                    ) : (
+                      <span className="text-ok">Corregido. Siguiente con A.</span>
                     )}
-                    <span className="flex items-center gap-0.5">
-                      {selAnoms.length > 1 && (
-                        <button type="button" className="btn btn-ghost !px-2 text-xs hover:text-danger" onClick={anomDropAll} title="Quita los cuadros de todos sus saltos imposibles de una vez (se rellenan al guardar)">
-                          Quitar todos
-                        </button>
-                      )}
-                      <span className="tc mr-1 text-xs text-faint">
-                        {anomCur ? selAnoms.indexOf(anomCur) + 1 : "–"}/{selAnoms.length}
-                      </span>
-                      <IconButton label="Anterior (Mayús + A)" onClick={() => anomStep(-1)}>
-                        <SkipBack size={14} />
-                      </IconButton>
-                      <IconButton label="Siguiente (A)" onClick={() => anomStep(1)}>
-                        <SkipForward size={14} />
-                      </IconButton>
-                      <IconButton label="Terminar la revisión de saltos (Esc)" onClick={() => setAnomAt(null)}>
-                        <X size={14} />
-                      </IconButton>
-                    </span>
-                  </div>
+                  </Notice>
                 )}
                 {peek && selected && peekOther !== null && (
-                  <div className="enter flex flex-wrap items-center gap-2 rounded-2xl bg-warn-900/70 px-4 py-2.5 text-sm text-warn shadow-[inset_0_0_0_1px_rgba(224,164,88,.45)]">
-                    <span className="min-w-0 flex-1">
-                      ¿<strong>{label(selected, selected.id)}</strong> {peek.from === selected.id ? "sigue como" : "viene de"}{" "}
-                      <strong>{label(personById.get(peekOther), peekOther)}</strong> (recuadro amarillo)? {peek.gapS.toFixed(1)} s, {peek.distM.toFixed(1)} m
-                    </span>
-                    <button type="button" className={btnPrimary} onClick={() => joinCandidate(peek)}>
-                      <Check size={14} /> Unir <kbd className="kbd">Enter</kbd>
-                    </button>
-                    <button type="button" className={btn} onClick={() => rejectCandidate(peek)}>
-                      <X size={14} /> No <kbd className="kbd">X</kbd>
-                    </button>
-                    <button type="button" className={btn} onClick={() => peekAt(peek)}>
-                      <ArrowClockwise size={14} /> <kbd className="kbd">R</kbd>
-                    </button>
-                    <button type="button" className={btn} title="Siguiente candidata" onClick={() => peekNext(peek)}>
-                      Siguiente
-                    </button>
-                    <IconButton label="Cerrar (Esc)" onClick={() => setPeek(null)}>
-                      <X size={14} />
-                    </IconButton>
-                  </div>
+                  <Notice
+                    tone="warn"
+                    title={`¿${label(selected, selected.id)} ${peek.from === selected.id ? "sigue como" : "viene de"} ${label(personById.get(peekOther), peekOther)} (recuadro amarillo)? ${peek.gapS.toFixed(1)} s, ${peek.distM.toFixed(1)} m`}
+                    actions={
+                      <>
+                        <button type="button" className={btnPrimary} onClick={() => joinCandidate(peek)}>
+                          <Check size={14} /> Unir <kbd className="kbd">Enter</kbd>
+                        </button>
+                        <button type="button" className={btn} onClick={() => rejectCandidate(peek)}>
+                          <X size={14} /> No <kbd className="kbd">X</kbd>
+                        </button>
+                        <button type="button" className={btn} title="Volver a ver" onClick={() => peekAt(peek)}>
+                          <ArrowClockwise size={14} /> <kbd className="kbd">R</kbd>
+                        </button>
+                        <button type="button" className={btn} title="Siguiente candidata" onClick={() => peekNext(peek)}>
+                          Siguiente
+                        </button>
+                        <IconButton label="Cerrar (Esc)" onClick={() => setPeek(null)}>
+                          <X size={14} />
+                        </IconButton>
+                      </>
+                    }
+                  >
+                    ¿<strong>{label(selected, selected.id)}</strong> {peek.from === selected.id ? "sigue como" : "viene de"} <strong>{label(personById.get(peekOther), peekOther)}</strong> (recuadro amarillo)? {peek.gapS.toFixed(1)} s,{" "}
+                    {peek.distM.toFixed(1)} m
+                  </Notice>
                 )}
-                {selTwiceHere && selected && !mode && !pickKit && (
-                  <div className="enter flex items-start gap-2.5 rounded-2xl bg-warn-900/80 px-4 py-2.5 text-sm text-warn shadow-[inset_0_0_0_1px_rgba(224,164,88,.45)]">
-                    <Warning size={17} className="mt-0.5 shrink-0" />
-                    <span>
-                      {label(selected, selected.id)} tiene dos cajas en este cuadro (las de trazo rojo). Haz clic en la que <strong>sí</strong> es ella: la
-                      otra se separa como una persona aparte. Se puede deshacer.
-                    </span>
-                  </div>
-                )}
+                {(selTwiceHere || multi.some((id) => shown.filter((x) => x.id === id).length > 1)) && selected && !mode && !pickKit && (() => {
+                  const id = selTwiceHere ? selected.id : (multi.find((m) => shown.filter((x) => x.id === m).length > 1) ?? selected.id);
+                  const who = label(personById.get(id), id);
+                  return (
+                    <Notice
+                      tone="warn"
+                      icon={<Warning size={17} />}
+                      title={`${who} tiene dos cajas en este cuadro (las de trazo rojo). Haz clic en la que sí es ella: la otra se separa como una persona aparte. Se puede deshacer.`}
+                      actions={
+                        <>
+                          <button type="button" className={btn} title="Ninguna de las dos es ella: se le quitan las dos cajas ±0.5 s y pasa a la siguiente (Ctrl + Z deshace)" onClick={twiceNone}>
+                            Ninguna es ella <kbd className="kbd">0</kbd>
+                          </button>
+                          <button type="button" className={btn} title="No cambia nada: no vuelve a avisar de este cuadro y pasa a la siguiente" onClick={twiceSkip}>
+                            Saltar <kbd className="kbd">E</kbd>
+                          </button>
+                        </>
+                      }
+                    >
+                      <strong>{who}</strong>: dos cajas aquí (trazo rojo). Clic en la que <strong>sí</strong> es ella; la otra se separa.
+                    </Notice>
+                  );
+                })()}
                 {pickKit && (
-                  <div className="enter rounded-2xl bg-accent-900/70 px-4 py-2.5 text-sm text-accent-100 shadow-[inset_0_0_0_1px_rgba(74,114,255,.5)]">
+                  <Notice tone="accent" title={`Haz clic en el video sobre la camiseta de: ${KIT_LABELS[pickKit]} (${TEAM_LABELS[KIT_TEAM[pickKit]].toLowerCase()}). Esc para cancelar.`}>
                     Haz clic en el video sobre la camiseta de: {KIT_LABELS[pickKit]} ({TEAM_LABELS[KIT_TEAM[pickKit]].toLowerCase()}). Esc para cancelar.
-                  </div>
+                  </Notice>
                 )}
                 {mode && (
-                  <div className="enter rounded-2xl bg-accent-900/70 px-4 py-2.5 text-sm text-accent-100 shadow-[inset_0_0_0_1px_rgba(74,114,255,.5)]">
-                    {mode === "merge"
+                  <Notice tone="accent" title={(mode === "merge"
                       ? `Uniendo con ${label(selected ?? undefined, sel ?? 0)}: haz clic en la caja (o en la fila) de la misma jugadora. Puedes moverte por el video. Esc para terminar.`
-                      : `Marcando a ${label(selected ?? undefined, sel ?? 0)} a mano: haz clic en el video donde están sus pies en este cuadro. Esc para terminar.`}
-                  </div>
+                      : `Marcando a ${label(selected ?? undefined, sel ?? 0)} a mano: haz clic en el video donde están sus pies en este cuadro. Esc para terminar.`)}>
+                    {(mode === "merge"
+                      ? `Uniendo con ${label(selected ?? undefined, sel ?? 0)}: haz clic en la caja (o en la fila) de la misma jugadora. Puedes moverte por el video. Esc para terminar.`
+                      : `Marcando a ${label(selected ?? undefined, sel ?? 0)} a mano: haz clic en el video donde están sus pies en este cuadro. Esc para terminar.`)}
+                  </Notice>
                 )}
                 </div>
                 {hasBelow && (
@@ -4304,6 +4371,50 @@ export function Correction({
                     step={bEvery * fps}
                     links={edits.ballLinks ?? []}
                   />
+                )}
+            {view === "players" && selected && multi.length > 0 && (
+                  <div className="mb-1.5 space-y-1" aria-label="Jugadoras seleccionadas">
+                    {group.map((p) => {
+                      const c = groupColor(p.id) ?? "#ffffff";
+                      const pend = pendingTwice(p.conflicts, p.id, edits);
+                      return (
+                        <div key={p.id} className="flex items-center gap-2 text-xs">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c }} />
+                          <span className="w-24 truncate text-ink">{label(p, p.id)}</span>
+                          <span
+                            className="relative h-2.5 flex-1 cursor-pointer rounded-full bg-bg/70"
+                            role="presentation"
+                            onClick={(e) => {
+                              const r = e.currentTarget.getBoundingClientRect();
+                              seekFrame(Math.round(data.start_frame + ((e.clientX - r.left) / r.width) * span));
+                            }}
+                          >
+                            {runs(p).map(([a, b]) => (
+                              <span key={a} className="absolute inset-y-0 rounded-full opacity-80" style={{ left: `${pos(a)}%`, width: `${Math.max(0.6, pos(b) - pos(a))}%`, background: c }} />
+                            ))}
+                            {pend.map((f) => (
+                              <span key={`t${f}`} className="absolute -inset-y-0.5 w-0.5 bg-warn" style={{ left: `${pos(f)}%` }} />
+                            ))}
+                            <span className="absolute -inset-y-1 w-px bg-ink" style={{ left: `${pos(frame)}%` }} />
+                          </span>
+                          <span className="tc w-6 text-right text-warn" title="Cajas dobles por revisar">{pend.length || ""}</span>
+                          <button
+                            type="button"
+                            className={`btn !px-1.5 !py-0.5 text-[11px] ${p.done ? "text-ok" : ""}`}
+                            aria-pressed={p.done}
+                            title={p.done ? "Verificada: clic para volver a revisión" : "Marcar verificada (las demás siguen seleccionadas)"}
+                            onClick={() => setEdits(setPerson(edits, p.id, { done: !p.done }))}
+                          >
+                            <CheckCircle size={13} weight={p.done ? "fill" : "regular"} /> {p.done ? "Verificada" : "Verificar"}
+                          </button>
+                          <IconButton label="Quitar de la selección" onClick={() => toggleMulti(p.id)}>
+                            <X size={12} />
+                          </IconButton>
+                        </div>
+                      );
+                    })}
+                    <p className="text-[10px] text-faint">D recorre las cajas dobles de las {group.length} por tiempo · E salta · 0 ninguna es ella · Esc limpia la selección</p>
+                  </div>
                 )}
             {view === "players" && selected && (
                   <PersonTimeline

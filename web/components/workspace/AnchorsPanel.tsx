@@ -5,9 +5,12 @@ import { ArrowClockwise, ArrowCounterClockwise, Check, DownloadSimple, Flask, Li
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconButton, Modal } from "@/components/Modal";
 import { DoubtCard, boxLabel } from "@/components/workspace/DoubtCard";
+import { ResetPart } from "@/components/workspace/ResetPart";
 import { answerDoubt, doubtBoxes, DOUBT_TYPES, NOT_PLAYER, stepFrames, type Answer, type RichDoubt } from "@/lib/doubts";
 import {
   DEFAULT_DENSITY,
+  dropsByReason,
+  reasonsText,
   densityCounts,
   DOUBT_LABELS,
   anchorPaths,
@@ -42,7 +45,7 @@ import { downloadText, fmtT, isTyping } from "@/lib/format";
 import { readLocal, writeLocal } from "@/lib/local";
 import { setPref, usePref } from "@/lib/store";
 import { phaseName, type RunStatus, type RunTask } from "@/lib/runTask";
-import { dropBoxes, merge, separateRun, setPerson, type Person, type TracksFile } from "@/lib/tracks";
+import { dropBoxes, editsKey, merge, separateRun, setPerson, type Person, type TracksFile } from "@/lib/tracks";
 import type { RosterPlayer, TrackEdits } from "@/lib/types";
 
 // Anchors mode of the correction table: name suggested moments (anchors), have Python fill the rest (links), then go
@@ -90,16 +93,10 @@ export function AnchorsPanel({
   playerOfId,
   people,
   onMsg,
-  version,
-  linksPath,
   videoUrl = null,
 }: {
   // The video of the part (for the crops of the doubt cards), or null.
   videoUrl?: string | null;
-  // Where the fill is read from instead of the usual file (the example of version B, written by the Revisión tab).
-  linksPath?: string;
-  // Version of the Revisión tab open (B reads and fills links_<part>_exp.json); absent outside a comparison.
-  version?: "A" | "B";
   folder: string;
   matchId: string;
   part: string;
@@ -125,9 +122,9 @@ export function AnchorsPanel({
   const fps = data.fps;
   const [tab, setTab] = useState<"anchors" | "doubts">("anchors");
   const [example, setExample] = useState(false);
-  const variant = version === "B" ? ("exp" as const) : undefined;
-  const base = anchorPaths(folder, part, example, variant);
-  const paths = linksPath && !example ? { ...base, links: linksPath } : base;
+  // The fill is B (links_<part>_exp.json, fewer jumps): the recommended mode.
+  const variant = "exp" as const;
+  const paths = anchorPaths(folder, part, example, example ? undefined : variant);
   const [suggest, setSuggest] = useState<SuggestFile | null>(null);
   const [loaded, setLoaded] = useState<string | null>(null);
   const [anchors, setAnchors] = useState<Anchor[]>([]);
@@ -210,7 +207,7 @@ export function AnchorsPanel({
   const record = (kind: TimedAction["kind"]) => {
     const s = (now() - shownAt.current) / 1000;
     shownAt.current = now();
-    const next = [...timing, { kind, s: Math.round(s * 10) / 10, at: now(), part, ...(version ? { version } : {}) }];
+    const next = [...timing, { kind, s: Math.round(s * 10) / 10, at: now(), part }];
     setPref(TIMING_KEY, JSON.stringify(next.slice(-5000)));
   };
 
@@ -270,8 +267,9 @@ export function AnchorsPanel({
     const r = editsFromLinks(edits, data, l, named, protect);
     editsChange(r.edits);
     setLinksState("applied");
+    const by = reasonsText(r.droppedBy);
     onMsg(
-      `Rellenado: ${r.players} jugadora(s), ${r.tracks} trozo(s) con nombre nuevo${r.dropped ? `, ${r.dropped} caja(s) doble(s) quitada(s)` : ""}${r.skipped ? `; ${r.skipped} trozo(s) de jugadoras verificadas o con nombre se dejaron como estaban` : ""}${r.conflicts.length ? `; ${r.conflicts.length} trozo(s) con dos nombres se dejaron como estaban` : ""}. Ctrl + Z lo deshace.`,
+      `Rellenado (B): ${r.players} jugadora(s), ${r.tracks} trozo(s) con nombre nuevo${r.dropped ? `. B quitó ${r.dropped} caja(s) (${by})` : ""}${r.skipped ? `; ${r.skipped} trozo(s) de jugadoras verificadas o con nombre se dejaron como estaban` : ""}${r.conflicts.length ? `; ${r.conflicts.length} trozo(s) con dos nombres se dejaron como estaban` : ""}. Ctrl + Z lo deshace.`,
     );
   };
   // What a new run of Python rewrites, said before it runs (null: nothing to lose).
@@ -280,7 +278,7 @@ export function AnchorsPanel({
     suggest || anchors.length ? `${suggest ? `Se reescribe suggest_${part}.json (${suggest.suggestions.length} sugerencias).` : ""}${keptAnchors}` : null;
   const warnFill = () =>
     links
-      ? `Se reescribe links_${part}${variant ? "_exp" : ""}.json (${links.doubt_summary?.tasks ?? links.doubts.length} dudas por revisar; las ${(edits.anchorDoubts ?? []).length} resueltas siguen marcadas en la mesa).${keptAnchors} Al terminar se pregunta antes de tocar jugadoras verificadas o con nombre.`
+      ? `Se reescribe links_${part}${variant ? "_exp" : ""}.json (relleno B; ${links.doubt_summary?.tasks ?? links.doubts.length} dudas por revisar; las ${(edits.anchorDoubts ?? []).length} resueltas siguen marcadas en la mesa).${keptAnchors} Al terminar se pregunta antes de tocar jugadoras verificadas o con nombre.`
       : null;
 
   const resolved = edits.anchorDoubts;
@@ -594,7 +592,7 @@ export function AnchorsPanel({
           {example ? (
             <p className="text-[11px] text-faint">Con datos de ejemplo no se ejecuta Python: carga el relleno de ejemplo.</p>
           ) : (
-            <RunControl match={matchId} part={part} task="fill" variant={variant} label={variant ? "Rellenar B (experimento)" : "Rellenar"} icon={<Lightning size={14} />} warn={warnFill} onDone={reloadLinks} />
+            <RunControl match={matchId} part={part} task="fill" variant={variant} label="Rellenar" icon={<Lightning size={14} />} warn={warnFill} onDone={reloadLinks} />
           )}
           <div className="mt-2 flex items-center gap-2">
             <button type="button" className="btn btn-ghost !px-2 text-xs" title="Volver a leer links_ de la carpeta y aplicarlo a la mesa" onClick={() => void reloadLinks()}>
@@ -774,8 +772,19 @@ export function AnchorsPanel({
         <Modal title="El relleno toca jugadoras de la mesa" onClose={() => setAsk(null)}>
           <p className="text-sm text-ink-2">
             En esta parte hay {ask.prot.list.filter((x) => x.done).length} jugadora(s) verificada(s) y {ask.prot.list.filter((x) => !x.done).length} con nombre sin verificar. El
-            relleno de Python puede cambiarles trozos.
+            relleno B puede cambiarles trozos.
           </p>
+          {(() => {
+            const by = dropsByReason(ask.l);
+            const n = Object.values(by).reduce((a, b) => a + b, 0);
+            return n > 0 ? (
+              <p className="mt-2 text-sm text-ink-2">
+                Además quita hasta <b className="text-ink">{n}</b> caja(s) dobles o fuera de ruta: {reasonsText(by)}. Ctrl + Z deshace todo el relleno en un paso.
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-faint">Este relleno no trae cajas que quitar. Ctrl + Z lo deshace.</p>
+            );
+          })()}
           <p className="mt-2 text-xs text-ink-2">
             {ask.prot.list.slice(0, 24).map((x, i) => (
               <span key={i} className={`mr-1.5 inline-block ${x.done ? "text-ok" : ""}`}>
@@ -837,6 +846,11 @@ export function AnchorsPanel({
       {header}
       {exampleTag}
       {body}
+      {!example && (
+        <div className="mt-2">
+          <ResetPart folder={folder} part={part} editsKey={editsKey(data)} onMsg={onMsg} />
+        </div>
+      )}
       <div className="mt-3 flex items-center gap-2 border-t border-line pt-2 text-[11px] text-faint">
         <Timer size={13} />
         <span className="tc flex-1" title={`Todas las partes: ${sum.n} acciones. Una pausa de más de ${sum.cap_s} s cuenta como ${sum.cap_s} s.`}>
