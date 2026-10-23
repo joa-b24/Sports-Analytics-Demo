@@ -34,11 +34,15 @@ from sportsan.tracking.anchors import (
     ANCHOR_MIN_S,
     MATCH_MIN,
     SECONDS_PER_ANCHOR,
+    HYBRID_RATES,
     UNNAMED_COST,
+    ZONES,
     Chain,
     _finite_end,
     build_chains,
+    camera_sign,
     fill_both,
+    person_hybrid_rates,
     pick_anchors,
 )
 from sportsan.tracking.tracklets import (
@@ -235,12 +239,22 @@ class PartResult:
     jumps: int
     overlaps: int
     unidentified: int
+    zone_of: dict[int, str] = field(default_factory=dict)   # jugadora -> franja (cercana/centro/lejana)
+    by_zone: dict = field(default_factory=dict)
+    zone_people: dict = field(default_factory=dict)
 
     @property
     def total(self) -> PersonCov:
         t = PersonCov()
         for p in self.people.values():
             t = t.add(p)
+        return t
+
+    def zone_total(self, zone: str) -> PersonCov:
+        t = PersonCov()
+        for p, c in self.people.items():
+            if self.zone_of.get(p) == zone:
+                t = t.add(c)
         return t
 
     def review_s(self, with_overlaps: bool = False) -> float:
@@ -271,6 +285,13 @@ def measure(chs: list[Chain], owner: dict[int, int], truth: dict, people: set[in
 
         out[p] = person_coverage(p, list(track_at), owner_at, bridges(by_person_chain[p], fps), edge_at, step, fps)
     return out
+
+
+def _sum_cov(items) -> PersonCov:
+    t = PersonCov()
+    for c in items:
+        t = t.add(c)
+    return t
 
 
 def fmt_pct(x: float) -> str:
@@ -306,7 +327,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--test", default="v1_41994_43460,v1_44071_52064,v1_52933_72647,v1_73385_78596")
     ap.add_argument("--test2", default="v2_0_4259,v2_5020_10226,v3_0_6890")
     ap.add_argument("--p-min", type=float, default=LINK_P_MIN)
-    ap.add_argument("--rates", default="1,2,3")
+    ap.add_argument("--rates", default="1,2,3", help="densidades a comparar: números y/o «hybrid» (cuota por franja: --near/--center/--far)")
+    ap.add_argument("--near", type=float, default=HYBRID_RATES["near"])
+    ap.add_argument("--center", type=float, default=HYBRID_RATES["center"])
+    ap.add_argument("--far", type=float, default=HYBRID_RATES["far"])
+    ap.add_argument("--zones", choices=["thirds", "quantiles"], default="thirds", help="cortes de franja para hybrid")
     ap.add_argument("--unnamed-cost", type=float, default=None, help="por defecto el elegido en anclas_f3.md")
     ap.add_argument("--no-feet", action="store_true")
     ap.add_argument("--report", default="cobertura.md")
@@ -318,12 +343,18 @@ def main(argv: list[str] | None = None) -> None:
     train, test, test2 = split(args.train), split(args.test), split(args.test2)
     names = train + test + test2
     ucost = args.unnamed_cost if args.unnamed_cost is not None else chosen_unnamed_cost(dir_)
-    rates = [float(r) for r in args.rates.split(",")]
+    rates = [r.strip() if r.strip() == "hybrid" else float(r) for r in args.rates.split(",") if r.strip()]
+    zone_rates = {"near": args.near, "center": args.center, "far": args.far}
+    lab = lambda k: k if isinstance(k, str) else f"{k:g}"  # noqa: E731
+    from sportsan.tracking.anchors_cli import Progress
+
+    pg = Progress(dir_ / "revision" / f"progreso_{args.report.rsplit('.', 1)[0]}.log")
     feet = not args.no_feet
     print(f"Entrenamiento {train}\nPrueba {test}\nPrueba 2 {test2}\nunnamed_cost {ucost:g}")
 
     parts, tl, pdata, ldata = {}, {}, {}, {}
-    for n in names:
+    for i, n in enumerate(names):
+        pg.log("carga y modelos", i, len(names))
         p = parts[n] = load_part(dir_, n, feet)
         tl[n] = pure_tracklets(p.frames, p.fps)
         L, W = _venue(dir_, n)
@@ -331,6 +362,7 @@ def main(argv: list[str] | None = None) -> None:
         cands = link_candidates(tl[n], p.fps)
         X = np.array([c.x for c in cands]) if cands else np.zeros((0, len(FEATURES)))
         ldata[n] = (cands, X, candidate_labels(cands, tl[n], p.truth))
+    pg.log("carga y modelos", len(names), len(names))
     pm = _fit([pdata[m][0] for m in train], [pdata[m][1] for m in train])
     lm = _fit([ldata[m][1] for m in train], [ldata[m][2] for m in train])
 
@@ -358,15 +390,25 @@ def main(argv: list[str] | None = None) -> None:
         rows = {r[0].frame: r for r in p.frames if r}
         frames = sorted(rows)
         out = {}
+        L, W = _venue(dir_, n)
+        sign = camera_sign(p.frames)
+        h_rates, zones, edges = person_hybrid_rates(chs, p.truth, people, sign, L, W, zone_rates, args.zones)
+        side[n] = (sign, edges, zones)
         for k in rates:
-            anchors, _ = pick_anchors(chs, p.truth, rows, p.fps, frames[0], frames[-1] + 1, k, people)
+            anchors, _ = pick_anchors(chs, p.truth, rows, p.fps, frames[0], frames[-1] + 1, h_rates if k == "hybrid" else k, people)
             f = fill_both(chs, anchors, p.fps, link_p, team_of_label, allowed, ucost)
             out[k] = PartResult(n, p.seconds, measure(chs, f.owner, p.truth, people, p.frames, p.fps, wh), len(anchors),
                                 f.doubts_jump, f.doubts_overlap,
-                                unidentified_changes(chs, f.owner, p.truth, people, allowed, p.fps))
+                                unidentified_changes(chs, f.owner, p.truth, people, allowed, p.fps), zones)
         return out
 
-    res = {n: run(n) for n in test + test2}
+    side: dict = {}
+    todo = test + test2
+    res = {}
+    for i, n in enumerate(todo):
+        pg.log("simulación por parte", i, len(todo))
+        res[n] = run(n)
+    pg.log("simulación por parte", len(todo), len(todo))
     groups = [("v1 prueba", test), ("v2 y v3 (otro ángulo)", test2)]
 
     def agg(group: list[str], k: float) -> PartResult:
@@ -374,8 +416,11 @@ def main(argv: list[str] | None = None) -> None:
         t = PersonCov()
         for r in rs:
             t = t.add(r.total)
-        return PartResult("total", sum(r.seconds for r in rs), {0: t}, sum(r.anchors for r in rs), sum(r.jumps for r in rs),
-                          sum(r.overlaps for r in rs), sum(r.unidentified for r in rs))
+        pr = PartResult("total", sum(r.seconds for r in rs), {0: t}, sum(r.anchors for r in rs), sum(r.jumps for r in rs),
+                        sum(r.overlaps for r in rs), sum(r.unidentified for r in rs))
+        pr.by_zone = {z: _sum_cov(r.zone_total(z) for r in rs) for z in ZONES}
+        pr.zone_people = {z: sum(1 for r in rs for q in r.people if r.zone_of.get(q) == z) for z in ZONES}
+        return pr
 
     lines = [f"# Cobertura y tiempo de la analista · {cfg.get('match_id', args.match)}", "",
              f"Salida de `anchors`: fase 1 al umbral {args.p_min} (`LINK_P_MIN`), pies {'corregidos (feet.py)' if feet else 'sin corregir'}, "
@@ -398,6 +443,18 @@ def main(argv: list[str] | None = None) -> None:
              f"**Escalado lineal a {MATCH_MIN:.0f} min** desde los minutos medidos (jugadas, no un partido seguido): es una extrapolación, no una medición de un partido. "
              "El entrenamiento del modelo no cuenta. Meta: ≤ 8 h por partido.", ""]
 
+    if "hybrid" in rates:
+        lines += ["## Política híbrida", "",
+                  f"Cuotas: cercana {args.near:g}, centro {args.center:g}, lejana {args.far:g} anclas/min; la zona de portería (posición media a menos de "
+                  f"10 m de una línea de meta y a menos de 12 m del centro del ancho) pide a lo más 2. Franja = posición media de la jugadora en "
+                  f"`lateral` (0 = cercana a la cámara, 1 = lejana; cortes: {'tercios del ancho' if args.zones == 'thirds' else 'terciles de las jugadoras'}). "
+                  "Lado cercano: signo de la correlación entre la parte baja de la caja en píxeles (y2) y `ym` (más abajo = más cerca).", "",
+                  "| Parte | `ym` crece hacia la cámara | Cortes | Jugadoras (cercana / centro / lejana) |", "|---|---|---|---|"]
+        for n in test + test2:
+            sg, ed, zn = side[n]
+            cnt = [sum(1 for z in zn.values() if z == zz) for zz in ZONES]
+            lines.append(f"| {n} | {'sí' if sg > 0 else 'no'} | {ed[0]:.2f} / {ed[1]:.2f} | {cnt[0]} / {cnt[1]} / {cnt[2]} |")
+        lines.append("")
     verdict = []
     for label, group in groups:
         if not group:
@@ -412,10 +469,19 @@ def main(argv: list[str] | None = None) -> None:
             hc = t.holes_by_class()
             h = to_match_hours(a.review_s(), a.seconds)
             h2 = to_match_hours(a.review_s(True), a.seconds)
-            lines.append(f"| {k:g} | {fmt_pct(t.coverage)} | {fmt_pct(t.err_s / t.in_s if t.in_s else float('nan'))} | "
+            lines.append(f"| {lab(k)} | {fmt_pct(t.coverage)} | {fmt_pct(t.err_s / t.in_s if t.in_s else float('nan'))} | "
                          f"{hc['≤4'][0]} ({hc['≤4'][1]}) | {hc['4-15'][0]} ({hc['4-15'][1]}) | {hc['>15'][0]} ({hc['>15'][1]}) | "
                          f"{a.anchors} | {a.jumps} | {t.holes_to_review()} | {a.unidentified} | {h:.2f} | {h2:.2f} |")
             verdict.append((label, k, t.coverage, h, h2, a.seconds))
+        lines += ["", "### Por franja de la cancha (jugadoras propias según su posición media; cercana = lado de la cámara)", "",
+                  "| Anclas/min | Franja | Jugadoras | Cobertura | Errores | Huecos >4 s a revisar | Huecos ≤4 s |", "|---|---|---|---|---|---|---|"]
+        for k in rates:
+            a = agg(group, k)
+            for z in ZONES:
+                zc = a.by_zone[z]
+                hc = zc.holes_by_class()
+                lines.append(f"| {lab(k)} | {z} | {a.zone_people[z]} | {fmt_pct(zc.coverage)} | "
+                             f"{fmt_pct(zc.err_s / zc.in_s if zc.in_s else float('nan'))} | {zc.holes_to_review()} | {hc['≤4'][0]} |")
         lines += ["", "### Por parte", "",
                   "| Parte | Anclas/min | Cobertura | Errores | Huecos ≤4 / 4-15 / >15 (fuera de cuadro) | Anclas | Saltos | Dos sitios | Huecos >4 s a revisar | Sin identificar | h a 90 min |",
                   "|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -425,11 +491,11 @@ def main(argv: list[str] | None = None) -> None:
                 t = r.total
                 hc = t.holes_by_class()
                 hs = " / ".join(f"{hc[c][0]} ({hc[c][1]})" for c in ("≤4", "4-15", ">15"))
-                lines.append(f"| {n} | {k:g} | {fmt_pct(t.coverage)} | {fmt_pct(t.err_s / t.in_s if t.in_s else float('nan'))} | {hs} | "
+                lines.append(f"| {n} | {lab(k)} | {fmt_pct(t.coverage)} | {fmt_pct(t.err_s / t.in_s if t.in_s else float('nan'))} | {hs} | "
                              f"{r.anchors} | {r.jumps} | {r.overlaps} | {t.holes_to_review()} | {r.unidentified} | {to_match_hours(r.review_s(), r.seconds):.2f} |")
         lines += ["", "### Por jugadora (cobertura con 1 / 2 / 3 anclas/min; errores y huecos con el mayor)", "",
-                  f"| Parte | Jugadora | En cuadro (s) | Cobertura @{rates[0]:g} | " + " | ".join(f"@{k:g}" for k in rates[1:]) +
-                  f" | Errores @{rates[-1]:g} (s) | Huecos ≤4 / 4-15 / >15 @{rates[-1]:g} (fuera) |",
+                  f"| Parte | Jugadora | En cuadro (s) | Cobertura @{lab(rates[0])} | " + " | ".join(f"@{lab(k)}" for k in rates[1:]) +
+                  f" | Errores @{lab(rates[-1])} (s) | Huecos ≤4 / 4-15 / >15 @{lab(rates[-1])} (fuera) |",
                   "|---|---|---|" + "---|" * (len(rates) + 2)]
         for n in group:
             for person in sorted(res[n][rates[0]].people):
@@ -443,7 +509,7 @@ def main(argv: list[str] | None = None) -> None:
         lines.append("")
     lines += ["## Veredicto", ""]
     for label, k, cov, h, h2, secs in verdict:
-        lines.append(f"- {label}, {k:g} anclas/min: cobertura {fmt_pct(cov)}, {h:.2f} h a 90 min ({h2:.2f} h con dos sitios) "
+        lines.append(f"- {label}, {lab(k)} anclas/min: cobertura {fmt_pct(cov)}, {h:.2f} h a 90 min ({h2:.2f} h con dos sitios) "
                      f"{'dentro' if h2 <= 8 else 'fuera'} de la meta de 8 h.")
     lines += ["", "No probado: los 2 s y 3 s por acción son supuestos; las rivales no se miden; los minutos medidos son jugadas sueltas, "
               "no un partido seguido, y los huecos por fuera de cuadro usan la verdad de labels.", ""]

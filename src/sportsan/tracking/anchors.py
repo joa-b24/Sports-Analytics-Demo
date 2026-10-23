@@ -125,12 +125,96 @@ def isolated(c: Chain, rows: dict[int, list], radius: float = ANCHOR_ISOLATION_M
     return b.frame
 
 
+# ---------------------------------------------------------------------------------------- densidad híbrida
+# La cámara está de un lado de la cancha: quien juega en el lado cercano casi nunca se pierde, quien juega en la banda
+# lejana se pierde más (cajas pequeñas, tapadas). La densidad de anclas sigue esa franja (docs/mapa_del_repo.md).
+ZONES = ("near", "center", "far")
+HYBRID_RATES = {"near": 2.0, "center": 3.0, "far": 4.0}
+GK_RATE = 2.0             # la portera pide esto aunque su franja pida más
+GK_X_M = 10.0             # a menos de esto de una línea de meta (posición media) ...
+GK_Y_M = 12.0             # ... y a menos de esto del centro del ancho: zona de portería
+
+
+def camera_sign(rows) -> int:
+    """+1 si la coordenada `ym` crece hacia la cámara, -1 si decrece. Se mide con la altura en píxeles de la parte baja
+    de la caja (y2: más abajo en la imagen = más cerca) frente a `ym`. `rows`: iterable de listas de Box. Sin datos: +1."""
+    ys, y2 = [], []
+    for r in rows:
+        for b in r:
+            if b.on_pitch and np.isfinite(b.ym):
+                ys.append(b.ym)
+                y2.append(b.y2)
+    if len(ys) < 10 or np.std(ys) == 0 or np.std(y2) == 0:
+        return 1
+    return 1 if np.corrcoef(y2, ys)[0, 1] >= 0 else -1
+
+
+def lateral(ym: float, width: float, sign: int) -> float:
+    """0 = banda cercana a la cámara, 1 = banda lejana."""
+    u = 1.0 - ym / width if sign > 0 else ym / width
+    return float(min(max(u, 0.0), 1.0))
+
+
+def zone_edges(us, mode: str = "thirds") -> tuple[float, float]:
+    """Cortes entre cercana/centro y centro/lejana sobre `lateral`. `thirds`: tercios del ancho. `quantiles`: terciles de
+    las posiciones medias dadas (reparte igual número de cadenas o jugadoras por franja)."""
+    us = [u for u in us if np.isfinite(u)]
+    if mode == "quantiles" and len(us) >= 3:
+        a, b = np.quantile(us, [1 / 3, 2 / 3])
+        return float(a), float(b)
+    return 1 / 3, 2 / 3
+
+
+def zone_of(u: float, edges: tuple[float, float] = (1 / 3, 2 / 3)) -> str:
+    return "near" if u < edges[0] else "center" if u < edges[1] else "far"
+
+
+def mean_position(boxes) -> tuple[float, float]:
+    xs = np.array([b.xm for b in boxes], dtype=float)
+    ys = np.array([b.ym for b in boxes], dtype=float)
+    k = np.isfinite(xs) & np.isfinite(ys)
+    return (float(xs[k].mean()), float(ys[k].mean())) if k.any() else (float("nan"), float("nan"))
+
+
+def in_goal_zone(x: float, y: float, length: float, width: float) -> bool:
+    return bool(np.isfinite(x) and np.isfinite(y) and min(x, length - x) <= GK_X_M and abs(y - width / 2) <= GK_Y_M)
+
+
+def hybrid_rate(u: float, goal: bool, zone_rates: dict[str, float], edges=(1 / 3, 2 / 3)) -> float:
+    """Anclas por minuto de quien está en `u` (si es de la zona de portería, a lo más GK_RATE)."""
+    r = zone_rates[zone_of(u, edges)]
+    return min(r, GK_RATE) if goal else r
+
+
+def person_hybrid_rates(chs: list[Chain], truth: dict, people: set[int], sign: int, length: float, width: float,
+                        zone_rates: dict[str, float] | None = None, mode: str = "thirds"):
+    """Simulación: cuota de cada jugadora según su posición media (cajas de sus cadenas en la verdad). Devuelve
+    (cuotas, franja de cada una, cortes)."""
+    zone_rates = zone_rates or HYBRID_RATES
+    pos: dict[int, list] = {}
+    for c in chs:
+        who, _ = tracklet_truth(c.tl, truth)
+        if who in people:
+            pos.setdefault(int(who), []).extend(c.tl.boxes)
+    mean = {p: mean_position(bx) for p, bx in pos.items()}
+    us = {p: lateral(y, width, sign) for p, (x, y) in mean.items() if np.isfinite(y)}
+    edges = zone_edges(list(us.values()), mode)
+    rates, zones = {}, {}
+    for p in people:
+        if p not in us:
+            rates[p], zones[p] = zone_rates["center"], "center"
+            continue
+        zones[p] = zone_of(us[p], edges)
+        rates[p] = hybrid_rate(us[p], in_goal_zone(*mean[p], length, width), zone_rates, edges)
+    return rates, zones, edges
+
+
 def pick_anchors(chs: list[Chain], truth: dict, rows: dict[int, list], fps: float, start: int, end: int,
-                 per_min: float, people: set[int]) -> tuple[dict[int, int], int]:
+                 per_min: "float | dict[int, float]", people: set[int]) -> tuple[dict[int, int], int]:
     """Anclas simuladas: cadena -> jugadora. En cada tramo de 60/per_min s y por jugadora, la cadena más larga de ella
-    (por mayoría en la verdad) de al menos ANCHOR_MIN_S y aislada cuyo cuadro central cae en el tramo. Devuelve también
-    cuántos tramos se quedaron sin ancla posible."""
-    slot = 60.0 / per_min * fps
+    (por mayoría en la verdad) de al menos ANCHOR_MIN_S y aislada cuyo cuadro central cae en el tramo. `per_min` puede ser
+    un número o un dict jugadora -> anclas/min (política híbrida). Devuelve también cuántos tramos se quedaron sin ancla
+    posible."""
     cand: dict[int, list[tuple[int, Chain]]] = {}
     for c in chs:
         if (c.end - c.start) / fps < ANCHOR_MIN_S:
@@ -143,8 +227,10 @@ def pick_anchors(chs: list[Chain], truth: dict, rows: dict[int, list], fps: floa
             cand.setdefault(int(who), []).append((mid, c))
     out: dict[int, int] = {}
     empty = 0
-    n_slots = max(1, int(np.ceil((end - start) / slot)))
     for person in people:
+        rate = per_min[person] if isinstance(per_min, dict) else per_min
+        slot = 60.0 / rate * fps
+        n_slots = max(1, int(np.ceil((end - start) / slot)))
         for k in range(n_slots):
             lo, hi = start + k * slot, start + (k + 1) * slot
             options = [c for mid, c in cand.get(person, []) if lo <= mid < hi and c.id not in out]
@@ -164,6 +250,8 @@ class Fill:
     doubts_close: int = 0
     doubts_overlap: int = 0
     doubts_jump: int = 0
+    close: set[int] = field(default_factory=set)            # cadenas asignadas con otra jugadora casi empatada
+    excluded: int = 0       # pares cadena-jugadora vetados por la exclusión (solo con exclusive=True)
 
     @property
     def doubts(self) -> int:
@@ -206,9 +294,11 @@ def _reaches(c: Chain, nxt: Chain | None, fps: float) -> bool:
 
 def fill_between(chs: list[Chain], anchors: dict[int, int], fps: float, link_p: dict[tuple[int, int], float],
                  team_of_person: dict[int, str], allowed: set[int] | None = None, unnamed_cost: float = UNNAMED_COST,
-                 check: bool = True, extra_cost=None) -> Fill:
+                 check: bool = True, extra_cost=None, exclusive: bool = False) -> Fill:
     """Reparte las cadenas entre las jugadoras ancladas, hacia delante en el tiempo y todas a la vez (húngaro por
-    ventanas de WINDOW_S). `allowed`: cadenas que pueden ser de jugadora (las demás se quedan solas)."""
+    ventanas de WINDOW_S). `allowed`: cadenas que pueden ser de jugadora (las demás se quedan solas).
+    `exclusive` (variante B): una jugadora no puede recibir una cadena que se solape en el tiempo con otra suya (sus anclas
+    cuentan desde el principio: el ancla manda); la cadena vetada queda libre para otra jugadora o sin nombre."""
     by_id = {c.id: c for c in chs}
     anchor_list: dict[int, list[Chain]] = {}
     for cid, person in anchors.items():
@@ -221,6 +311,7 @@ def fill_between(chs: list[Chain], anchors: dict[int, int], fps: float, link_p: 
     order = sorted(chs, key=lambda c: c.start)
     i = 0
     win = WINDOW_S * fps
+    busy: dict[int, list[tuple[int, int]]] = {p: [(c.start, c.end) for c in v] for p, v in anchor_list.items()}
 
     def next_anchor(person: int) -> Chain | None:
         lst = anchor_list[person]
@@ -253,6 +344,9 @@ def fill_between(chs: list[Chain], anchors: dict[int, int], fps: float, link_p: 
                     continue
                 if not _reaches(c, next_anchor(person), fps):
                     continue
+                if exclusive and overlaps(c, busy.get(person, ())):
+                    res.excluded += 1
+                    continue
                 # extra_cost(chain_id, person): costo opcional por par (p. ej. team_seq).
                 M[r, k] = transition_cost(tail[person], c, fps, link_p) + (extra_cost(c.id, person) if extra_cost else 0.0)
         M[~np.isfinite(M)] = big
@@ -264,14 +358,21 @@ def fill_between(chs: list[Chain], anchors: dict[int, int], fps: float, link_p: 
             res.owner[c.id] = person
             res.cost[c.id] = float(M[r, k])
             tail[person] = c
+            busy.setdefault(person, []).append((c.start, c.end))
             row = np.sort(M[r, : len(players)])
             if M[r, k] > DOUBT_COST:
                 res.doubts_cost += 1
             elif len(row) > 1 and row[1] < big and row[1] - row[0] < DOUBT_MARGIN:
                 res.doubts_close += 1
+                res.close.add(c.id)
     if check:
         check_sequences(chs, res, fps)
     return res
+
+
+def overlaps(c: Chain, intervals) -> bool:
+    """Si la cadena comparte algún cuadro con alguno de los intervalos (inicio, fin) dados."""
+    return any(c.start <= e and s <= c.end for s, e in intervals)
 
 
 def check_sequences(chs: list[Chain], res: Fill, fps: float) -> None:
@@ -303,10 +404,11 @@ def _mirror(c: Chain) -> Chain:
 
 def fill_both(chs: list[Chain], anchors: dict[int, int], fps: float, link_p: dict[tuple[int, int], float],
               team_of_person: dict[int, str], allowed: set[int] | None = None, unnamed_cost: float = UNNAMED_COST,
-              extra_cost=None) -> Fill:
+              extra_cost=None, exclusive: bool = False) -> Fill:
     """Relleno hacia delante desde cada ancla y, después, hacia atrás desde la primera ancla de cada jugadora (en el
     tiempo invertido, solo con las cadenas que quedaron sin nombre y que terminan antes de esa primera ancla)."""
-    fwd = fill_between(chs, anchors, fps, link_p, team_of_person, allowed, unnamed_cost, check=False, extra_cost=extra_cost)
+    fwd = fill_between(chs, anchors, fps, link_p, team_of_person, allowed, unnamed_cost, check=False, extra_cost=extra_cost,
+                       exclusive=exclusive)
     by_id = {c.id: c for c in chs}
     first: dict[int, Chain] = {}
     for cid, person in anchors.items():
@@ -320,14 +422,25 @@ def fill_both(chs: list[Chain], anchors: dict[int, int], fps: float, link_p: dic
         # Each person may only take chains before its own first anchor: in mirrored time, after it. A chain that starts
         # before another person's first anchor but after this one's is filtered after the pass.
         bwd = fill_between(mirrored, {c.id: p for p, c in first.items()}, fps, back_link, team_of_person, None, unnamed_cost, check=False,
-                           extra_cost=extra_cost)
+                           extra_cost=extra_cost, exclusive=exclusive)
+        busy: dict[int, list[tuple[int, int]]] = {}
+        if exclusive:
+            for cid, person in fwd.owner.items():
+                busy.setdefault(person, []).append((by_id[cid].start, by_id[cid].end))
+            fwd.excluded += bwd.excluded
         for cid, person in bwd.owner.items():
             if cid in fwd.owner or by_id[cid].end >= first[person].start:
                 continue
+            if exclusive:
+                if overlaps(by_id[cid], busy.get(person, ())):
+                    fwd.excluded += 1
+                    continue
+                busy.setdefault(person, []).append((by_id[cid].start, by_id[cid].end))
             fwd.owner[cid] = person
             fwd.cost[cid] = bwd.cost.get(cid, 0.0)
         fwd.doubts_cost += bwd.doubts_cost
         fwd.doubts_close += bwd.doubts_close
+        fwd.close |= {cid for cid in bwd.close if cid in fwd.owner}
     check_sequences(chs, fwd, fps)
     return fwd
 
@@ -371,6 +484,11 @@ def main(argv: list[str] | None = None) -> None:
     from sportsan.tracking.links_eval import _venue, load_part, named_parts
 
     sys.stdout.reconfigure(encoding="utf-8")
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ("suggest", "fill"):       # modo real: ver anchors_cli.py
+        from sportsan.tracking.anchors_cli import cli
+
+        return cli(argv)
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--match")
     ap.add_argument("--train", default="v1_6414_13699,v1_14541_15944,v1_16648_22211,v1_23140_26173,v1_26910_32826,v1_33818_35062,v1_36135_41389")

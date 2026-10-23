@@ -6,8 +6,14 @@ from sportsan.tracking.anchors import (
     groups_after_fill,
     isolated,
     named_correct,
+    camera_sign,
+    in_goal_zone,
+    lateral,
+    person_hybrid_rates,
     pick_anchors,
     transition_cost,
+    zone_edges,
+    zone_of,
 )
 from sportsan.tracking.tracklets import Box, Tracklet
 
@@ -121,3 +127,50 @@ def test_backward_fill_names_pieces_before_the_first_anchor():
     assert f.doubts_overlap == 0 and f.doubts_jump == 0
     # A low unnamed_cost leaves everything unnamed except the anchors.
     assert len(fill_both(chs, last, FPS, {}, {1: "own", 2: "own"}, unnamed_cost=0.1).owner) == 2
+
+
+def test_camera_sign_and_lateral_zones():
+    near_big_y = [[Box(0, 1, 0, 100 + 10 * y, 10, 110 + 10 * y, (0, 0, 0), 5.0, float(y), "own", True) for y in range(0, 60, 5)]]
+    assert camera_sign(near_big_y) == 1
+    flipped = [[Box(0, 1, 0, 100 + 10 * y, 10, 110 + 10 * y, (0, 0, 0), 5.0, float(60 - y), "own", True) for y in range(0, 60, 5)]]
+    assert camera_sign(flipped) == -1
+    assert camera_sign([]) == 1
+    assert lateral(60, 68, 1) < 1 / 3 < 2 / 3 < lateral(5, 68, 1)
+    assert lateral(60, 68, -1) > 2 / 3
+    assert [zone_of(u) for u in (0.1, 0.5, 0.9)] == ["near", "center", "far"]
+    a, b = zone_edges([0.1, 0.2, 0.3, 0.8, 0.9, 0.95], "quantiles")
+    assert 0.2 < a < b < 0.9
+    assert zone_edges([0.1], "quantiles") == (1 / 3, 2 / 3)
+    assert in_goal_zone(3, 34, 105, 68) and in_goal_zone(102, 40, 105, 68) and not in_goal_zone(3, 5, 105, 68)
+    assert not in_goal_zone(float("nan"), 34, 105, 68)
+
+
+def test_hybrid_rates_by_person_and_goalkeeper_capped():
+    runs = [run(1, 0, 300, 40, 60), run(2, 0, 300, 40, 30), run(3, 0, 300, 40, 8), run(4, 0, 300, 3, 34, vx=0)]
+    chs = build_chains(tracklets_of(runs), [])
+    truth = {(b.frame, b.track): b.track for r in runs for b in r}
+    rates, zones, edges = person_hybrid_rates(chs, truth, {1, 2, 3, 4}, 1, 105, 68, {"near": 2, "center": 3, "far": 4})
+    assert zones == {1: "near", 2: "center", 3: "far", 4: "center"}
+    assert rates[1] == 2 and rates[2] == 3 and rates[3] == 4
+    assert rates[4] == 2                                   # portera en el centro: 2, no 3
+    rates_g, zones_g, _ = person_hybrid_rates(chs, truth, {3, 4}, 1, 105, 68, {"near": 5, "center": 5, "far": 5})
+    assert rates_g[4] == 2 and rates_g[3] == 5            # la portera nunca pide más de 2
+
+
+def test_pick_anchors_with_per_person_rates_gives_more_to_higher_rate():
+    # Cada persona tiene una cadena de 5 s cada 15 s durante 120 s.
+    runs, truth = [], {}
+    for person, y in ((1, 60), (2, 8)):
+        for k in range(8):
+            r = run(person * 100 + k, k * 450, k * 450 + 150, 30, y)
+            runs.append(r)
+            truth.update({(b.frame, b.track): person for b in r})
+    chs = build_chains(tracklets_of(runs), [])
+    rows = {b.frame: [b] for r in runs for b in r}
+    low, _ = pick_anchors(chs, truth, rows, FPS, 0, 3600, {1: 1.0, 2: 4.0}, {1, 2})
+    n1 = sum(1 for v in low.values() if v == 1)
+    n2 = sum(1 for v in low.values() if v == 2)
+    assert n2 > n1 >= 1
+    same, _ = pick_anchors(chs, truth, rows, FPS, 0, 3600, 2.0, {1, 2})
+    same_d, _ = pick_anchors(chs, truth, rows, FPS, 0, 3600, {1: 2.0, 2: 2.0}, {1, 2})
+    assert same == same_d
