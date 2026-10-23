@@ -334,6 +334,26 @@ Se contrastó un informe de revisión con lo que ya hace el proyecto.
 | Preentrenar con SoccerNet-Tracking / GSR | **pendiente, por verificar** | podría dar ejemplos de otros partidos y reducir el sesgo de entrenar con uno solo; hay que revisar licencia, formato y si trae coordenadas de cancha |
 | Dorsales legibles | descartado por ahora | a ~60–100 px casi nunca se leen (sección 9) |
 
+## 8g. Primera comparación A/B en la parte `v2_34220_45027` (2026-10-23)
+
+Exportada desde la pestaña Revisión (`comparacion_v2_34220_45027.json`). A = relleno anterior; B = experimental (exclusión, dobles cajas, segunda pasada de saltos). La analista verificó a mano **solo dos jugadoras completas (Lelo y Paz)** para no hacer el trabajo dos veces; sin verdad con nombres.
+
+| | A | B |
+|---|---|---|
+| Dudas resueltas a mano | 50 | 111 |
+| Cajas quitadas por la regla automática | 73 (salto) | 1 938 (exclusión 856, ambas 365, ruta 325, salto 92) |
+| Cajas dobles que quedan | 691 | 443 |
+| Saltos imposibles que quedan | 79 | 82 |
+| Ediciones manuales (unir / partir / quitar) | 275 (74 / 165 / 35, 1 renombre) | 87 (15 / 57 / 15) |
+| Ediciones manuales de Lelo / Paz | 73 / 35 | 7 / 39 |
+| Cronómetro (solo anclas y dudas): segundos / acciones | 149.5 / 23 | 793.3 / 82 |
+
+- En las dos jugadoras comparables, **B pidió ~57 % menos ediciones manuales** (46 contra 108), sobre todo en Lelo (7 contra 73); Paz quedó igual (39 contra 35). La analista notó la diferencia sobre todo en los saltos.
+- **Cautelas**: dos jugadoras en un solo tramo; A se trabajó primero (efecto de aprendizaje a favor de B); Kere (126 ediciones en A) no tiene contraparte en B; no hay marcas «verificada» ni verdad externa; la diferencia de Paz es nula.
+- **El tiempo no es comparable todavía**: el cronómetro solo mide anclas y dudas, no las ediciones de la mesa, y B tiene más tareas (más saltos revisados). Por acción: A 6.5 s, B 9.7 s.
+- **Cajas dobles**: la analista señala que muchas están en tramos de varias jugadoras juntas y no son un problema real; se cuenta como métrica secundaria. B sigue sin demostrar precisión de sus 1 938 descartes: solo hay evidencia indirecta (menos correcciones a mano).
+- Siguiente: probar B en un tramo que la analista no haya visto, midiendo también el tiempo de las ediciones de la mesa.
+
 ## 9. Además de las etapas
 
 - **Uniones aprendidas, no solo umbrales.** Las 4 292 uniones y 8 699 cortes manuales son ejemplos de «misma persona / otra»:
