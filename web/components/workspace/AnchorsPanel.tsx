@@ -45,6 +45,7 @@ import { downloadText, fmtT, isTyping } from "@/lib/format";
 import { readLocal, writeLocal } from "@/lib/local";
 import { setPref, usePref } from "@/lib/store";
 import { phaseName, type RunStatus, type RunTask } from "@/lib/runTask";
+import type { FeetFile } from "@/lib/feetFix";
 import { dropBoxes, editsKey, merge, separateRun, setPerson, type Person, type TracksFile } from "@/lib/tracks";
 import type { RosterPlayer, TrackEdits } from "@/lib/types";
 
@@ -79,6 +80,7 @@ export function AnchorsPanel({
   folder,
   matchId,
   part,
+  feet,
   data,
   roster,
   edits,
@@ -100,6 +102,8 @@ export function AnchorsPanel({
   folder: string;
   matchId: string;
   part: string;
+  // Feet recalculated by Python, drawn on the thumbnails of the doubt cards (null: none).
+  feet?: FeetFile | null;
   data: TracksFile;
   roster: RosterPlayer[];
   edits: TrackEdits;
@@ -274,6 +278,9 @@ export function AnchorsPanel({
   };
   // What a new run of Python rewrites, said before it runs (null: nothing to lose).
   const keptAnchors = anchors.length ? ` Las ${anchors.length} anclas hechas se conservan (anchors_${part}.json no se toca).` : "";
+  // Always asked: it changes the positions of the whole part (a copy stays as tracks_<part>.pre_refine.json).
+  const warnRefine = () =>
+    `Cambia las posiciones en la cancha de toda la parte (pies corregidos y calibración suavizada en el tiempo). Antes se guarda una copia, tracks_${part}.pre_refine.json, y si la parte ya estaba refinada no cambia nada. Hazlo ANTES de generar sugerencias: las sugerencias, anclas y rellenos hechos con las posiciones anteriores pueden dejar de cuadrar.`;
   const warnSuggest = () =>
     suggest || anchors.length ? `${suggest ? `Se reescribe suggest_${part}.json (${suggest.suggestions.length} sugerencias).` : ""}${keptAnchors}` : null;
   const warnFill = () =>
@@ -500,6 +507,20 @@ export function AnchorsPanel({
             ))}
           </div>
         </div>
+        {!example && (
+          <div className="space-y-1 border-b border-line pb-2.5">
+            <p className="text-[11px] text-faint">Antes de generar sugerencias: pies corregidos y calibración sin temblor en las posiciones de esta parte.</p>
+            <RunControl
+              match={matchId}
+              part={part}
+              task="refine"
+              label="Aplicar pies y calibración suavizada a esta parte"
+              icon={<MagicWand size={14} />}
+              warn={warnRefine}
+              onDone={() => onMsg("Posiciones de la parte actualizadas: recarga la página para verlas en la mesa.")}
+            />
+          </div>
+        )}
         {example ? (
           <p className="text-faint">Con datos de ejemplo no se ejecuta Python.</p>
         ) : (
@@ -632,6 +653,7 @@ export function AnchorsPanel({
             boxes={card.boxes}
             derived={card.derived}
             file={data}
+            feet={feet ?? null}
             videoUrl={videoUrl}
             viewFrame={viewFrame}
             steps={steps}

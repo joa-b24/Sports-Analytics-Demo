@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { DOUBT_LABELS, FOCUS_COLORS } from "@/lib/anchors";
 import { boxRect, doubtType, RESOLUTION_NAMES, jumpBetween, type Answer, type DoubtBox, type RichDoubt } from "@/lib/doubts";
 import { fmtT } from "@/lib/format";
+import { feetLine, type FeetFile } from "@/lib/feetFix";
 import type { TracksFile } from "@/lib/tracks";
 
 // One doubt of the anchors mode as a card with its own view by kind: the jump with BEFORE / AFTER and its arrow on the
@@ -16,7 +17,7 @@ const CAPTIONS: Record<string, string[]> = { salto: ["ANTES", "DESPUÉS"], dos_s
 export const boxLabel = (kind: string, i: number) => LABELS[kind]?.[i] ?? String(i + 1);
 
 // Crops of the video around each box, drawn from a hidden copy of the video (the main one does not move).
-function useCrops(url: string | null, file: TracksFile, boxes: DoubtBox[]) {
+function useCrops(url: string | null, file: TracksFile, boxes: DoubtBox[], feet: FeetFile | null) {
   const ref = useRef<HTMLVideoElement>(null);
   const [crops, setCrops] = useState<Record<string, string>>({});
   const want = boxes.map((b) => `${b.frame}:${b.track}`).join(",");
@@ -50,6 +51,19 @@ function useCrops(url: string | null, file: TracksFile, boxes: DoubtBox[]) {
         g.lineWidth = 3;
         g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--color-warn") || "orange";
         g.strokeRect(((x1 - sx) / w) * 240, ((y1 - sy) / h) * 150, ((x2 - x1) / w) * 240, ((y2 - y1) / h) * 150);
+        // Feet recalculated by Python: the same thin dotted green line as over the video.
+        const fl = feetLine(feet, b.frame, b.track, [x1, y1, x2, y2]);
+        if (fl) {
+          g.lineWidth = 1.5;
+          g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--color-ok") || "green";
+          g.setLineDash([4, 3]);
+          const fy = ((fl.y * k - sy) / h) * 150;
+          g.beginPath();
+          g.moveTo(((fl.x1 - sx) / w) * 240, fy);
+          g.lineTo(((fl.x2 - sx) / w) * 240, fy);
+          g.stroke();
+          g.setLineDash([]);
+        }
         try {
           out[`${b.frame}:${b.track}`] = c.toDataURL("image/jpeg", 0.8);
         } catch {
@@ -64,7 +78,7 @@ function useCrops(url: string | null, file: TracksFile, boxes: DoubtBox[]) {
     };
     // `want` stands for the boxes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, want, file]);
+  }, [url, want, file, feet]);
   return { ref, crops };
 }
 
@@ -73,6 +87,7 @@ export function DoubtCard({
   boxes,
   derived,
   file,
+  feet,
   videoUrl,
   viewFrame,
   steps,
@@ -91,6 +106,7 @@ export function DoubtCard({
   boxes: DoubtBox[];
   derived: boolean;
   file: TracksFile;
+  feet: FeetFile | null;
   videoUrl: string | null;
   viewFrame: number;
   steps: number[];
@@ -107,7 +123,7 @@ export function DoubtCard({
 }) {
   const fps = file.fps;
   const type = doubtType(d.kind);
-  const { ref, crops } = useCrops(videoUrl, file, boxes.slice(0, 2));
+  const { ref, crops } = useCrops(videoUrl, file, boxes.slice(0, 2), feet);
   const jump = boxes.length >= 2 ? jumpBetween(file, boxes[0], boxes[1]) : null;
   const meters = d.jump?.dist_m ?? jump?.meters;
   const secs = d.jump?.dt_s ?? jump?.seconds;

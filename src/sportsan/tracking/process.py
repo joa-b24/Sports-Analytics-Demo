@@ -37,6 +37,10 @@ from .stitch import absorb_loose, duplicate_loose, fragments_from_boxes, stitch
 from .team import JERSEY_KEYS, MAX_COLOR_DISTANCE, classify_team, hex_to_lab, lab_to_hex, team_changes, track_teams, track_teams_legacy, vote_teams  # noqa: F401  (se usan desde aquí)
 
 TRACKS_SCHEMA_VERSION = 3
+# Suavizar la homografía en el tiempo (refine.smooth_homographies): la H de cada cuadro tiembla y mueve a todas las
+# jugadoras a la vez, más en la banda lejana. Se suaviza la proyección de 6 puntos fijos (mediana + Savitzky-Golay,
+# ~0.7 s) sin cruzar cortes de calibración. Medido en tracking/revision/refine.md. False: H tal cual por cuadro.
+SMOOTH_H = True
 TEAM_CODES = ("unk", "own", "opp", "ref")
 # Una caja a menos de estos píxeles del borde de la imagen está saliendo o entrando del encuadre.
 EDGE_PX = 10
@@ -322,6 +326,11 @@ def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray
         feet_rows, _ = correct_rows(frames, rows, fps)
     else:
         feet_rows = [np.array([[(r["box"][0] + r["box"][2]) / 2, r["box"][3]] for r in row], dtype=float).reshape(-1, 2) for row in rows]
+    # Calibration smoothed in time (refine.py, SMOOTH_H): the H of each frame is cut by cut, not filtered across a cut.
+    if SMOOTH_H and len(frames) >= 2:
+        from .refine import image_points, smooth_homographies
+
+        Hs, _ = smooth_homographies(Hs, np.asarray(frames, dtype=float) / fps, image_points(feet_rows, w, h))
     for H, row, feet in zip(Hs, rows, feet_rows):
         m = to_meters(H, feet)
         xy = m * np.array([PITCH_LENGTH_M / length, PITCH_WIDTH_M / width])
@@ -424,10 +433,17 @@ def write_outputs(out_dir: Path, meta: dict, chunk: Chunk, stride: int, frames: 
             for f, H, b in zip(frames, result["H"], result["boxes"])
         ],
         "quality": result["quality"],
+        # Lo que ya trae la parte (refine no lo repite).
+        "refined": {"feet": FEET_CORRECTION, "smooth_h": SMOOTH_H},
     }
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     tmp.replace(path)
+    if FEET_CORRECTION:
+        # Which boxes had their feet corrected (the app draws a line there): tracks_<part>.feet.json.
+        from .refine import feet_marks_path, write_feet_marks
+
+        write_feet_marks(data, f"{meta['video_id']}_{chunk.name}", feet_marks_path(path))
     table = tracking_table(meta, chunk, frames, result["boxes"])
     table.to_parquet(out_dir / f"tracking_{meta['video_id']}_{chunk.name}.parquet", index=False)
     return path

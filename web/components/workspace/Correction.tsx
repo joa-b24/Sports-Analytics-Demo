@@ -24,6 +24,7 @@ import { anomalyKey, ballAnomalies, playerAnomalies, type Anomaly } from "@/lib/
 import { applyHint, applyTeamCuts, cutHints, type CutHint } from "@/lib/cuts";
 import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
 import { buildLabels, labelsName } from "@/lib/labels";
+import { feetLine, feetPath, parseFeet, type FeetFile } from "@/lib/feetFix";
 import { localFile, listLocal, localVideo, readLocal, tracksParts, writeLocal } from "@/lib/local";
 import { parseHms } from "@/lib/segments";
 import { SMOOTH_DEFAULTS, smoothTrack, type SmoothOptions, type SmoothReport, type TrackPoint } from "@/lib/smooth";
@@ -83,7 +84,7 @@ const TEAM_COLORS: Record<TeamCode, string> = { own: COLORS.own, opp: COLORS.opp
 const CHECK_PER_PAGE = 3;
 // Players selected at once in the table, and the colours of the second and third (the first is white).
 const MAX_SELECTED = 3;
-const MULTI_COLORS = ["var(--color-accent-300)", "var(--color-ok)"];
+const MULTI_COLORS = ["var(--color-accent-300)", "var(--color-danger)"];
 // The ways of working on the players, in the order of the work: anchors or quick review first, then the table (Alt + 1/2/3).
 type PlayerView = "players" | "quick" | "anchors";
 const PLAYER_VIEWS: { v: PlayerView; name: string; key: string; title: string; Icon: typeof Table }[] = [
@@ -326,6 +327,8 @@ export function Correction({
   const bEvery = Number(usePref("ball:every", "1")) || 1;
   // Boxes over the video in the ball view (they get in the way of clicking the ball), and what the pitch below shows.
   const ballBoxes = usePref("ball:boxes", "0") === "1";
+  // Dotted line at the feet that Python recalculated (tracks_<part>.feet.json), on the selected people; e shows / hides it.
+  const showFeet = usePref("correction:feet", "1") === "1";
   // How people are marked over the video (box, oval at the feet, arrow over the head); b / o / v switch it.
   const labelStyle = usePref("labelStyle", "oval") as LabelStyle;
   const pitchShow = usePref("correction:pitchShow", "all") as "all" | "named" | "ball";
@@ -525,6 +528,7 @@ export function Correction({
       else if (e.key === "u" && viewRef.current === "players") setMode((m) => (m === "merge" ? null : "merge"));
       else if (e.key === "p" && viewRef.current === "players") setMode((m) => (m === "manual" ? null : "manual"));
       else if (e.key === "b" && viewRef.current === "players") setMode((m) => (m === "ball" ? null : "ball"));
+      else if (e.key === "e") setPref("correction:feet", getPref("correction:feet", "1") === "1" ? "0" : "1");
       else if (e.key === "z") setPref("correction:zoom", String((Number(getPref("correction:zoom", "2")) % 3) + 1));
       else if (e.key === "f") toggleFull();
       else if (e.key === "h" && viewRef.current !== "ball") setPref("correction:focus", getPref("correction:focus", "all") === "sel" ? "all" : "sel");
@@ -689,6 +693,23 @@ export function Correction({
     // openRel is a new function each render; the part opens once, when the list arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [partNames, data]);
+
+  // Boxes whose feet were recalculated: read once per part; without the file there is nothing to draw (not an error).
+  const [feetLoaded, setFeetLoaded] = useState<{ key: string; file: FeetFile | null } | null>(null);
+  const feetKey = data && folder ? `${folder}|${partOfData(data)}` : null;
+  useEffect(() => {
+    if (!data || !folder || !feetKey) return;
+    let live = true;
+    void readLocal(feetPath(folder, partOfData(data))).then((t) => {
+      if (live) setFeetLoaded({ key: feetKey, file: parseFeet(t) });
+    });
+    return () => {
+      live = false;
+    };
+    // data is only read for the part's name, which feetKey already carries.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feetKey, folder]);
+  const feet = feetLoaded && feetLoaded.key === feetKey ? feetLoaded.file : null;
 
   // Hand-marked feet -> pitch, through the calibration stored for that frame.
   const toPitch = (px: number, py: number, H: number[] | null | undefined): [number, number] | null => (data ? pixelToPitch(data, H, px, py) : null);
@@ -3405,6 +3426,7 @@ export function Correction({
           folder={folder}
           matchId={folder}
           part={partOfData(data)}
+          feet={feet}
           data={data}
           roster={state.roster ?? []}
           edits={edits}
@@ -3974,6 +3996,15 @@ export function Correction({
                           </g>
                         );
                       })}
+                      {/* Feet recalculated by Python: a thin dotted line at that height, only on the selected people. */}
+                      {showFeet && view !== "quick" && feet &&
+                        shown.map(({ b, id }) => {
+                          if (id !== sel && !multi.includes(id)) return null;
+                          const l = feetLine(feet, pf as number, b[0], [b[1], b[2], b[3], b[4]]);
+                          return l ? (
+                            <line key={`ft${b[0]}`} pointerEvents="none" x1={l.x1} x2={l.x2} y1={l.y} y2={l.y} stroke="var(--color-ok)" strokeWidth={Math.max(1, dotR / 5)} strokeDasharray={`${dotR * 0.7} ${dotR * 0.5}`} />
+                          ) : null;
+                        })}
                       {/* The pinned player, and the box a drag would join to. */}
                       {view === "players" &&
                         shown
@@ -4143,6 +4174,15 @@ export function Correction({
                         onClick={() => setPref("correction:focus", focusSel ? "all" : "sel")}
                       >
                         <Target size={16} weight={focusSel ? "fill" : "regular"} />
+                      </IconButton>
+                    )}
+                    {feet && (
+                      <IconButton
+                        label={showFeet ? "Pies corregidos: visibles (e). Clic para ocultar la línea punteada verde" : "Pies corregidos: ocultos (e). Clic para mostrar una línea punteada verde en las cajas cuyos pies se recalcularon"}
+                        tone={showFeet ? "accent" : "default"}
+                        onClick={() => setPref("correction:feet", showFeet ? "0" : "1")}
+                      >
+                        {showFeet ? <Eye size={16} /> : <EyeSlash size={16} />}
                       </IconButton>
                     )}
                     <IconButton

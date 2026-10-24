@@ -6,6 +6,8 @@ import { resetDirs, resettableFile, runArgv, runPaths, runStatus, validateRunArg
 
 // The anchors mode of the correction table runs sportsan.tracking.anchors (suggest / fill) from here, only on this
 // computer: requests from another host are refused. The arguments pass a strict whitelist (lib/runTask.ts).
+// task "refine" runs sportsan.tracking.refine on the part (feet + smoothed calibration, in place with a backup); it
+// shares the one-run-per-part lock, so it never runs while a suggest/fill of the same part is going.
 //
 //   POST /api/run/anchors                      {task, match, part, perMin, variant} -> {id}; one run per part at a time
 //   GET  /api/run/anchors?match=&part=&task=&variant=  {state, phase, done, total, pct, eta_s, message}

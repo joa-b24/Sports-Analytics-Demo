@@ -87,3 +87,16 @@ test("reset whitelist: only anchors/links of the part and its fill logs", async 
   for (const n of [`progreso_suggest_${P}.log`, `run_fill_${P}.json.old`, `union_f1.md`]) assert.equal(resettableFile("revision", P, n), false, n);
   assert.equal(resettableFile("auto", "../x", "anchors_../x.json"), false);
 });
+
+test("refine: lista blanca, sin variante, argumentos y registro propios", () => {
+  const v = validateRunArgs({ task: "refine", match: "2026_09_25_tec_ccm_vs_anahuac", part: "v2_34220_45027", perMin: 3 });
+  assert.equal(v.ok, true);
+  assert.deepEqual(runArgv(v.args), ["-m", "sportsan.tracking.refine", "--match", "2026_09_25_tec_ccm_vs_anahuac", "--part", "v2_34220_45027"]);
+  assert.equal(validateRunArgs({ task: "refine", match: "m", part: "p", variant: "exp" }).ok, false);
+  assert.equal(validateRunArgs({ task: "refine", match: "m", part: "../p" }).ok, false);
+  assert.equal(validateRunArgs({ task: "refine; rm", match: "m", part: "p" }).ok, false);
+  const p = runPaths("m", "refine", "v2_1_2");
+  assert.equal(p.progress, "matches/m/tracking/revision/progreso_refine_v2_1_2.log");
+  assert.equal(p.record, "matches/m/tracking/revision/run_refine_v2_1_2.json");
+  assert.equal(parseProgress("10:00:00 calibración 1/1 100% ETA 0s (total 3s)")?.phase, "calibración");
+});

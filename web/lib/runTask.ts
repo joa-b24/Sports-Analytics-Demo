@@ -3,7 +3,8 @@
 // The progress log is the one written by anchors_cli.Progress: tracking/revision/progreso_<task>_<part>.log, one line
 // per step: "HH:MM:SS <phase> <n>/<total> <pct>% ETA <s>s (total <s>s)".
 
-export type RunTask = "suggest" | "fill";
+// "refine": sportsan.tracking.refine (feet and smoothed calibration of the part, in place with a backup .pre_refine.json).
+export type RunTask = "suggest" | "fill" | "refine";
 export interface RunArgs {
   task: RunTask;
   match: string;
@@ -38,7 +39,7 @@ export const PER_MIN = ["1", "2", "3", "4", "5", "hybrid"] as const;
 export function validateRunArgs(body: unknown): { ok: true; args: RunArgs } | { ok: false; error: string } {
   if (!body || typeof body !== "object") return { ok: false, error: "Petición vacía." };
   const b = body as Record<string, unknown>;
-  if (b.task !== "suggest" && b.task !== "fill") return { ok: false, error: "Tarea desconocida." };
+  if (b.task !== "suggest" && b.task !== "fill" && b.task !== "refine") return { ok: false, error: "Tarea desconocida." };
   if (typeof b.match !== "string" || !SAFE.test(b.match)) return { ok: false, error: "Partido no válido." };
   if (typeof b.part !== "string" || !SAFE.test(b.part)) return { ok: false, error: "Parte no válida." };
   let perMin: string | undefined;
@@ -56,6 +57,7 @@ export function validateRunArgs(body: unknown): { ok: true; args: RunArgs } | { 
 }
 
 export function runArgv(a: RunArgs): string[] {
+  if (a.task === "refine") return ["-m", "sportsan.tracking.refine", "--match", a.match, "--part", a.part];
   const argv = ["-m", "sportsan.tracking.anchors", a.task, "--match", a.match, "--part", a.part];
   if (a.task === "suggest" && a.perMin) argv.push("--per-min", a.perMin);
   if (a.task === "fill" && a.variant === "exp") argv.push("--variant", "exp");
@@ -93,7 +95,7 @@ export function errorMessage(output: string, code: number | null | undefined): s
   return `Python terminó con error${code != null ? ` (código ${code})` : ""}.`;
 }
 
-const PHASES: Record<string, string> = { lectura: "Leyendo", pies: "Pies", trozos: "Trozos", candidatos: "Candidatos", relleno: "Rellenando" };
+const PHASES: Record<string, string> = { lectura: "Leyendo", pies: "Pies", trozos: "Trozos", candidatos: "Candidatos", relleno: "Rellenando", "calibración": "Calibración", posiciones: "Posiciones", escritura: "Guardando", listo: "Listo" };
 export const phaseName = (p: string) => PHASES[p] ?? p;
 
 // Status of a run from its record, its progress log and its output. `alive`: whether the process is still running
