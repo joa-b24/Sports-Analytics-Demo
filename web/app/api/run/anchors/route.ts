@@ -9,6 +9,7 @@ import { resetDirs, resettableFile, runArgv, runPaths, runStatus, validateRunArg
 // task "refine" runs sportsan.tracking.refine on the part (feet + smoothed calibration, in place with a backup); it
 // shares the one-run-per-part lock, so it never runs while a suggest/fill of the same part is going.
 //
+// task "ball" runs sportsan.tracking.ball run on the part (default model weights/ball_model.pt; --force only if asked).
 //   POST /api/run/anchors                      {task, match, part, perMin, variant} -> {id}; one run per part at a time
 //   GET  /api/run/anchors?match=&part=&task=&variant=  {state, phase, done, total, pct, eta_s, message}
 //
@@ -66,6 +67,7 @@ export async function POST(req: Request) {
   if (!existsSync(abs(`matches/${a.match}`))) return Response.json({ error: "No existe la carpeta de ese partido." }, { status: 404 });
   const key = `${a.match}|${a.part}${a.variant ? `|${a.variant}` : ""}`;
   if (live.has(key)) return Response.json({ error: "Ya hay un proceso de anclas en curso para esta parte." }, { status: 409 });
+  if (a.task === "ball" && !existsSync(abs("weights/ball_model.pt"))) return Response.json({ error: "No hay modelo de balón entrenado (weights/ball_model.pt)." }, { status: 409 });
   const py = abs(".venv/Scripts/python.exe");
   if (!existsSync(py)) return Response.json({ error: "No se encontró .venv/Scripts/python.exe en la raíz del repositorio." }, { status: 500 });
 

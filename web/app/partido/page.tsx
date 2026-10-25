@@ -2,6 +2,7 @@
 
 import { ShootoutPanel } from "@/components/match/Shootout";
 import { FolderTools, useYamlSync } from "@/components/match/FolderSync";
+import { SaveStatus } from "@/components/match/SaveStatus";
 import {
   CalendarBlank,
   CheckCircle,
@@ -329,6 +330,7 @@ function MatchPage() {
         tab={tab}
         onTab={setTab}
         steps={steps}
+        status={<SaveStatus match={match} />}
         video={
           videos.length > 1 ? (
             <Select

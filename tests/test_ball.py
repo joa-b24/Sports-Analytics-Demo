@@ -75,3 +75,17 @@ def test_drop_detours_removes_out_and_back_but_keeps_a_jump_that_stays():
     # A jump that does not come back stays (a clearance seen after a hole).
     found2 = [{"frame": f, "px": px(x), "py": px(30), "p": 0.95} for f, x in [(0, 30), (3, 31), (6, 80), (9, 81), (12, 82)]]
     assert [x["frame"] for x in b.drop_detours(found2, Hs, VENUE, 30)] == [0, 3, 6, 9, 12]
+
+
+def test_progress_line_format_and_log(tmp_path):
+    from sportsan.tracking.ball import BallProgress, progress_line, progress_path
+
+    assert progress_line("cuadros", 40, 120, 10.0, 12.0, "10:00:03") == "10:00:03 cuadros 40/120 33% ETA 20s (total 12s)"
+    assert progress_line("cuadros", 0, 120, 0.0, 0.0, "10:00:00") == "10:00:00 cuadros 0/120 0% ETA nans (total 0s)"
+    part = tmp_path / "tracking" / "tracks_v1_10_20.json"
+    assert progress_path(tmp_path, part).name == "progreso_ball_v1_10_20.log"
+    pr = BallProgress(progress_path(tmp_path, part))
+    pr.log("cuadros", 5, 10)
+    pr.log("listo", 1, 1)
+    lines = progress_path(tmp_path, part).read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2 and " cuadros 5/10 50% ETA " in lines[0] and " listo 1/1 100% " in lines[1]

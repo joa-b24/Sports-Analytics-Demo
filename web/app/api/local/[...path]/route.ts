@@ -11,7 +11,8 @@ import { uploadTarget } from "@/lib/uploads";
 //
 //   GET  /api/local/<ruta>          the file (videos with byte ranges, so they can be seeked)
 //   GET  /api/local/<carpeta>?list  the files of a folder
-//   PUT  /api/local/<ruta>          writes the body (only the files listed in WRITABLE)
+//   PUT  /api/local/<ruta>          writes the body (only the files listed in WRITABLE); answers its mtime
+//   DELETE /api/local/<ruta>        only an old backup of a match (respaldo/respaldo_*.json)
 //   POST /api/local/<ruta>          uploads a file of a match folder from Datos (lib/uploads.ts says which), streamed
 //                                   to disk (a video of several GB never sits in memory); 409 if it exists, unless
 //                                   ?overwrite=1
@@ -21,6 +22,8 @@ export const dynamic = "force-dynamic";
 const ROOT = path.resolve(process.env.SPORTSAN_ROOT ?? path.join(process.cwd(), ".."));
 // Only these parts of the repository are reachable.
 const READABLE = [/^matches$/, /^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.json$/, /^data\/strava(\/.*)?$/, /^data\/boards(\/.*)?$/];
+// Backups of one match (lib/saveAll.ts backupName): the only files the app may delete (to keep the 5 newest).
+const BACKUP = /^matches\/[\w.-]+\/respaldo\/respaldo_\d{4}-\d{2}-\d{2}_\d{4}\.json$/;
 const WRITABLE = [
   /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors|labels)_[\w.-]+\.json$/,
   /^matches\/[\w.-]+\/(match\.yaml|segments\.csv)$/,
@@ -36,6 +39,9 @@ const WRITABLE = [
   /^config\/roster\.json$/,
   // Answers of a review sample (sportsan.tracking.links_review / jumps_review, page /revision).
   /^matches\/[\w.-]+\/tracking\/revision\/[\w.-]+\/respuestas\.json$/,
+  // «Guardar todo» of a match (lib/saveMatch.ts): its events as CSV and a backup of its browser data.
+  /^matches\/[\w.-]+\/(events\/)?events_[\w.-]+\.csv$/,
+  BACKUP,
 ];
 const TYPES: Record<string, string> = {
   ".mp4": "video/mp4",
@@ -73,7 +79,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
     if (!new URL(req.url).searchParams.has("list")) return notFound();
     const entries = await readdir(target.abs, { withFileTypes: true });
     const files = await Promise.all(
-      entries.map(async (e) => ({ name: e.name, dir: e.isDirectory(), size: e.isDirectory() ? 0 : (await stat(path.join(target.abs, e.name))).size })),
+      entries.map(async (e) => {
+        const st = await stat(path.join(target.abs, e.name));
+        return { name: e.name, dir: e.isDirectory(), size: e.isDirectory() ? 0 : st.size, mtime: st.mtimeMs };
+      }),
     );
     return Response.json(files.sort((a, b) => a.name.localeCompare(b.name)), { headers: { "Cache-Control": "no-store" } });
   }
@@ -103,6 +112,16 @@ export async function PUT(req: Request, ctx: { params: Promise<{ path: string[] 
   if (text.length > 60_000_000) return new Response("Demasiado grande", { status: 413 });
   await mkdir(path.dirname(target.abs), { recursive: true });
   await writeFile(target.abs, text, "utf-8");
+  return Response.json({ ok: true, path: target.rel, mtime: (await stat(target.abs)).mtimeMs });
+}
+
+// Only old backups of a match («Guardar todo» keeps the 5 newest).
+export async function DELETE(_req: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  if (!enabled()) return notFound();
+  const { path: parts } = await ctx.params;
+  const target = resolve(parts, [BACKUP]);
+  if (!target) return new Response("Ese archivo no se puede borrar desde la app", { status: 403 });
+  await rm(target.abs, { force: true });
   return Response.json({ ok: true, path: target.rel });
 }
 

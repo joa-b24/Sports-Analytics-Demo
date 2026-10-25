@@ -570,7 +570,38 @@ def play_segments(folder: Path, video: str, fps: float) -> list[tuple[int, int]]
     return [(round(parse_hms(r.start) * fps), round(parse_hms(r.end) * fps)) for r in rows.itertuples()]
 
 
-def run_part(part: Path, model: BallModel, folder: Path) -> dict:
+def progress_line(phase: str, n: int, total: int, elapsed: float, total_elapsed: float, clock: str) -> str:
+    """Línea de progreso con el formato de anchors_cli.Progress: "HH:MM:SS fase n/N pct% ETA Ns (total Ns)"."""
+    eta = elapsed / n * (total - n) if n else float("nan")
+    return f"{clock} {phase} {n}/{total} {100 * n / max(1, total):.0f}% ETA {eta:.0f}s (total {total_elapsed:.0f}s)"
+
+
+class BallProgress:
+    """Registro de avance del balón en `tracking/revision/progreso_ball_<parte>.log` (la app lo lee)."""
+
+    def __init__(self, path: Path | None):
+        self.path = path
+        self.t0 = self.p0 = time.time()
+        self.phase = ""
+        if path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+
+    def log(self, phase: str, n: int, total: int) -> None:
+        if phase != self.phase:
+            self.phase, self.p0 = phase, time.time()
+        now = time.time()
+        line = progress_line(phase, n, total, now - self.p0, now - self.t0, time.strftime("%H:%M:%S"))
+        if self.path:
+            with self.path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+
+
+def progress_path(folder: Path, part: Path) -> Path:
+    return folder / "tracking" / "revision" / ("progreso_ball_" + part.stem.removeprefix("tracks_") + ".log")
+
+
+def run_part(part: Path, model: BallModel, folder: Path, progress: BallProgress | None = None) -> dict:
     tr = json.loads(part.read_text(encoding="utf-8"))
     venue = venue_of(folder, tr)
     if venue is None:
@@ -580,8 +611,15 @@ def run_part(part: Path, model: BallModel, folder: Path) -> dict:
     per = []
     t0 = time.time()
     search = model.meta.get("search", "pitch")
-    for f, pts, P in frame_features(walker, tr["frames"], venue, search=search, k=k):
+    total = len(tr["frames"])
+    if progress:
+        progress.log("cuadros", 0, total)
+    for i, (f, pts, P) in enumerate(frame_features(walker, tr["frames"], venue, search=search, k=k), 1):
         per.append((f, pts, model.predict(P)))
+        if progress and (i % 10 == 0 or i == total):
+            progress.log("cuadros", i, total)
+    if progress:
+        progress.log("decisión", 0, 1)
     found = drop_detours(decide(per, k), {fr["frame"]: fr.get("H") for fr in tr["frames"]}, venue, tr["fps"])
     frames = [f for f, _, _ in per]
     asks = ask_frames([b["frame"] for b in found], frames, tr["fps"], play_segments(folder, tr["video_id"], tr["fps"]))
@@ -621,6 +659,7 @@ def run(match: str, video: str | None = None, part_name: str | None = None, forc
     if not model_path.exists():
         raise SystemExit(f"No hay modelo en {model_path}: primero `python -m sportsan.tracking.ball train`.")
     model = BallModel(model_path)
+    print(f"modelo: {model_path}")
     parts = [folder / "tracking" / part_name] if part_name else parts_of(folder, video)
     done = []
     for p in parts:
@@ -628,8 +667,11 @@ def run(match: str, video: str | None = None, part_name: str | None = None, forc
         if out.exists() and not force:
             print(f"ya existe, salto: {out.name}")
             continue
-        r = run_part(p, model, folder)
+        prog = BallProgress(progress_path(folder, p))
+        r = run_part(p, model, folder, prog)
+        prog.log("escritura", 0, 1)
         out.write_text(json.dumps(r), encoding="utf-8")
+        prog.log("listo", 1, 1)
         q = r["quality"]
         print(f"listo: {out.name}: balón seguro en {q['found']} de {q['processed']} cuadros ({q['found_share']:.0%}), "
               f"{len(r['ask'])} marcas pedidas, {q['seconds']} s")

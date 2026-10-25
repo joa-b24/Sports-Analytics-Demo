@@ -48,3 +48,8 @@ matches/*/clips/*
 matches/*/clips_*.json
 # Jugadas del pizarrón exportadas para el render
 data/boards/
+
+# Respaldos y eventos con nombres de jugadoras (los escribe «Guardar todo» en la app)
+matches/*/respaldo/*
+matches/*/events_*.csv
+matches/*/events/*

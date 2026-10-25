@@ -27,6 +27,8 @@ export interface LocalEntry {
   name: string;
   dir: boolean;
   size: number;
+  // Last modified (ms), from the listing.
+  mtime?: number;
 }
 
 const base = "/api/local/";
@@ -75,6 +77,27 @@ export async function writeLocal(rel: string, text: string): Promise<boolean> {
   try {
     const r = await fetch(localUrl(rel), { method: "PUT", body: text });
     return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Like writeLocal, with when the file was written on disk (ms) and why it failed.
+export async function writeLocalInfo(rel: string, text: string): Promise<{ ok: boolean; mtime: number | null; error?: string }> {
+  try {
+    const r = await fetch(localUrl(rel), { method: "PUT", body: text });
+    if (!r.ok) return { ok: false, mtime: null, error: r.status === 404 ? "la app no corre en esta computadora" : (await r.text()) || `error ${r.status}` };
+    const j = (await r.json().catch(() => ({}))) as { mtime?: number };
+    return { ok: true, mtime: j.mtime ?? Date.now() };
+  } catch {
+    return { ok: false, mtime: null, error: "se perdió la conexión con la app" };
+  }
+}
+
+// Only old backups of a match can be deleted (app/api/local).
+export async function deleteLocal(rel: string): Promise<boolean> {
+  try {
+    return (await fetch(localUrl(rel), { method: "DELETE" })).ok;
   } catch {
     return false;
   }

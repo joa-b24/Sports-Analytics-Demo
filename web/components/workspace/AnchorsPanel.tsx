@@ -903,6 +903,7 @@ export function RunControl({
   icon,
   onDone,
   warn,
+  extra,
 }: {
   match: string;
   part: string;
@@ -914,6 +915,8 @@ export function RunControl({
   onDone: () => void | Promise<void>;
   // What the run would overwrite (asked before starting), or null.
   warn?: () => string | null;
+  // More fields of the request (the ball task: force when it overwrites a ball_auto).
+  extra?: Record<string, unknown>;
 }) {
   const [st, setSt] = useState<(RunStatus & { log?: string | null }) | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
@@ -966,7 +969,7 @@ export function RunControl({
   const start = async () => {
     setAsking(null);
     setStartError(null);
-    const r = await fetch("/api/run/anchors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task, match, part, perMin, variant }) }).catch(() => null);
+    const r = await fetch("/api/run/anchors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task, match, part, perMin, variant, ...extra }) }).catch(() => null);
     if (!r) return setStartError("No se pudo hablar con la app (¿corre en esta computadora?).");
     if (!r.ok) {
       const body = (await r.json().catch(() => null)) as { error?: string } | null;

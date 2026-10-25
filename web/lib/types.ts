@@ -406,7 +406,9 @@ export interface TrackEdits {
   // From `frame` on, `track` is the new `identity`.
   splits: { track: number; frame: number; identity: number }[];
   // Feet position marked by hand (pixels) where the detector lost the person.
-  manual: { identity: number; frame: number; px: number; py: number }[];
+  // Marks of a stretch fitted from key frames (lib/feetKeys.ts) carry `fit` (stretch id) and `key` (true: clicked,
+  // false: interpolated); marks clicked one by one have neither.
+  manual: { identity: number; frame: number; px: number; py: number; key?: boolean; fit?: number }[];
   // Single boxes left out: the second box of a player who was detected twice in that frame. Absent in older edits.
   dropped?: { track: number; frame: number }[];
   // Ball marked by hand on the video (pixels), one per frame. Absent in older edits.

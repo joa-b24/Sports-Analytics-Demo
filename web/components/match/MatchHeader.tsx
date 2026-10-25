@@ -102,12 +102,14 @@ type Props = {
   steps: Record<StepId, StepStatus>;
   // Between the score and the steps: the video selector.
   video?: React.ReactNode;
+  // Right after the steps: whether the match is saved to its folder (components/match/SaveStatus.tsx).
+  status?: React.ReactNode;
   // At the right end: the match data.
   children?: React.ReactNode;
 };
 
 // One bar: the score, the video, the steps of the mode (each with where it stands) and the match data.
-export function MatchHeader({ match, events, tab, onTab, steps, video, children }: Props) {
+export function MatchHeader({ match, events, tab, onTab, steps, video, status, children }: Props) {
   const mode = modeOf(tab);
   const modeSteps = MODES.find((m) => m.id === mode)?.steps ?? [];
   const progress = (st: StepStatus) => (st.state === "done" ? 100 : st.state === "partial" ? 50 : 0);
@@ -145,6 +147,7 @@ export function MatchHeader({ match, events, tab, onTab, steps, video, children 
           );
         })}
       </ol>
+      {status}
       {children}
       {/* The bar only names the steps (and ticks the finished ones); where the open step stands goes under it. */}
       {steps[tab as StepId]?.text && <p className="m-0 basis-full text-right text-xs text-faint">{steps[tab as StepId].text}</p>}

@@ -100,3 +100,27 @@ test("refine: lista blanca, sin variante, argumentos y registro propios", () => 
   assert.equal(p.record, "matches/m/tracking/revision/run_refine_v2_1_2.json");
   assert.equal(parseProgress("10:00:00 calibración 1/1 100% ETA 0s (total 3s)")?.phase, "calibración");
 });
+
+test("ball: lista blanca, argumentos, force y progreso propios", () => {
+  const v = validateRunArgs({ task: "ball", match: "m_1", part: "v1_6414_13699" });
+  assert.equal(v.ok, true);
+  assert.deepEqual(runArgv(v.args), ["-m", "sportsan.tracking.ball", "run", "--match", "m_1", "--part", "tracks_v1_6414_13699.json"]);
+  const f = validateRunArgs({ task: "ball", match: "m", part: "p", accept: 0.9, force: true });
+  assert.deepEqual(runArgv(f.args).slice(-3), ["--accept", "0.9", "--force"]);
+  for (const bad of [
+    { task: "ball", match: "m", part: "p", accept: 0.5 },
+    { task: "ball", match: "m", part: "p", accept: 1 },
+    { task: "ball", match: "m", part: "p", accept: "x" },
+    { task: "ball", match: "m", part: "p", force: "yes" },
+    { task: "fill", match: "m", part: "p", accept: 0.9 },
+    { task: "fill", match: "m", part: "p", force: true },
+    { task: "ball", match: "m", part: "../p" },
+    { task: "ball", match: "m", part: "p", variant: "exp" },
+  ])
+    assert.equal(validateRunArgs(bad).ok, false, JSON.stringify(bad));
+  assert.equal(runPaths("m", "ball", "v1_1_2").progress, "matches/m/tracking/revision/progreso_ball_v1_1_2.log");
+  const log = "10:00:00 cuadros 0/300 0% ETA nans (total 0s)\n10:00:20 cuadros 150/300 50% ETA 20s (total 20s)\n";
+  assert.deepEqual(parseProgress(log), { phase: "cuadros", done: 150, total: 300, pct: 50, eta_s: 20 });
+  assert.equal(runStatus({ state: "running", started: 0, pid: 1 }, log, "", true).phase, "cuadros");
+  assert.match(errorMessage("SystemExit: No hay modelo en x", 1), /modelo de balón/);
+});

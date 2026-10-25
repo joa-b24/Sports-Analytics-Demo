@@ -24,7 +24,11 @@ import { anomalyKey, ballAnomalies, playerAnomalies, type Anomaly } from "@/lib/
 import { applyHint, applyTeamCuts, cutHints, type CutHint } from "@/lib/cuts";
 import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
 import { buildLabels, labelsName } from "@/lib/labels";
+import { hhmm, partHash, partId } from "@/lib/saveAll";
+import { savePart, useSaveLog } from "@/lib/saveMatch";
+import { useAsk } from "@/components/match/SaveStatus";
 import { feetLine, feetPath, parseFeet, type FeetFile } from "@/lib/feetFix";
+import { clearFit, fitAt, fitCount, fitKeys, fitMarks, newFitId, removeKey, setKey } from "@/lib/feetKeys";
 import { localFile, listLocal, localVideo, readLocal, tracksParts, writeLocal } from "@/lib/local";
 import { parseHms } from "@/lib/segments";
 import { SMOOTH_DEFAULTS, smoothTrack, type SmoothOptions, type SmoothReport, type TrackPoint } from "@/lib/smooth";
@@ -54,7 +58,6 @@ import {
   separateRun,
   withoutReferees,
   setBall,
-  setManual,
   setPerson,
   setRemoved,
   setRemovedMany,
@@ -71,7 +74,7 @@ import { autoEvents, pending as pendingAuto, reviewedStretches, AUTO, type Sugge
 import type { FixedFile } from "@/lib/positions";
 import { matchVideos } from "@/lib/videos";
 import { AutoSuggestions } from "@/components/workspace/AutoSuggestions";
-import { AnchorsPanel, type BoxPick } from "@/components/workspace/AnchorsPanel";
+import { AnchorsPanel, RunControl, type BoxPick } from "@/components/workspace/AnchorsPanel";
 import { Notice } from "@/components/workspace/Notice";
 import { nextTwice, noneIsHer, pendingTwice, skipTwice } from "@/lib/doubles";
 import { dropHalfFrames } from "@/lib/anchors";
@@ -210,6 +213,9 @@ export function Correction({
     setMulti([...multi, id]);
   };
   const [mode, setMode] = useState<Mode>(null);
+  // Feet on key frames (mode P): the stretch being edited, the window its strip shows, and the history length right
+  // after its first change (while it matches, later clicks do not add undo steps: Ctrl + Z takes the whole stretch).
+  const [fit, setFit] = useState<{ id: number; identity: number; win: [number, number]; hist: number } | null>(null);
   const [goTo, setGoTo] = useState("");
   const [showShort] = useState(false);
   const [teamFilter] = useState<TeamCode | "all">("all");
@@ -242,6 +248,7 @@ export function Correction({
   // The impossible jump of the selected player being reviewed (its person and first frame).
   const [anomAt, setAnomAt] = useState<{ person: number; frame: number } | null>(null);
   // The save button tells by itself how the save went; the details of the cleaning go in its tooltip.
+  const [saveAsk, saveAskDialog, resetSaveAsk] = useAsk();
   const [save, setSave] = useState<{ state: "idle" | "saving" | "saved" | "downloaded" | "error"; note: string }>({ state: "idle", note: "" });
   useEffect(() => {
     if (save.state !== "saved" && save.state !== "downloaded") return;
@@ -367,6 +374,7 @@ export function Correction({
   const colors = state.jerseys[mid] || NO_COLORS;
   const writeEdits = (next: TrackEdits) => mutate((s) => ({ ...s, trackEdits: [...s.trackEdits.filter((e) => e.key !== next.key), next] }));
   const hKey = key;
+  const partSaved = useSaveLog(mid)[partId(key)];
   // The mode of each part is remembered (the last used; Anclas the first time).
   const modePref = usePref(`correction:mode:${key}`, "anchors");
   const [prevKey, setPrevKey] = useState(key);
@@ -728,6 +736,8 @@ export function Correction({
   // The ball tracker's work on this part (python -m sportsan.tracking.ball run), if it ran: its sure frames and where
   // it asks for a hand mark.
   const [ballAuto, setBallAuto] = useState<BallAuto | null>(null);
+  // Counts the runs of the ball detector that finished: the file is read again.
+  const [ballAutoRuns, setBallAutoRuns] = useState(0);
   const autoKey = data ? `matches/${matchIdText}/tracking/ball_auto_${data.video_id}_${data.start_frame}_${data.end_frame}.json` : "";
   useEffect(() => {
     if (!autoKey) return;
@@ -744,7 +754,7 @@ export function Correction({
     return () => {
       live = false;
     };
-  }, [autoKey]);
+  }, [autoKey, ballAutoRuns]);
   const ballKnown = useMemo(
     () => (data ? [...(attack ? eventBall(data, matchEvents, attack === "right") : []), ...autoBall(data, ballAuto, edits), ...manualBall(data, edits)] : []),
     [data, edits, matchEvents, attack, ballAuto],
@@ -943,16 +953,12 @@ export function Correction({
       if (b) markBallAt([b[0], b[1]]);
       return;
     }
-    if (mode !== "manual" || sel === null || pf === null) return;
+    if (mode !== "manual" || sel === null || pf === null || !data) return;
     const p = toPixels(e);
     if (!p) return;
     videoRef.current?.pause();
-    setEdits(setManual(edits, sel, pf, Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10));
-    if (anomCur && pf >= anomCur.frame - stride) {
-      const end = anomCur.until ?? anomCur.frame + stride;
-      if (pf + stride < end) seekFrame(pf + stride);
-      else setMode(null);
-    }
+    const f = fitOn ?? { id: fitAt(edits, sel, pf) ?? newFitId(edits), identity: sel, win: fitWin, hist: -1 };
+    fitWrite(setKey(data, edits, sel, f.id, { frame: pf, px: p[0], py: p[1] }), f);
   };
   const selTwiceHere = sel !== null && shown.filter((x) => x.id === sel).length > 1;
   // Identities drawn more than once in this frame, whoever is selected.
@@ -1359,9 +1365,61 @@ export function Correction({
     setMsg(`Quitado el cuadro anterior al salto (${fmtT((a.before ?? 0) / fps)}): se rellena al guardar. Ctrl + Z lo deshace.`);
   };
   const anomOk = (a: Anomaly) => anomDone(a, { ...edits, anomalyOk: [...new Set([...(edits.anomalyOk ?? []), anomalyKey(a)])] });
+  // ---------------------------------------------------------------- feet on key frames (P)
+  // Window of the strip: the jump with 1 s around it, or 2 s around where the stretch started.
+  const fitOn = mode === "manual" && sel !== null && fit?.identity === sel ? fit : null;
+  const fitWin: [number, number] = fitOn
+    ? fitOn.win
+    : anomCur
+      ? [anomCur.frame - Math.round(fps), (anomCur.until ?? anomCur.frame + stride) + Math.round(fps)]
+      : [(pf ?? frame) - Math.round(2 * fps), (pf ?? frame) + Math.round(2 * fps)];
+  const fitWrite = (next: TrackEdits, f: { id: number; identity: number; win: [number, number]; hist: number }) => {
+    if (f.hist === history.length) writeEdits(next);
+    else setEdits(next);
+    setFit({ ...f, hist: f.hist === history.length ? f.hist : Math.min(history.length + 1, 100) });
+  };
+  const fitStats = fitOn ? fitCount(edits, fitOn.identity, fitOn.id) : { keys: 0, adjusted: 0 };
+  const fitRange = fitOn ? fitMarks(edits, fitOn.identity, fitOn.id) : [];
+  const fitKeyFrames = fitOn ? fitKeys(edits, fitOn.identity, fitOn.id).map((k) => k.frame) : [];
+  const fitFinish = () => {
+    setMode(null);
+    setFit(null);
+    if (anomCur) {
+      const rest = selAnoms.filter((x) => x !== anomCur);
+      const after = rest.find((x) => x.frame > anomCur.frame) ?? rest[0];
+      if (after) anomGo(after);
+      else setAnomAt(null);
+    }
+    if (fitStats.adjusted > 0) setMsg(`Pies ajustados en ${fitStats.adjusted} cuadro(s) con ${fitStats.keys} clave(s). Ctrl + Z deshace el tramo entero.`);
+  };
+  const fitKeysRef = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  useEffect(() => {
+    fitKeysRef.current = (e: KeyboardEvent) => {
+      if (mode !== "manual" || sel === null || isTyping(e.target) || !data) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        undo();
+        setFit(null);
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        if (!fitOn) setMsg("Aún no hay claves: haz clic en sus pies sobre el video.");
+        else if (e.shiftKey) fitWrite(clearFit(edits, fitOn.identity, fitOn.id), fitOn);
+        else if (pf !== null && fitKeyFrames.includes(pf)) fitWrite(removeKey(data, edits, fitOn.identity, fitOn.id, pf), fitOn);
+        else setMsg("Este cuadro no es clave: Mayús + Supr borra el tramo entero.");
+      } else if (e.key === "Enter" || e.key === "Escape") fitFinish();
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => fitKeysRef.current(e);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
   const anomFix = (a: Anomaly) => {
+    if (a.person === undefined) return;
     seekFrame(a.frame);
     setMode("manual");
+    setFit({ id: fitAt(edits, a.person, a.frame) ?? newFitId(edits), identity: a.person, win: [a.frame - Math.round(fps), (a.until ?? a.frame + stride) + Math.round(fps)], hist: -1 });
   };
   // While a jump is under review: Q leaves its frames out, Enter says it is fine, A / Shift + A next / previous, Esc
   // closes the review (the player stays selected). P (mark by hand) is the table's own key.
@@ -1716,67 +1774,28 @@ export function Correction({
   }, []);
 
 
-  const exportFixed = () => {
+  // The same save as «Guardar todo» of the match (lib/saveMatch.ts), for this part with the smoothing chosen here.
+  const exportFixed = async () => {
     if (!data) return;
-    const cleaned = smoothOn ? cleanAll() : new Map<number, { points: TrackPoint[]; report: SmoothReport }>();
-    const totals = [...cleaned.values()].reduce(
-      (t, c) => ({ outliers: t.outliers + c.report.outliers, filled: t.filled + c.report.filled, openGaps: t.openGaps + c.report.openGaps }),
-      { outliers: 0, filled: 0, openGaps: 0 },
+    resetSaveAsk();
+    const r = await savePart(
+      { folder: mid, file: data, edits, hash: partHash(edits, matchEvents, attack), colors, smooth: smoothOn ? smoothCfg : null, showRefs, events: matchEvents, attack, ballAuto },
+      saveAsk,
     );
-    const r2 = (v: number) => Math.round(v * 100) / 100;
-    const byFrameOut = new Map<number, { id: number; x: number; y: number; source: string; raw?: [number, number] }[]>();
-    for (const id of paths.keys()) {
-      if (refIds.has(id)) continue;
-      const pts = smoothOn ? (cleaned.get(id)?.points ?? []) : [...(paths.get(id) ?? [])].sort((u, v) => u.frame - v.frame);
-      for (const q of pts) {
-        const row = { id, x: r2(q.x), y: r2(q.y), source: q.source, ...(q.raw ? { raw: [r2(q.raw[0]), r2(q.raw[1])] as [number, number] } : {}) };
-        const list = byFrameOut.get(q.frame);
-        if (list) list.push(row);
-        else byFrameOut.set(q.frame, [row]);
-      }
-    }
-    const out = {
-      schema_version: 2,
-      kind: "tracks_fixed",
-      match_id: data.match_id,
-      video_id: data.video_id,
-      fps: data.fps,
-      // Real size of the venue: positions are normalised to 105 x 68, distances are measured in these meters.
-      venue: data.venue?.length_m && data.venue?.width_m ? { length_m: data.venue.length_m, width_m: data.venue.width_m } : null,
-      start_frame: data.start_frame,
-      end_frame: data.end_frame,
-      stride: data.stride,
-      // How the paths were cleaned; null when exported as measured.
-      // max_fill_s null: every hole filled, whatever its length.
-      smoothing: smoothOn ? { max_speed_ms: smoothCfg.maxSpeedMs, max_fill_s: Number.isFinite(smoothCfg.maxFillS) ? smoothCfg.maxFillS : null, window_s: smoothCfg.windowS, ...totals } : null,
-      people: ppl.filter((q) => !refIds.has(q.id)).map((q) => ({ id: q.id, team: q.team, player_id: q.player_id || null, tracks: q.tracks })),
-      // Ball on the pitch: "manual" (clicked on the video), "event" (a tagged event) or "interpolated". Never detected.
-      ball: ball.map((b) => ({ frame: b.frame, x: r2(b.x), y: r2(b.y), source: b.source })),
-      // Positions in the normalised pitch. source: "auto" (detected), "manual" (feet marked by hand) or "interpolated"
-      // (filled inside a short hole; never a measurement). `raw` is the measured position when smoothing moved it.
-      // `view`: what the camera saw in each frame, on the pitch (for the shadow of the animations).
-      frames: data.frames.map((fr) => {
-        const v = viewPolygon(data, fr.H);
-        return { frame: fr.frame, positions: byFrameOut.get(fr.frame) ?? [], ...(v ? { view: v } : {}) };
-      }),
-    };
-    const note = smoothOn
-      ? `Suavizado: ${totals.outliers} microsalto(s) quitado(s), ${totals.filled} posición(es) rellenada(s), ${totals.openGaps} hueco(s) vacío(s).`
-      : "Tal como se midió, sin suavizar ni rellenar.";
-    void Promise.all([saveFixed(`tracks_fixed_${data.video_id}_${data.start_frame}_${data.end_frame}.json`, JSON.stringify(out)), saveLabels(data, edits)])
-      .then(([ok]) => setSave({ state: ok ? "saved" : "downloaded", note: ok ? `Guardado en matches/${mid}/tracking/. ${note}` : `Descargado (no hay acceso a la carpeta). ${note}` }))
-      .catch(() => setSave({ state: "error", note: "No se pudo guardar." }));
+    setSave(
+      r.state === "saved"
+        ? { state: "saved", note: `Guardado en matches/${mid}/tracking/. ${r.note}` }
+        : r.state === "error"
+          ? { state: "error", note: r.note }
+          : { state: "idle", note: r.state === "skipped" ? "No se guardó: el archivo de la carpeta es más nuevo." : "Cancelado." },
+    );
   };
   // The spinner shows before the (slow) cleaning of every path starts.
   const saveNow = () => {
     if (!data || save.state === "saving") return;
     setSave({ state: "saving", note: "" });
     window.setTimeout(() => {
-      try {
-        exportFixed();
-      } catch {
-        setSave({ state: "error", note: "No se pudo guardar." });
-      }
+      exportFixed().catch(() => setSave({ state: "error", note: "No se pudo guardar." }));
     }, 40);
   };
 
@@ -2537,6 +2556,21 @@ export function Correction({
           <GearSix size={15} />
         </IconButton>
       </div>
+      {folder && data && (
+        <div className="mt-2">
+          <RunControl
+            match={folder}
+            part={partOfData(data)}
+            task="ball"
+            label="Detectar balón automáticamente"
+            icon={<SoccerBall size={14} />}
+            extra={{ force: ballAuto !== null }}
+            warn={() => (ballAuto ? "Ya hay balón detectado en esta parte (ball_auto). Se vuelve a detectar y se reemplaza ese archivo; tus marcas a mano no se tocan. Tarda varios minutos." : null)}
+            onDone={() => setBallAutoRuns((n) => n + 1)}
+          />
+          <p className="mt-1 text-[11px] text-faint">Lo detectado sale como marcas automáticas (anillo naranja discontinuo); no se acepta nada solo, hay que revisarlo.</p>
+        </div>
+      )}
     </div>
   );
   // Settings of the ball view: where we attack in this video (events, suggestions and analysis need it), the match whose
@@ -3278,7 +3312,7 @@ export function Correction({
                         >
                           <ArrowsSplit size={16} />
                         </IconButton>
-                        <IconButton label="Marcar a mano (p): clic en sus pies" tone={mode === "manual" ? "accent" : "default"} onClick={() => setMode(mode === "manual" ? null : "manual")}>
+                        <IconButton label="Ajustar pies (p): clic en sus pies en cuadros clave; entre ellos sigue a la caja" tone={mode === "manual" ? "accent" : "default"} onClick={() => setMode(mode === "manual" ? null : "manual")}>
                           <HandPointing size={16} />
                         </IconButton>
                         {manualHere.some((m) => m.identity === selected.id) && pf !== null && (
@@ -3626,7 +3660,7 @@ export function Correction({
                   save.state === "saved" || save.state === "downloaded" ? "!border-ok !bg-ok" : save.state === "error" ? "!border-danger !bg-danger" : ""
                 }`}
                 aria-live="polite"
-                title={save.note || "Guarda lo corregido (tracks_fixed) y las etiquetas en la carpeta del partido; si no se puede, se descargan"}
+                title={[save.note || "Guarda esta parte en la carpeta del partido: lo corregido y el balón (tracks_fixed) y las etiquetas (labels). «Guardar todo» (Ctrl+S) guarda todas las partes.", partSaved ? `Último guardado de esta parte: ${new Date(partSaved.at).toLocaleString("es-MX")}${partSaved.hash === partHash(edits, matchEvents, attack) ? "" : " (hay cambios después)"}` : "Esta parte nunca se guardó desde este navegador."].join(" · ")}
                 disabled={save.state === "saving"}
                 onClick={saveNow}
               >
@@ -3640,7 +3674,9 @@ export function Correction({
                 <span key={save.state} className="enter">
                   {save.state === "saving" ? "Guardando…" : save.state === "saved" ? "Guardado" : save.state === "downloaded" ? "Descargado" : save.state === "error" ? "Reintentar" : "Guardar"}
                 </span>
+                {partSaved && save.state === "idle" && <span className="tc text-[10px] opacity-70">{hhmm(partSaved.at)}</span>}
               </button>
+              {saveAskDialog}
               <Dropdown
                 label="Más acciones"
                 panelClass="w-64 p-1.5"
@@ -4046,18 +4082,64 @@ export function Correction({
                       {autoHere && (
                         <circle cx={autoHere.px} cy={autoHere.py} r={dotR * 1.5} fill="none" stroke="#fb923c" strokeWidth={dotR / 4} strokeDasharray={`${dotR * 0.8} ${dotR * 0.5}`} pointerEvents="none" />
                       )}
-                      {manualHere.map((m) => (
+                      {manualHere.map((m) => {
+                        // Feet of a stretch fitted from keys: the green dotted line at their height across her box; the
+                        // keys themselves keep the ring.
+                        const bx = m.fit !== undefined ? shown.find((x) => x.id === m.identity)?.b : undefined;
+                        const line = bx ? (
+                          <line key={`fk${m.identity}`} pointerEvents="none" x1={bx[1]} x2={bx[3]} y1={m.py} y2={m.py} stroke="var(--color-ok)" strokeWidth={Math.max(1.5, dotR / 3)} strokeDasharray={`${dotR * 0.7} ${dotR * 0.5}`} />
+                        ) : null;
+                        if (m.fit !== undefined && !m.key) return line;
+                        return (
                         <g key={`m${m.identity}`} pointerEvents="none">
+                          {line}
                           <circle cx={m.px} cy={m.py} r={dotR * 1.2} fill="none" stroke={m.identity === sel ? "#ffffff" : "#fde047"} strokeWidth={dotR / 3} />
                           <text x={m.px} y={m.py - dotR * 1.8} textAnchor="middle" fontSize={dotR * 2.4} fontFamily="var(--font-mono)" fill="#fde047" stroke="#000" strokeWidth={dotR / 10} paintOrder="stroke">
                             {label(personById.get(m.identity), m.identity)}
                           </text>
                         </g>
-                      ))}
+                        );
+                      })}
                     </svg>
                   )}
                   </div>
                   </div>
+                  {mode === "manual" && sel !== null && view === "players" && data && (() => {
+                    // Strip of the key frames: the window, the stretch adjusted, its keys and the current frame.
+                    const w0 = Math.max(data.start_frame, Math.min(fitWin[0], fitRange[0]?.frame ?? Infinity));
+                    const w1 = Math.min(data.end_frame, Math.max(fitWin[1], fitRange[fitRange.length - 1]?.frame ?? -Infinity));
+                    const pos = (f: number) => `${Math.max(0, Math.min(100, ((f - w0) / Math.max(1, w1 - w0)) * 100))}%`;
+                    return (
+                      <div className="absolute inset-x-2 bottom-2 z-10 flex items-center gap-3 rounded-lg bg-black/70 px-3 py-1.5 text-xs text-white/85" onClick={(e) => e.stopPropagation()}>
+                        <span className="hidden shrink-0 font-semibold min-[1500px]:inline">Pies en cuadros clave</span>
+                        <div
+                          className="relative h-4 min-w-24 flex-1 cursor-pointer rounded bg-white/10"
+                          onClick={(e) => {
+                            const r = e.currentTarget.getBoundingClientRect();
+                            seekFrame(Math.round(w0 + ((e.clientX - r.left) / r.width) * (w1 - w0)));
+                          }}
+                          title="Clic: ir a ese cuadro"
+                        >
+                          {fitRange.length > 0 && (
+                            <div className="absolute inset-y-0.5 rounded-sm bg-ok/35" style={{ left: pos(fitRange[0].frame), right: `calc(100% - ${pos(fitRange[fitRange.length - 1].frame)})` }} />
+                          )}
+                          {fitKeyFrames.map((f) => (
+                            <span key={f} className="absolute top-0 h-4 w-1 -translate-x-1/2 rounded-sm bg-ok" style={{ left: pos(f) }} />
+                          ))}
+                          {pf !== null && <span className="absolute -top-0.5 h-5 w-0.5 -translate-x-1/2 bg-white" style={{ left: pos(pf) }} />}
+                        </div>
+                        <span className="tc shrink-0">
+                          {fitStats.keys} {fitStats.keys === 1 ? "clave" : "claves"}, {fitStats.adjusted} {fitStats.adjusted === 1 ? "cuadro ajustado" : "cuadros ajustados"}
+                        </span>
+                        <span className="hidden shrink-0 text-white/60 min-[1500px]:inline">
+                          clic en sus pies · <kbd className="kbd">Supr</kbd> clave · <kbd className="kbd">Mayús+Supr</kbd> tramo
+                        </span>
+                        <button type="button" className="btn shrink-0 !py-0.5" onClick={fitFinish} title="Terminar (Enter o Esc)">
+                          Terminar <kbd className="kbd hidden min-[1500px]:inline">Enter</kbd>
+                        </button>
+                      </div>
+                    );
+                  })()}
                   {zoomTransform && (
                     <span className="tc pointer-events-none absolute top-2 right-2 rounded-lg bg-black/60 px-1.5 py-0.5 text-[10px] text-white/80">×{zoom}</span>
                   )}
@@ -4239,8 +4321,8 @@ export function Correction({
                             <button type="button" className={btn} disabled={anomCur.before === undefined} onClick={() => anomCur.before !== undefined && anomDropPrev(anomCur)} title="Quitar el anterior: muchas veces el que está mal es el cuadro de antes del salto (Alt + Q)">
                               <Eraser size={14} /> <span className="hidden min-[1700px]:inline">Anterior</span> <kbd className="kbd">Alt+Q</kbd>
                             </button>
-                            <button type="button" className={`btn ${mode === "manual" ? "btn-primary" : ""}`} onClick={() => (mode === "manual" ? setMode(null) : anomFix(anomCur))} title="Marcar sus pies: clic donde están en cada cuadro del salto (P)">
-                              <HandPointing size={14} /> <span className="hidden min-[1700px]:inline">Pies</span> <kbd className="kbd">P</kbd>
+                            <button type="button" className={`btn ${mode === "manual" ? "btn-primary" : ""}`} onClick={() => (mode === "manual" ? setMode(null) : anomFix(anomCur))} title="Ajustar pies (P): clic en sus pies en dos o más cuadros clave del salto; entre ellos se corrige solo el borde inferior de la caja">
+                              <HandPointing size={14} /> <span className="hidden min-[1500px]:inline">Ajustar pies</span> <kbd className="kbd">P</kbd>
                             </button>
                             <button type="button" className={btnPrimary} onClick={() => anomOk(anomCur)} title="Está bien así (por ejemplo, una corrida real): no vuelve a marcarse (Enter)">
                               <Check size={14} /> Bien <kbd className="kbd">Enter</kbd>
@@ -4335,10 +4417,10 @@ export function Correction({
                 {mode && (
                   <Notice tone="accent" title={(mode === "merge"
                       ? `Uniendo con ${label(selected ?? undefined, sel ?? 0)}: haz clic en la caja (o en la fila) de la misma jugadora. Puedes moverte por el video. Esc para terminar.`
-                      : `Marcando a ${label(selected ?? undefined, sel ?? 0)} a mano: haz clic en el video donde están sus pies en este cuadro. Esc para terminar.`)}>
+                      : `Marcando a ${label(selected ?? undefined, sel ?? 0)} en cuadros clave: clic en sus pies en dos o más cuadros (entre ellos sigue a la caja; ±0.5 s fuera). Supr borra la clave, Mayús + Supr el tramo, Enter o Esc termina.`)}>
                     {(mode === "merge"
                       ? `Uniendo con ${label(selected ?? undefined, sel ?? 0)}: haz clic en la caja (o en la fila) de la misma jugadora. Puedes moverte por el video. Esc para terminar.`
-                      : `Marcando a ${label(selected ?? undefined, sel ?? 0)} a mano: haz clic en el video donde están sus pies en este cuadro. Esc para terminar.`)}
+                      : `Marcando a ${label(selected ?? undefined, sel ?? 0)} en cuadros clave: clic en sus pies en dos o más cuadros (entre ellos sigue a la caja; ±0.5 s fuera). Supr borra la clave, Mayús + Supr el tramo, Enter o Esc termina.`)}
                   </Notice>
                 )}
                 </div>

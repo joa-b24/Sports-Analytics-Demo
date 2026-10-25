@@ -4,7 +4,8 @@
 // per step: "HH:MM:SS <phase> <n>/<total> <pct>% ETA <s>s (total <s>s)".
 
 // "refine": sportsan.tracking.refine (feet and smoothed calibration of the part, in place with a backup .pre_refine.json).
-export type RunTask = "suggest" | "fill" | "refine";
+// "ball": sportsan.tracking.ball run (the ball tracker on one part; writes ball_auto_<part>.json, never accepted by itself).
+export type RunTask = "suggest" | "fill" | "refine" | "ball";
 export interface RunArgs {
   task: RunTask;
   match: string;
@@ -12,6 +13,9 @@ export interface RunArgs {
   perMin?: string;
   // "exp": the experimental fill (variant B, links_<part>_exp.json). Only for fill.
   variant?: "exp";
+  // Only for ball: probability to accept (0.8-0.99) and whether to overwrite an existing ball_auto_ (--force).
+  accept?: number;
+  force?: boolean;
 }
 export type RunState = "idle" | "running" | "done" | "error";
 export interface RunStatus {
@@ -39,7 +43,7 @@ export const PER_MIN = ["1", "2", "3", "4", "5", "hybrid"] as const;
 export function validateRunArgs(body: unknown): { ok: true; args: RunArgs } | { ok: false; error: string } {
   if (!body || typeof body !== "object") return { ok: false, error: "Petición vacía." };
   const b = body as Record<string, unknown>;
-  if (b.task !== "suggest" && b.task !== "fill" && b.task !== "refine") return { ok: false, error: "Tarea desconocida." };
+  if (b.task !== "suggest" && b.task !== "fill" && b.task !== "refine" && b.task !== "ball") return { ok: false, error: "Tarea desconocida." };
   if (typeof b.match !== "string" || !SAFE.test(b.match)) return { ok: false, error: "Partido no válido." };
   if (typeof b.part !== "string" || !SAFE.test(b.part)) return { ok: false, error: "Parte no válida." };
   let perMin: string | undefined;
@@ -53,10 +57,25 @@ export function validateRunArgs(body: unknown): { ok: true; args: RunArgs } | { 
     if (b.variant !== "exp" || b.task !== "fill") return { ok: false, error: "Variante no válida." };
     variant = "exp";
   }
-  return { ok: true, args: { task: b.task, match: b.match, part: b.part, perMin, ...(variant ? { variant } : {}) } };
+  let accept: number | undefined;
+  if (b.accept !== undefined && b.accept !== null && b.accept !== "") {
+    const a = Number(b.accept);
+    if (b.task !== "ball" || !Number.isFinite(a) || a < 0.8 || a > 0.99) return { ok: false, error: "Probabilidad de aceptación: entre 0,80 y 0,99 (solo balón)." };
+    accept = a;
+  }
+  const force = b.force === true;
+  if (b.force !== undefined && b.force !== null && typeof b.force !== "boolean") return { ok: false, error: "Valor no válido." };
+  if (force && b.task !== "ball") return { ok: false, error: "Valor no válido." };
+  return { ok: true, args: { task: b.task, match: b.match, part: b.part, perMin, ...(variant ? { variant } : {}), ...(accept !== undefined ? { accept } : {}), ...(force ? { force } : {}) } };
 }
 
 export function runArgv(a: RunArgs): string[] {
+  if (a.task === "ball") {
+    const argv = ["-m", "sportsan.tracking.ball", "run", "--match", a.match, "--part", `tracks_${a.part}.json`];
+    if (a.accept !== undefined) argv.push("--accept", String(a.accept));
+    if (a.force) argv.push("--force");
+    return argv;
+  }
   if (a.task === "refine") return ["-m", "sportsan.tracking.refine", "--match", a.match, "--part", a.part];
   const argv = ["-m", "sportsan.tracking.anchors", a.task, "--match", a.match, "--part", a.part];
   if (a.task === "suggest" && a.perMin) argv.push("--per-min", a.perMin);
@@ -90,12 +109,14 @@ export function parseProgress(text: string): { phase: string; done: number; tota
 export function errorMessage(output: string, code: number | null | undefined): string {
   if (/ModuleNotFoundError|No module named/.test(output)) return "Falta instalar algo de Python en .venv (pip install -e \".[dev]\").";
   if (/FileNotFoundError|No such file/.test(output)) return "Falta un archivo de la parte (¿tracks de esta parte o sugerencias/anclas?).";
+  if (/No hay modelo/.test(output)) return "No hay modelo de balón entrenado (weights/ball_model.pt).";
+  if (/falta la medida de la sede/.test(output)) return "Falta la medida de la sede en match.yaml.";
   if (/MemoryError/.test(output)) return "Python se quedó sin memoria.";
   if (/ENOENT|python\.exe/.test(output) && code == null) return "No se encontró .venv/Scripts/python.exe en la raíz del repositorio.";
   return `Python terminó con error${code != null ? ` (código ${code})` : ""}.`;
 }
 
-const PHASES: Record<string, string> = { lectura: "Leyendo", pies: "Pies", trozos: "Trozos", candidatos: "Candidatos", relleno: "Rellenando", "calibración": "Calibración", posiciones: "Posiciones", escritura: "Guardando", listo: "Listo" };
+const PHASES: Record<string, string> = { lectura: "Leyendo", pies: "Pies", trozos: "Trozos", candidatos: "Candidatos", relleno: "Rellenando", "calibración": "Calibración", posiciones: "Posiciones", escritura: "Guardando", listo: "Listo", cuadros: "Buscando el balón", "decisión": "Decidiendo" };
 export const phaseName = (p: string) => PHASES[p] ?? p;
 
 // Status of a run from its record, its progress log and its output. `alive`: whether the process is still running
