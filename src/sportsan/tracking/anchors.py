@@ -78,6 +78,10 @@ class Chain:
     first: int                         # trozo inicial y final (para buscar p del modelo de unión)
     last: int
     team: str
+    # Trozos puros de la cadena en orden de tiempo y p de la unión entre cada par consecutivo (None: sin candidato).
+    # Vacíos en cadenas hechas a mano (pruebas): entonces la cadena es un solo trozo.
+    members: tuple = ()
+    link_ps: tuple = ()
 
     @property
     def start(self) -> int:
@@ -91,6 +95,7 @@ class Chain:
 def build_chains(tracklets: list[Tracklet], links, team_of=None) -> list[Chain]:
     """Cadenas de trozos según las uniones de la fase 1. `team_of(tracklet) -> equipo` (por defecto, el de process)."""
     root = chains(len(tracklets), links)
+    p_of = {(c.a, c.b): float(c.p) for c in links}
     groups: dict[int, list[Tracklet]] = {}
     for t, r in zip(tracklets, root):
         groups.setdefault(int(r), []).append(t)
@@ -99,7 +104,8 @@ def build_chains(tracklets: list[Tracklet], links, team_of=None) -> list[Chain]:
         members.sort(key=lambda t: t.start)
         boxes = sorted((b for t in members for b in t.boxes), key=lambda b: b.frame)
         tl = Tracklet(id=-1, track=members[0].track, boxes=boxes)
-        out.append(Chain(len(out), tl, members[0].id, members[-1].id, team_of(tl) if team_of else tl.team))
+        out.append(Chain(len(out), tl, members[0].id, members[-1].id, team_of(tl) if team_of else tl.team,
+                         tuple(members), tuple(p_of.get((a.id, b.id)) for a, b in zip(members, members[1:]))))
     out.sort(key=lambda c: (c.start, c.end))
     for i, c in enumerate(out):
         c.id = i
@@ -252,6 +258,8 @@ class Fill:
     doubts_jump: int = 0
     close: set[int] = field(default_factory=set)            # cadenas asignadas con otra jugadora casi empatada
     excluded: int = 0       # pares cadena-jugadora vetados por la exclusión (solo con exclusive=True)
+    entry_p: dict[int, "float | None"] = field(default_factory=dict)   # p de la unión que enlazó la cadena con la anterior de la jugadora
+    rev: set[int] = field(default_factory=set)              # cadenas asignadas por el relleno hacia atrás (su decisión está en el último trozo)
 
     @property
     def doubts(self) -> int:
@@ -357,6 +365,7 @@ def fill_between(chs: list[Chain], anchors: dict[int, int], fps: float, link_p: 
             c, person = batch[r], players[k]
             res.owner[c.id] = person
             res.cost[c.id] = float(M[r, k])
+            res.entry_p[c.id] = link_p.get((tail[person].last, c.first))
             tail[person] = c
             busy.setdefault(person, []).append((c.start, c.end))
             row = np.sort(M[r, : len(players)])
@@ -399,7 +408,8 @@ def check_sequences(chs: list[Chain], res: Fill, fps: float) -> None:
 
 def _mirror(c: Chain) -> Chain:
     boxes = [Box(**{**b.__dict__, "frame": -b.frame}) for b in reversed(c.tl.boxes)]
-    return Chain(c.id, Tracklet(id=-1, track=c.tl.track, boxes=boxes), c.last, c.first, c.team)
+    return Chain(c.id, Tracklet(id=-1, track=c.tl.track, boxes=boxes), c.last, c.first, c.team,
+                 tuple(reversed(c.members)), tuple(reversed(c.link_ps)))
 
 
 def fill_both(chs: list[Chain], anchors: dict[int, int], fps: float, link_p: dict[tuple[int, int], float],
@@ -438,6 +448,8 @@ def fill_both(chs: list[Chain], anchors: dict[int, int], fps: float, link_p: dic
                 busy.setdefault(person, []).append((by_id[cid].start, by_id[cid].end))
             fwd.owner[cid] = person
             fwd.cost[cid] = bwd.cost.get(cid, 0.0)
+            fwd.entry_p[cid] = bwd.entry_p.get(cid)
+            fwd.rev.add(cid)
         fwd.doubts_cost += bwd.doubts_cost
         fwd.doubts_close += bwd.doubts_close
         fwd.close |= {cid for cid in bwd.close if cid in fwd.owner}

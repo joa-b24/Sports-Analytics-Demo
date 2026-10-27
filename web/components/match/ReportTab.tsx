@@ -15,6 +15,7 @@ import { passNetwork } from "@/lib/positions";
 import { NEED_TEXT, layoutOf, sectionDef, type SectionNeed } from "@/lib/reportSections";
 import { downloadText } from "@/lib/format";
 import { writeLocal } from "@/lib/local";
+import { possessionCover } from "@/lib/playgroundHealth";
 import { buildReport, clipList, clipsFileName, normalizeReport, reportFileName, type Gate, type Moment, type ReportData, type SetPieceSide, type TransitionRow } from "@/lib/report";
 import type { Segment } from "@/lib/segments";
 import { mutate, setPref, usePref, useStore } from "@/lib/store";
@@ -59,11 +60,12 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
   const poss = data.summary.ball?.possession;
   useEffect(() => {
     if (!poss) return;
-    const next = { own: poss.own, opp: poss.opp, followed_s: data.summary.ball?.followed_s ?? 0 };
+    const det = data.summary.ball?.possession_detail;
+    const next = { own: poss.own, opp: poss.opp, followed_s: data.summary.ball?.followed_s ?? 0, coverage: det?.coverage ?? null, contact_coverage: det?.contact_coverage ?? null };
     const cur = match.possession;
-    if (cur && cur.own === next.own && cur.opp === next.opp && cur.followed_s === next.followed_s) return;
+    if (cur && cur.own === next.own && cur.opp === next.opp && cur.followed_s === next.followed_s && cur.coverage === next.coverage && cur.contact_coverage === next.contact_coverage) return;
     mutate((s) => ({ ...s, matches: s.matches.map((m) => (m.match_id === match.match_id ? { ...m, possession: next } : m)) }));
-  }, [poss?.own, poss?.opp]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [poss?.own, poss?.opp, data.summary.ball?.possession_detail?.coverage, data.summary.ball?.possession_detail?.contact_coverage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setReport = (p: Partial<Report>) =>
     mutate((s) => ({
@@ -388,6 +390,7 @@ function Cover({ data, report, setReport, loading }: { data: ReportData; report:
                   <span className="num text-3xl whitespace-nowrap text-ink">{k.own}</span>
                   <span className="text-xs whitespace-nowrap text-faint">vs {k.opp}</span>
                 </dd>
+                {k.note && <div className="mt-0.5 text-[11px] text-faint">{k.note}</div>}
                 <div className="mt-2 flex h-1 gap-0.5 overflow-hidden rounded-full">
                   {k.share === null ? (
                     <span className="h-full w-full bg-line-soft" />
@@ -418,13 +421,15 @@ function Cover({ data, report, setReport, loading }: { data: ReportData; report:
 }
 
 // The headline figures under the scoreboard: only those this match has (no ball followed, no possession tile).
-function coverKpis(data: ReportData): { label: string; own: string; opp: string; share: number | null }[] {
-  const out: { label: string; own: string; opp: string; share: number | null }[] = [];
+function coverKpis(data: ReportData): { label: string; own: string; opp: string; share: number | null; note?: string }[] {
+  const out: { label: string; own: string; opp: string; share: number | null; note?: string }[] = [];
   const share = (a: number, b: number) => (a + b > 0 ? a / (a + b) : null);
   const b = data.summary.ball;
   if (b) {
     const s = share(b.possession.own, b.possession.opp);
-    if (s !== null) out.push({ label: "Posesión", own: `${Math.round(100 * s)} %`, opp: `${100 - Math.round(100 * s)} %`, share: s });
+    // The possession never goes without its coverage (lib/playgroundHealth.ts possessionCover).
+    const cov = possessionCover(b.possession_detail);
+    if (s !== null) out.push({ label: "Posesión", own: `${Math.round(100 * s)} %`, opp: `${100 - Math.round(100 * s)} %`, share: s, note: cov.cover === null ? "cobertura desconocida" : `sobre el ${Math.round(100 * cov.cover)} % del tiempo vivo` });
   }
   if (data.cover.level.events > 0) {
     const row = (k: string) => data.summary.rows.find((r) => r.key === k);

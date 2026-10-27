@@ -5,7 +5,8 @@ import { COLORS, Pitch } from "@/components/Pitch";
 import { Card, input } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
 import { fmtT } from "@/lib/format";
-import { behindBallAtLosses, heatmap, namedPlayers } from "@/lib/positions";
+import { useMomentPlayer } from "@/components/match/MomentPlayer";
+import { REST_DEFENCE, behindBallAtLosses, behindSummary, heatmap, namedPlayers, type BehindBall, type BehindSummary } from "@/lib/positions";
 import { PITCH, type Match, type MatchEvent } from "@/lib/types";
 
 // Cards from the corrected positions of the match (tracks_fixed_*.json, saved from the correction table): heat map,
@@ -23,6 +24,7 @@ export function PositionsCards({ match, videoIds, events }: { match: Match; vide
   const players = useMemo(() => namedPlayers(parts, heatTeam), [parts, heatTeam]);
   const behind = useMemo(() => behindBallAtLosses(parts, events), [parts, events]);
   const name = (s: Side) => (s === "own" ? match.focus_team : match.other_team);
+  const moment = useMomentPlayer(match);
 
   if (!match.folder || !fixed || parts.length === 0) {
     return (
@@ -47,7 +49,7 @@ export function PositionsCards({ match, videoIds, events }: { match: Match; vide
   const max = Math.max(...heat.seconds, 1e-9);
   const cw = PITCH.length / heat.nx;
   const ch = PITCH.width / heat.ny;
-  const avgBehind = behind.length ? behind.reduce((n, b) => n + b.behind, 0) / behind.length : null;
+  const summary = behindSummary(behind);
   const teamToggle = (value: Side, set: (s: Side) => void) => (
     <div className="seg">
       {SIDES.map((s) => (
@@ -105,43 +107,66 @@ export function PositionsCards({ match, videoIds, events }: { match: Match; vide
           </p>
         </Card>
 
-        <Card title="Jugadoras por detrás del balón al perderlo" note="B4">
-          {behind.length === 0 ? (
+        <Card title="Jugadoras por detrás del balón al perderlo" note="B4 · clic en un cuadro para ver la pérdida">
+          {!summary ? (
             <p className="text-sm text-pretty text-muted">
               Ninguna pérdida de {match.focus_team} cae en un tramo corregido. Cuentan las pérdidas etiquetadas («Pérdida» con posición) y los
               cambios de equipo que se leen del balón seguido.
             </p>
           ) : (
             <>
-              <div className="flex items-baseline gap-3">
-                <span className="num text-4xl text-ink">{avgBehind?.toFixed(1)}</span>
-                <span className="text-sm text-muted">por detrás del balón de media, en {behind.length} pérdida(s)</span>
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="num text-4xl text-ink">{summary.mean.toFixed(1)}</span>
+                <span className="text-sm text-muted">por detrás del balón de media, en {summary.n} pérdida(s)</span>
               </div>
-              <ul className="mt-3 space-y-1 text-xs">
-                {behind.map((b) => (
-                  <li key={`${b.video_id}${b.t}`} className="flex items-center gap-2">
-                    <span className="tc w-20 text-ink-2">
-                      {videoIds.length > 1 ? `${b.video_id} ` : ""}
-                      {fmtT(b.t)}
-                    </span>
-                    <span className="relative h-2 flex-1 rounded-full bg-surface">
-                      <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${(100 * b.behind) / Math.max(1, b.seen)}%`, background: COLORS.own }} />
-                    </span>
-                    <span className="tc w-16 text-right text-ink-2">
-                      {b.behind} de {b.seen}
-                    </span>
-                    <span className="w-14 text-right text-faint">{b.source === "event" ? "etiquetada" : "del balón"}</span>
-                  </li>
-                ))}
-              </ul>
+              <p className="mt-1 text-xs text-ink-2">
+                {summary.covered} de {summary.n} pérdidas con {REST_DEFENCE} o más detrás del balón ({Math.round((100 * summary.covered) / summary.n)} %).
+              </p>
+              <BehindUnits summary={summary} multi={videoIds.length > 1} onPick={(b) => moment.show({ video_id: b.video_id, t: b.t, label: `Pérdida de ${match.focus_team}: ${b.behind} de ${b.seen} detrás del balón` })} />
               <p className="mt-2 text-[11px] text-pretty text-faint">
-                «de N» son las jugadoras de {match.focus_team} que salen en cuadro en ese instante (incluida la portera si se ve). Las que no salen no se
-                cuentan.
+                Cada cuadro es una pérdida, agrupada por cuántas jugadoras de {match.focus_team} estaban entre el balón y su portería. Relleno =
+                pérdida etiquetada; borde = cambio de equipo leído del balón. «de N» son las que salen en cuadro en ese instante (incluida la
+                portera si se ve); las que no salen no se cuentan.
               </p>
             </>
           )}
+          {moment.panel}
         </Card>
       </div>
+    </div>
+  );
+}
+
+// One square per loss, stacked by how many players were behind the ball: a histogram that keeps each loss clickable.
+// Filled = tagged loss, outlined = change of team read from the ball; the columns with REST_DEFENCE or more are covered.
+function BehindUnits({ summary, multi, onPick }: { summary: BehindSummary; multi: boolean; onPick: (b: BehindBall) => void }) {
+  const tallest = Math.max(1, ...summary.columns.map((c) => c.items.length));
+  const size = Math.max(6, Math.min(16, Math.floor(150 / tallest)));
+  return (
+    <div className="mt-3 flex items-end gap-1.5 overflow-x-auto pb-1" role="group" aria-label="Pérdidas por jugadoras detrás del balón">
+      {summary.columns.map((c) => (
+        <div key={c.behind} className="flex flex-col items-center gap-1">
+          <div className="flex flex-col-reverse gap-[2px]" style={{ minHeight: size }}>
+            {c.items.map((b) => (
+              <button
+                key={`${b.video_id}${b.t}${b.source}`}
+                type="button"
+                onClick={() => onPick(b)}
+                title={`${multi ? `${b.video_id} ` : ""}${fmtT(b.t)} · ${b.behind} de ${b.seen} · ${b.source === "event" ? "etiquetada" : "leída del balón"}`}
+                aria-label={`Ver la pérdida de ${multi ? `${b.video_id} ` : ""}${fmtT(b.t)}: ${b.behind} de ${b.seen} detrás del balón`}
+                className="rounded-[3px] transition-transform hover:scale-110 focus-visible:scale-110"
+                style={{
+                  width: size + 6,
+                  height: size,
+                  background: b.source === "event" ? COLORS.own : "transparent",
+                  border: `1.5px solid ${COLORS.own}`,
+                }}
+              />
+            ))}
+          </div>
+          <span className={`tc text-xs ${c.behind >= REST_DEFENCE ? "text-ok" : "text-muted"}`}>{c.behind}</span>
+        </div>
+      ))}
     </div>
   );
 }

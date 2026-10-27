@@ -135,3 +135,12 @@ test("open holes: only those the export cannot fill", () => {
   assert.deepEqual(openGaps(pts, gaps, o), [[60, 90], [120, 210]]);
   assert.deepEqual(openGaps(pts, gaps, null), gaps);
 });
+
+test("canBridge: the rule of fillGaps (at most 2 s and 9 m/s)", async () => {
+  const { canBridge } = await import("./smooth.ts");
+  assert.equal(canBridge(2.5, 0.2), false);
+  assert.equal(canBridge(1.5, 0.2), true);
+  assert.equal(canBridge(10, 2), true);
+  assert.equal(canBridge(5, 2.5), false);
+  assert.equal(canBridge(0, 0), false);
+});

@@ -5,11 +5,12 @@ import { Plus, X } from "@phosphor-icons/react";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { Card, input } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
-import { MAX_COMPARE, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
+import { MAX_COMPARE, NO_DATA, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
 import { heatmap, type Oriented } from "@/lib/positions";
 import type { Segment } from "@/lib/segments";
 import { setPref, usePref, useStore } from "@/lib/store";
 import { PITCH, type Match, type MatchEvent } from "@/lib/types";
+import { matchVideos } from "@/lib/videos";
 
 type Side = "own" | "opp";
 // Each compared player keeps her colour while she stays picked (identity, never rank); the team is the small bar.
@@ -35,7 +36,9 @@ export function PlayersCompare({
   const state = useStore();
   const fixed = useFixedParts(match.folder, videoIds);
   const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
-  const rows = useMemo(() => playerRows({ events, parts, playByVideo: segmentsByVideo }), [events, parts, segmentsByVideo]);
+  // Which half each video is (a half can come in several videos); absent = first video 1, others 2.
+  const videoPeriods = useMemo(() => matchVideos(match).map((v, i) => ({ video_id: v.video_id, period: v.period ?? (i === 0 ? 1 : 2) })), [match]);
+  const rows = useMemo(() => playerRows({ events, parts, playByVideo: segmentsByVideo, videoPeriods }), [events, parts, segmentsByVideo, videoPeriods]);
   const prefKey = `players:${match.match_id}`;
   const saved = usePref(prefKey, "");
   const per10 = usePref("players:per10", "0") === "1";
@@ -111,7 +114,7 @@ export function PlayersCompare({
                     {list.map((r) => (
                       <option key={r.key} value={r.key}>
                         {label(r)}
-                        {r.minutes ? ` · ${Math.round(r.minutes)} min` : ""}
+                        {` · ${r.minutes_played != null ? `${Math.round(r.minutes_played)} min jugados` : `jugados: ${NO_DATA}`}`}
                         {r.events ? ` · ${r.events} eventos` : ""}
                       </option>
                     ))}
@@ -126,7 +129,7 @@ export function PlayersCompare({
             Totales
           </button>
           <button type="button" className="seg-opt" aria-pressed={per10} disabled={!anyMinutes} onClick={() => setPref("players:per10", "1")} title={anyMinutes ? "" : "Hace falta tracking con su nombre"}>
-            Por 10 min en cuadro
+            Por 10 min vistos
           </button>
         </div>
       </div>
@@ -159,7 +162,12 @@ export function PlayersCompare({
               </div>
             )}
             <p className="mt-4 text-xs text-pretty text-faint">
-              Eventos: solo los etiquetados con su nombre{periodNote ? " (en el tiempo elegido arriba)" : ""}; si su equipo no tiene eventos con nombre, «—». Toques, pases y físico: del tracking corregido,
+              {picked.some((r) => r.fill_time_pct != null) &&
+                `Relleno (posición extrapolada, no medida): ${picked
+                  .filter((r) => r.fill_time_pct != null)
+                  .map((r) => `${label(r)} ${fmt(r.fill_time_pct ?? 0)} % del tiempo visto, ${r.fill_dist_pct != null ? fmt(r.fill_dist_pct) : NO_DATA} % de la distancia`)
+                  .join("; ")}. `}
+              Minutos jugados: reloj del partido por tiempo, del inicio al fin del juego de cada video (sin las pausas internas), menos lo que la jugadora estuvo fuera (sin dato si es suplente y no hay cambio etiquetado). «Tiempo visto»: solo lo que salió en cuadro. Eventos: solo los etiquetados con su nombre{periodNote ? " (en el tiempo elegido arriba)" : ""}; si su equipo no tiene eventos con nombre, «—». Toques, pases y físico: del tracking corregido,
               solo el tiempo en cuadro{periodNote ? ", de todo el partido" : ""}; «—» es que no se midió, no que fuera 0.
             </p>
           </Card>
@@ -217,7 +225,9 @@ function PlayerHeat({ parts, row, color, name }: { parts: Oriented[]; row: Playe
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
           <span className="truncate">{name}</span>
         </span>
-        <span className="num text-faint">{row.minutes ? `${Math.round(row.minutes)} min` : "—"}</span>
+        <span className="num text-faint" title="Tiempo visto en cuadro; los minutos jugados van en la cifra «Minutos jugados»">
+          {row.minutes ? `${Math.round(row.minutes)} min visto` : "—"}
+        </span>
       </figcaption>
       {h.total === 0 ? (
         <p className="text-xs text-faint">Sin posiciones con su nombre.</p>

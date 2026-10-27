@@ -26,6 +26,16 @@ const READABLE = [/^matches$/, /^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.js
 const BACKUP = /^matches\/[\w.-]+\/respaldo\/respaldo_\d{4}-\d{2}-\d{2}_\d{4}\.json$/;
 const WRITABLE = [
   /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors|labels)_[\w.-]+\.json$/,
+  // Hand samples of the ball for training (Playground > Balón, lib/playground.ts); read by sportsan.tracking.ball train.
+  /^matches\/[\w.-]+\/tracking\/ball_samples_v\d+\.json$/,
+  // Possession check (Playground > Posesión, lib/possession.ts): the interval table of a video and the analyst's verdicts on it.
+  /^matches\/[\w.-]+\/possession_v\d+\.csv$/,
+  /^matches\/[\w.-]+\/possession_review_v\d+\.json$/,
+  // Check of the passes read from the tracking (Playground > Pases, lib/playgroundPasses.ts): the analyst's verdicts on them.
+  /^matches\/[\w.-]+\/passes_review_v\d+\.json$/,
+  // Event detections of a video and the analyst's verdicts on them (Playground > Eventos, lib/eventDetect.ts, lib/eventReview.ts).
+  /^matches\/[\w.-]+\/events_auto_v\d+\.json$/,
+  /^matches\/[\w.-]+\/events_review_v\d+\.json$/,
   /^matches\/[\w.-]+\/(match\.yaml|segments\.csv)$/,
   // Anchors named in the anchors mode of the table (lib/anchors.ts); suggest_ and links_ are written by Python.
   /^matches\/[\w.-]+\/tracking\/auto\/(ejemplo\/)?anchors_[\w.-]+\.json$/,

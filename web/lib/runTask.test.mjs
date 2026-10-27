@@ -124,3 +124,11 @@ test("ball: lista blanca, argumentos, force y progreso propios", () => {
   assert.equal(runStatus({ state: "running", started: 0, pid: 1 }, log, "", true).phase, "cuadros");
   assert.match(errorMessage("SystemExit: No hay modelo en x", 1), /modelo de balón/);
 });
+
+test("train: entrena con las muestras del video (Playground)", () => {
+  const ok = validateRunArgs({ task: "train", match: "2026_09_25_tec_ccm_vs_anahuac", part: "v2" });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(runArgv(ok.args), ["-m", "sportsan.tracking.ball", "train", "--match", "2026_09_25_tec_ccm_vs_anahuac", "--samples", "matches/2026_09_25_tec_ccm_vs_anahuac/tracking/ball_samples_v2.json"]);
+  assert.equal(validateRunArgs({ task: "train", match: "a", part: "v2;rm" }).ok, false);
+  assert.match(errorMessage("error: unrecognized arguments: --samples x", 2), /--samples/);
+});

@@ -47,7 +47,10 @@ test("la frase sale del resumen del informe: solo la primera oración", () => {
 
 test("posesión: reparto del tiempo con dueño, primero y en porcentaje", () => {
   const s = matchSummary({ ...match(), possession: { own: 650, opp: 350, followed_s: 1200 } }, []);
-  assert.deepEqual(s.comparisons[0], { label: "Posesión", own: 65, opp: 35, unit: "%" });
+  // Without a stored coverage the figure says so; with it, the coverage goes with the figure.
+  assert.deepEqual(s.comparisons[0], { label: "Posesión", own: 65, opp: 35, unit: "%", note: "cobertura sin calcular: abre el Informe" });
+  const c = matchSummary({ ...match(), possession: { own: 650, opp: 350, followed_s: 1200, coverage: 0.82, contact_coverage: 0.6 } }, []);
+  assert.match(c.comparisons[0].note, /82 % del tiempo vivo/);
   assert.equal(matchSummary({ ...match(), possession: { own: 0, opp: 0, followed_s: 0 } }, []).comparisons.length, 0);
 });
 

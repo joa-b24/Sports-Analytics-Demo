@@ -5,7 +5,8 @@
 
 // "refine": sportsan.tracking.refine (feet and smoothed calibration of the part, in place with a backup .pre_refine.json).
 // "ball": sportsan.tracking.ball run (the ball tracker on one part; writes ball_auto_<part>.json, never accepted by itself).
-export type RunTask = "suggest" | "fill" | "refine" | "ball";
+// "train": sportsan.tracking.ball train with the hand samples of a video (Playground > Balón); `part` is the video id (v2).
+export type RunTask = "suggest" | "fill" | "refine" | "ball" | "train";
 export interface RunArgs {
   task: RunTask;
   match: string;
@@ -43,7 +44,7 @@ export const PER_MIN = ["1", "2", "3", "4", "5", "hybrid"] as const;
 export function validateRunArgs(body: unknown): { ok: true; args: RunArgs } | { ok: false; error: string } {
   if (!body || typeof body !== "object") return { ok: false, error: "Petición vacía." };
   const b = body as Record<string, unknown>;
-  if (b.task !== "suggest" && b.task !== "fill" && b.task !== "refine" && b.task !== "ball") return { ok: false, error: "Tarea desconocida." };
+  if (b.task !== "suggest" && b.task !== "fill" && b.task !== "refine" && b.task !== "ball" && b.task !== "train") return { ok: false, error: "Tarea desconocida." };
   if (typeof b.match !== "string" || !SAFE.test(b.match)) return { ok: false, error: "Partido no válido." };
   if (typeof b.part !== "string" || !SAFE.test(b.part)) return { ok: false, error: "Parte no válida." };
   let perMin: string | undefined;
@@ -70,6 +71,7 @@ export function validateRunArgs(body: unknown): { ok: true; args: RunArgs } | { 
 }
 
 export function runArgv(a: RunArgs): string[] {
+  if (a.task === "train") return ["-m", "sportsan.tracking.ball", "train", "--match", a.match, "--samples", `matches/${a.match}/tracking/ball_samples_${a.part}.json`];
   if (a.task === "ball") {
     const argv = ["-m", "sportsan.tracking.ball", "run", "--match", a.match, "--part", `tracks_${a.part}.json`];
     if (a.accept !== undefined) argv.push("--accept", String(a.accept));
@@ -109,6 +111,7 @@ export function parseProgress(text: string): { phase: string; done: number; tota
 export function errorMessage(output: string, code: number | null | undefined): string {
   if (/ModuleNotFoundError|No module named/.test(output)) return "Falta instalar algo de Python en .venv (pip install -e \".[dev]\").";
   if (/FileNotFoundError|No such file/.test(output)) return "Falta un archivo de la parte (¿tracks de esta parte o sugerencias/anclas?).";
+  if (/unrecognized arguments:.*--samples/.test(output)) return "El entrenamiento con muestras (--samples) aún no está disponible en sportsan.tracking.ball.";
   if (/No hay modelo/.test(output)) return "No hay modelo de balón entrenado (weights/ball_model.pt).";
   if (/falta la medida de la sede/.test(output)) return "Falta la medida de la sede en match.yaml.";
   if (/MemoryError/.test(output)) return "Python se quedó sin memoria.";
@@ -116,7 +119,7 @@ export function errorMessage(output: string, code: number | null | undefined): s
   return `Python terminó con error${code != null ? ` (código ${code})` : ""}.`;
 }
 
-const PHASES: Record<string, string> = { lectura: "Leyendo", pies: "Pies", trozos: "Trozos", candidatos: "Candidatos", relleno: "Rellenando", "calibración": "Calibración", posiciones: "Posiciones", escritura: "Guardando", listo: "Listo", cuadros: "Buscando el balón", "decisión": "Decidiendo" };
+const PHASES: Record<string, string> = { lectura: "Leyendo", pies: "Pies", trozos: "Trozos", candidatos: "Candidatos", relleno: "Rellenando", "calibración": "Calibración", posiciones: "Posiciones", escritura: "Guardando", listo: "Listo", cuadros: "Buscando el balón", muestras: "Leyendo muestras", entrenamiento: "Entrenando", validación: "Validando", "decisión": "Decidiendo" };
 export const phaseName = (p: string) => PHASES[p] ?? p;
 
 // Status of a run from its record, its progress log and its output. `alive`: whether the process is still running
@@ -137,7 +140,7 @@ export function runStatus(record: RunRecord | null, progress: string, output: st
 export function resettableFile(dir: "auto" | "revision", part: string, name: string): boolean {
   if (!SAFE.test(part) || name.includes("/") || name.includes("\\")) return false;
   const p = part.replace(/[-]/g, "\-");
-  const re = dir === "auto" ? new RegExp(`^(anchors|links)_${p}(_[A-Za-z0-9]+)?\.json$`) : new RegExp(`^(progreso|run)_fill_${p}(_exp)?\.(log|json)$`);
+  const re = dir === "auto" ? new RegExp(`^(anchors|links)_${p}(_[A-Za-z0-9]+)*\.json$`) : new RegExp(`^(progreso|run)_fill_${p}(_exp)?\.(log|json)$`);
   return re.test(name);
 }
 export const resetDirs = (match: string) => ({ auto: `matches/${match}/tracking/auto`, revision: `matches/${match}/tracking/revision` });

@@ -2,30 +2,48 @@ import { PITCH } from "./types.ts";
 import { metersPerUnit, orient, type Oriented } from "./positions.ts";
 
 // Physical load and team shape read from the corrected tracking (tracks_fixed), by named player. Pure functions.
-// What the camera does not see is not measured: a gap of more than MAX_GAP_S in a player's track breaks it, and that
-// time counts neither distance nor speed.
+//
+// Filled positions (`source: "interpolated"`) are an acceptable approximation (decision of the analyst, 2026-10-25): they
+// count in distance, speed and sprints, however long the fill is, and the row says how much of the time and distance
+// comes from them (`fill_time_pct`, `fill_dist_pct`). Extrapolated positions (holding a player still outside what was
+// observed) would be invented data: the pipeline does not produce them. What has no position at all (a gap of more than
+// MAX_GAP_S between two samples) is not measured: it breaks the series and counts neither distance nor speed.
 
 export const MAX_GAP_S = 1;
 // Speed is measured over about one second (frame-to-frame jitter would inflate it).
 export const SPEED_WINDOW_S = 1;
-// Above this the track is wrong (a jump between two people), not a player.
+// A step faster than this is a jump between two people, not a player: it adds no distance and poisons every window that
+// contains it, which is then dropped whole (before 2026-10-25 only the step itself was dropped, and the neighbour
+// windows kept the jump: top speeds of 35 km/h).
 export const MAX_KMH = 36;
-// High-speed running and sprint thresholds (km/h), the usual ones in women's football analysis.
+// A window needs most of its length: two samples 0.1 s apart next to a gap are noise, not a speed.
+export const MIN_WINDOW_FRAC = 0.8;
+// Physiological ceiling for a speed over one second. The best women's sprinters measured with GPS peak at about
+// 32-33 km/h, and a university team is below that. A window above it is a track error: it does not count for the top
+// speed, HSR or sprints (its step still adds distance if the step itself is below MAX_KMH).
+export const PLAUSIBLE_KMH = 33;
+// High-speed running (HSR) and sprint thresholds (km/h), the usual ones in women's football analysis.
 export const HSR_KMH = 18;
 export const SPRINT_KMH = 22;
 export const SPRINT_MIN_S = 1;
+// A sprint is not cut by a stretch with no valid speed (a gap, a jump, a short window) of up to this long; a step that
+// is valid and below SPRINT_KMH does end it.
+export const SPRINT_GAP_S = 0.5;
 
 export interface PhysicalRow {
   name: string;
-  seconds: number; // time measured
+  seconds: number; // time seen (measured or filled)
   distance_m: number;
-  per_min_m: number | null; // distance per minute measured
+  per_min_m: number | null; // distance per minute seen
   top_kmh: number | null;
   hsr_m: number; // distance above HSR_KMH
   sprints: number; // runs above SPRINT_KMH for at least SPRINT_MIN_S
+  // Share (0-100) of the time and of the distance that comes from filled positions (a step with a filled end).
+  fill_time_pct: number;
+  fill_dist_pct: number;
 }
 
-type Sample = { t: number; x: number; y: number };
+type Sample = { t: number; x: number; y: number; fill: boolean };
 
 // One series per named player and part, in real meters, with the time in seconds.
 function series(parts: Oriented[], team: "own" | "opp"): Map<string, Sample[][]> {
@@ -38,11 +56,14 @@ function series(parts: Oriented[], team: "own" | "opp"): Map<string, Sample[][]>
     for (const fr of f.frames)
       for (const q of fr.positions) {
         const n = name.get(q.id);
-        if (!n || q.source === "interpolated") continue;
+        if (!n) continue;
         const list = byName.get(n) ?? [];
-        const s = { t: fr.frame / f.fps, x: q.x * mx, y: q.y * my };
-        // Two boxes with the same name in one frame: keep the first.
-        if (list.length && list[list.length - 1].t === s.t) continue;
+        const s = { t: fr.frame / f.fps, x: q.x * mx, y: q.y * my, fill: q.source === "interpolated" };
+        // Two boxes with the same name in one frame: keep the first (a measured one before a filled one).
+        if (list.length && list[list.length - 1].t === s.t) {
+          if (list[list.length - 1].fill && !s.fill) list[list.length - 1] = s;
+          continue;
+        }
         list.push(s);
         byName.set(n, list);
       }
@@ -55,41 +76,64 @@ export function physical(parts: Oriented[], team: "own" | "opp"): PhysicalRow[] 
   const rows: PhysicalRow[] = [];
   for (const [name, runs] of series(parts, team)) {
     let seconds = 0;
+    let fillSeconds = 0;
     let distance = 0;
+    let fillDistance = 0;
     let hsr = 0;
     let top: number | null = null;
     let sprints = 0;
     for (const s of runs) {
-      let sprintStart: number | null = null;
-      for (let i = 1; i < s.length; i++) {
+      const n = s.length;
+      // Speed of every step; null where the step is not valid (a gap or a jump).
+      const stepKmh: (number | null)[] = [null];
+      for (let i = 1; i < n; i++) {
         const dt = s[i].t - s[i - 1].t;
-        if (dt <= 0 || dt > MAX_GAP_S) {
-          sprintStart = null;
-          continue;
+        if (dt <= 0 || dt > MAX_GAP_S) stepKmh.push(null);
+        else {
+          const v = (Math.hypot(s[i].x - s[i - 1].x, s[i].y - s[i - 1].y) / dt) * 3.6;
+          stepKmh.push(v > MAX_KMH ? null : v);
         }
+      }
+      // A sprint run: from its first fast step to its last; `lastFast` is the end time of the last fast step.
+      let sprintStart: number | null = null;
+      let lastFast = 0;
+      const closeSprint = () => {
+        if (sprintStart !== null && lastFast - sprintStart >= SPRINT_MIN_S) sprints++;
+        sprintStart = null;
+      };
+      for (let i = 1; i < n; i++) {
+        const dt = s[i].t - s[i - 1].t;
+        if (sprintStart !== null && s[i - 1].t - lastFast > SPRINT_GAP_S) closeSprint();
+        if (stepKmh[i] === null) continue;
         const step = Math.hypot(s[i].x - s[i - 1].x, s[i].y - s[i - 1].y);
-        if ((step / dt) * 3.6 > MAX_KMH) continue;
+        const filled = s[i].fill || s[i - 1].fill;
         seconds += dt;
         distance += step;
+        if (filled) {
+          fillSeconds += dt;
+          fillDistance += step;
+        }
         // Speed over a window centred on this step (half a window each side, without crossing a gap).
         let a = i - 1;
         let b = i;
         while (a > 0 && s[i - 1].t - s[a - 1].t <= SPEED_WINDOW_S / 2 && s[a].t - s[a - 1].t <= MAX_GAP_S) a--;
-        while (b < s.length - 1 && s[b + 1].t - s[i].t <= SPEED_WINDOW_S / 2 && s[b + 1].t - s[b].t <= MAX_GAP_S) b++;
+        while (b < n - 1 && s[b + 1].t - s[i].t <= SPEED_WINDOW_S / 2 && s[b + 1].t - s[b].t <= MAX_GAP_S) b++;
         const span = s[b].t - s[a].t;
-        const kmh = span >= SPEED_WINDOW_S * 0.5 ? (Math.hypot(s[b].x - s[a].x, s[b].y - s[a].y) / span) * 3.6 : null;
-        if (kmh !== null && kmh <= MAX_KMH) {
-          top = top === null ? kmh : Math.max(top, kmh);
-          if (kmh >= HSR_KMH) hsr += step;
-          if (kmh >= SPRINT_KMH) {
-            if (sprintStart === null) sprintStart = s[i - 1].t;
-          } else {
-            if (sprintStart !== null && s[i - 1].t - sprintStart >= SPRINT_MIN_S) sprints++;
-            sprintStart = null;
-          }
+        let kmh: number | null = null;
+        if (span >= SPEED_WINDOW_S * MIN_WINDOW_FRAC) {
+          let clean = true;
+          for (let k = a + 1; k <= b; k++) if (stepKmh[k] === null) clean = false;
+          if (clean) kmh = (Math.hypot(s[b].x - s[a].x, s[b].y - s[a].y) / span) * 3.6;
         }
+        if (kmh === null || kmh > PLAUSIBLE_KMH) continue;
+        top = top === null ? kmh : Math.max(top, kmh);
+        if (kmh >= HSR_KMH) hsr += step;
+        if (kmh >= SPRINT_KMH) {
+          if (sprintStart === null) sprintStart = s[i - 1].t;
+          lastFast = s[i].t;
+        } else closeSprint();
       }
-      if (sprintStart !== null && s[s.length - 1].t - sprintStart >= SPRINT_MIN_S) sprints++;
+      closeSprint();
     }
     if (seconds === 0) continue;
     rows.push({
@@ -100,6 +144,8 @@ export function physical(parts: Oriented[], team: "own" | "opp"): PhysicalRow[] 
       top_kmh: top === null ? null : Math.round(top * 10) / 10,
       hsr_m: Math.round(hsr),
       sprints,
+      fill_time_pct: Math.round((1000 * fillSeconds) / seconds) / 10,
+      fill_dist_pct: distance > 0 ? Math.round((1000 * fillDistance) / distance) / 10 : 0,
     });
   }
   return rows.sort((a, b) => b.distance_m - a.distance_m);

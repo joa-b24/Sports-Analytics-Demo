@@ -66,6 +66,12 @@ export function openGaps(points: TrackPoint[], gaps: [number, number][], o: Smoo
   });
 }
 
+// Whether a hole between two known positions would be filled by fillGaps: at most maxFillS long and walkable at maxSpeedMs
+// or less. The same rule, for the tools that take frames out and must not leave a hole the export cannot fill.
+export function canBridge(meters: number, seconds: number, o: Pick<SmoothOptions, "maxFillS" | "maxSpeedMs"> = SMOOTH_DEFAULTS): boolean {
+  return seconds > 0 && seconds <= o.maxFillS && meters / seconds <= o.maxSpeedMs;
+}
+
 // One point per frame (a hand-marked one wins over a detection), in time order.
 function dedupe(points: TrackPoint[]): TrackPoint[] {
   const byFrame = new Map<number, TrackPoint>();

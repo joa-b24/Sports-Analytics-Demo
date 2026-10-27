@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { BinChart, CompareBars, EventTimeline, PartsDuo, RateDuo, ShotMap, StatTile, ZoneMap, type PartsRow } from "@/components/charts";
-import { PassStretchesCard } from "@/components/match/PassStretches";
+import { GoalsList } from "@/components/match/GoalsList";
+import { useMomentPlayer } from "@/components/match/MomentPlayer";
 import { PassesCards } from "@/components/match/PassesCards";
 import { PlayersCompare } from "@/components/match/PlayersCompare";
 import { PositionsCards } from "@/components/match/PositionsCards";
@@ -28,6 +29,7 @@ import {
   type Lanes,
   type Tally,
 } from "@/lib/analysis";
+import { momentOfEvent } from "@/lib/moments";
 import { segmentAt, totalSeconds, type Segment } from "@/lib/segments";
 import { countByType, shotsOf, zoneCounts } from "@/lib/stats";
 import { EVENT_DETAILS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
@@ -58,6 +60,9 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const [binMin, setBinMin] = useState<5 | 10>(5);
   const [binMeasure, setBinMeasure] = useState<BinMeasure>("shots");
   const [counterTeam, setCounterTeam] = useState<Side>("own");
+  const shotsPlayer = useMomentPlayer(match);
+  // Analysis works on a joined axis: a moment is looked up by event id among the events with their own video times.
+  const ownTimes = useMemo(() => (videoEvents ? new Map(videoEvents.map((e) => [e.event_id, e])) : null), [videoEvents]);
 
   const evs = period === 0 ? events : events.filter((e) => e.period === period);
   const a = countByType(evs, "own");
@@ -81,10 +86,13 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         <Section title="Rendimiento individual" note="hasta 4 jugadoras, propias y rivales">
           <PlayersCompare match={match} events={[]} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
         </Section>
-        <Section title="Pases y jugadoras" note="desde el tracking">
-          <PassStretchesCard match={match} />
+        <Section title="Pases y jugadoras" note="del tracking y a mano">
+          <PassesCards match={match} events={[]} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
         </Section>
         <Section title="Con posiciones medidas" note="desde el tracking">
+          <div className="mb-4">
+            <TeamShapeCard match={match} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
+          </div>
           <PositionsCards match={match} videoIds={videoIds} events={[]} />
         </Section>
       </div>
@@ -185,7 +193,20 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       <Section title="Ataque organizado">
         <div className="grid gap-5 xl:grid-cols-2">
           <Card title="¿Desde dónde tiran?" note="A1">
-            <ShotMap events={evs} aLabel={A} bLabel={B} />
+            <ShotMap
+              events={evs}
+              aLabel={A}
+              bLabel={B}
+              onPick={(e) => shotsPlayer.show(momentOfEvent(e, ownTimes, `${EVENT_LABELS[e.type]} de ${name(e.team === "own" ? "own" : "opp")}${e.player_id ? ` · ${e.player_id}` : ""}`))}
+            />
+            <GoalsList
+              goals={evs.filter((e) => e.type === "goal")}
+              aLabel={A}
+              bLabel={B}
+              timeLabel={timeLabel}
+              onPick={(e) => shotsPlayer.show(momentOfEvent(e, ownTimes, `Gol de ${name(e.team === "own" ? "own" : "opp")}${e.player_id ? ` · ${e.player_id}` : ""}`))}
+            />
+            {shotsPlayer.panel}
           </Card>
           <div className="space-y-5">
             <Card title="¿Cuántos tiros van a puerta?" note="A1" delay={80}>
@@ -335,16 +356,13 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         <PlayersCompare match={match} events={evs} videoIds={videoIds} segmentsByVideo={segmentsByVideo} periodNote={period !== 0} />
       </Section>
 
-      <Section title="Pases y jugadoras" note="pases desde el tracking; eventos por jugadora">
-        <div className="space-y-4">
-          <PassStretchesCard match={match} />
-          <PassesCards match={match} events={videoEvents ?? events} />
-        </div>
+      <Section title="Pases y jugadoras" note="pases del tracking y a mano; eventos por jugadora">
+        <PassesCards match={match} events={videoEvents ?? events} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
       </Section>
 
       <Section title="Con posiciones medidas" note="desde el tracking">
         <div className="mb-4">
-          <TeamShapeCard match={match} videoIds={videoIds} />
+          <TeamShapeCard match={match} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
         </div>
         <PositionsCards match={match} videoIds={videoIds} events={videoEvents ?? events} />
       </Section>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { FigureRow, StatList } from "@/components/match/ReportExtra";
 import { COLORS, Pitch } from "@/components/Pitch";
+import { possessionCover } from "@/lib/playgroundHealth";
 import type { BallSummary, NetworkData, ReportData, TouchRow } from "@/lib/report";
 import { LANES_5, THIRDS_3 } from "@/lib/stats";
 
@@ -26,11 +27,20 @@ export function BallBlock({ data }: { data: ReportData }) {
   const name = (s: Side) => (s === "own" ? A : B);
   const assigned = b.possession.own + b.possession.opp;
   const total = assigned + b.possession.unassigned;
+  // The possession never goes without its coverage; a low coverage or little measured contact warns (no global threshold: each
+  // figure says what it rests on).
+  const cov = possessionCover(b.possession_detail);
   return (
     <div className="space-y-6">
       <div className="break-inside-avoid">
         <div className="text-sm font-medium text-ink">Posesión</div>
         <p className="text-xs text-faint">Leída del balón seguido, {coverageText(b)}.</p>
+        <p className="text-xs text-ink-2">
+          Posesión {cov.text}.
+        </p>
+        {cov.warning && <p className="text-xs text-warn">{cov.warning}</p>}
+        {b.possession_warning && <p className="text-xs text-warn">{b.possession_warning}</p>}
+        <p className="text-[11px] text-faint print:hidden">{b.possession_params}. Se cambian en Configuración del partido › Detalles técnicos.</p>
         <div className="mt-3 flex items-baseline justify-between text-sm">
           <span>
             <span className="num text-3xl" style={{ color: COLORS.own }}>
@@ -51,7 +61,7 @@ export function BallBlock({ data }: { data: ReportData }) {
           <span className="h-full flex-1 rounded-full" style={{ background: COLORS.opp }} />
         </div>
         <p className="mt-1 text-xs text-faint">
-          Sobre el tiempo con dueño. Sin asignar (gris, disputado o sin toque en 5 s): {min(b.possession.unassigned)}, {pct(b.possession.unassigned, total)} del tiempo seguido.
+          Sobre el tiempo con dueño. Sin asignar (gris: disputado, suelto o sin toque medido): {min(b.possession.unassigned)}, {pct(b.possession.unassigned, total)} del tiempo seguido.
         </p>
       </div>
 
@@ -73,6 +83,7 @@ export function BallBlock({ data }: { data: ReportData }) {
                 <tr key={s} className="border-b border-line-soft">
                   <td className="py-1" style={{ color: sideColor(s) }}>
                     {name(s)}
+                    {p.approx > 0 && <span className="ml-1.5 text-[11px] text-faint" title="Sin nombres en la mesa de corrección: se cuenta a nivel de equipo y puede mezclar cambios de fragmento">aprox.</span>}
                   </td>
                   <td className="num py-1 text-right text-ink">{p.completed}</td>
                   <td className="num py-1 text-right text-ink">{p.cut}</td>

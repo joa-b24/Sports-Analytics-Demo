@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BinChart } from "@/components/charts";
-import { Command } from "@/components/Command";
+import { Locked } from "@/components/Locked";
 import { Card, input } from "@/components/Shell";
+import { blockShape, MIN_VISIBLE, type ShapeMeasure } from "@/lib/blockShape";
+import { useFixedParts } from "@/lib/fixed";
 import { readLocal } from "@/lib/local";
+import type { Segment } from "@/lib/segments";
 import type { Match } from "@/lib/types";
 
-// Shape of both teams over the match, from the tracking (sportsan.metrics.report writes team_metrics_<video>.json in
-// the tracking folder of the match). Only the team of each person is needed, not who she is.
+// Shape of both teams over the match. It is calculated here from the positions of the correction table, with no step
+// outside the app (lib/blockShape.ts, same definitions as sportsan.metrics.team_blocks). If there are no positions
+// to read, the file that `python -m sportsan.metrics.report` writes (team_metrics_<video>.json) is used when it
+// exists; with neither, the card says what is missing. Only the team of each person is needed, not who she is.
 
-type Measure = "line_height" | "block_height" | "width" | "length";
-const MEASURES: Record<Measure, string> = {
+const MEASURES: Record<ShapeMeasure, string> = {
   line_height: "Altura de la línea (m desde su portería)",
   block_height: "Altura del bloque (m desde su portería)",
   width: "Ancho (m)",
@@ -37,92 +41,122 @@ interface TeamMetrics {
   teams: Record<"own" | "opp", { frames: number; valid_frames: number; bins: Record<string, Bin[]> }>;
 }
 
-export function TeamShapeCard({ match, videoIds }: { match: Match; videoIds: string[] }) {
-  const [files, setFiles] = useState<TeamMetrics[] | null>(null);
+const r1 = (v: number | null | undefined) => (v == null ? 0 : Math.round(v * 10) / 10);
+
+export function TeamShapeCard({ match, videoIds, segmentsByVideo = {} }: { match: Match; videoIds: string[]; segmentsByVideo?: Record<string, Segment[]> }) {
   const [binMin, setBinMin] = useState<5 | 10>(5);
-  const [measure, setMeasure] = useState<Measure>("line_height");
+  const [measure, setMeasure] = useState<ShapeMeasure>("line_height");
   const folder = match.folder;
   const key = videoIds.join(",");
+  const fixed = useFixedParts(folder, videoIds);
+  const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
+  const shape = useMemo(() => (parts.length ? blockShape(parts, segmentsByVideo, videoIds, binMin) : null), [parts, segmentsByVideo, videoIds, binMin]);
+
+  // Fallback: the file written by Python, only read when the app has no positions of its own to calculate from.
+  const [files, setFiles] = useState<TeamMetrics[] | null>(null);
+  const needFile = !!folder && !!fixed && parts.length === 0;
   useEffect(() => {
-    if (!folder) return;
+    if (!folder || !needFile) return;
     let live = true;
     void Promise.all(key.split(",").map((v) => readLocal(`matches/${folder}/tracking/team_metrics_${v}.json`))).then((texts) => {
       if (!live) return;
-      const parsed = texts.flatMap((t) => {
-        try {
-          return t ? [JSON.parse(t) as TeamMetrics] : [];
-        } catch {
-          return [];
-        }
-      });
-      setFiles(parsed);
+      setFiles(
+        texts.flatMap((t) => {
+          try {
+            return t ? [JSON.parse(t) as TeamMetrics] : [];
+          } catch {
+            return [];
+          }
+        }),
+      );
     });
     return () => {
       live = false;
     };
-  }, [folder, key]);
+  }, [folder, key, needFile]);
 
-  const command = `python -m sportsan.metrics.report --match ${folder ?? "<carpeta>"} --own-attacks right`;
-  if (!folder || !files || files.length === 0) {
+  const header = (
+    <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="seg">
+        {([5, 10] as const).map((m) => (
+          <button key={m} type="button" aria-pressed={binMin === m} onClick={() => setBinMin(m)} className="seg-opt">
+            Cada {m} min
+          </button>
+        ))}
+      </div>
+      <select className={input} value={measure} aria-label="Medida" onChange={(e) => setMeasure(e.target.value as ShapeMeasure)}>
+        {Object.entries(MEASURES).map(([k, v]) => (
+          <option key={k} value={k}>
+            {v}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+
+  if (shape && shape.bins.length > 0) {
+    const unit = shape.clock === "play" ? "min de juego" : "min de video";
+    const rows = shape.bins.map((b) => ({ label: `${b.from_min}–${b.to_min}`, a: r1(b.own[measure]), b: r1(b.opp[measure]) }));
     return (
-      <Card title="Altura y anchura del bloque" note="C4 · desde el tracking">
-        <p className="text-sm text-pretty text-muted">
-          {folder
-            ? "Todavía no hay métricas de equipo para este partido. Después de procesar el tracking, en la terminal (desde la carpeta del repo):"
-            : "Este partido no tiene carpeta: se pone en «editar datos». Después, con el tracking procesado:"}
-        </p>
-        <Command className="mt-2">{command}</Command>
-        <p className="mt-2 text-[11px] text-faint">
-          --own-attacks dice hacia dónde ataca el equipo analizado en ese video (right = hacia la derecha de la cancha de la calibración). Sin él no
-          hay alturas, solo ancho y largo.
+      <Card title="Altura y anchura del bloque" note={`C4 · calculado en la app · ${unit}`}>
+        {header}
+        <BinChart key={`${binMin}-${measure}-${rows.length}`} bins={rows} aLabel={match.focus_team} bLabel={match.other_team} />
+        <p className="mt-3 text-xs text-pretty text-faint">
+          Mediana de cada tramo de {binMin} {unit}, con las jugadoras de campo que salen en cuadro (la portera se quita si va sola atrás). Un
+          cuadro cuenta si se ven al menos {MIN_VISIBLE} de un equipo: para {match.focus_team} contaron {shape.valid.own} de {shape.frames.own}{" "}
+          cuadros. Lo que no sale en cuadro no se mide, así que describe sobre todo la zona de la jugada. Un 0 es un tramo sin cuadros suficientes,
+          no una altura medida.
+          {shape.clock === "video" && " Sin tramos de juego marcados, los minutos son del video."} Siempre con {match.focus_team} atacando hacia la
+          derecha; la altura se mide desde la portería de cada equipo. Aún no distingue quién tiene el balón.
         </p>
       </Card>
     );
   }
 
-  const label = (f: TeamMetrics, b: Bin) => `${files.length > 1 ? `${f.video_id} ` : ""}${b.from_min}–${b.to_min}`;
-  const rows = files.flatMap((f) => {
-    const own = f.teams.own.bins[String(binMin)] ?? [];
-    const opp = f.teams.opp.bins[String(binMin)] ?? [];
-    return own.map((b) => {
-      const o = opp.find((x) => x.bin === b.bin);
-      const r = (v: number | null | undefined) => (v == null ? 0 : Math.round(v * 10) / 10);
-      return { label: label(f, b), a: r(b[measure]), b: r(o?.[measure]), share: Math.min(b.valid_share, o?.valid_share ?? 0) };
+  if (files && files.length > 0) {
+    const rows = files.flatMap((f) => {
+      const own = f.teams.own.bins[String(binMin)] ?? [];
+      const opp = f.teams.opp.bins[String(binMin)] ?? [];
+      return own.map((b) => ({ label: `${files.length > 1 ? `${f.video_id} ` : ""}${b.from_min}–${b.to_min}`, a: r1(b[measure]), b: r1(opp.find((x) => x.bin === b.bin)?.[measure]) }));
     });
-  });
-  const noHeights = files.some((f) => !f.own_attacks) && (measure === "line_height" || measure === "block_height");
-  const valid = files.reduce((n, f) => n + f.teams.own.valid_frames, 0);
-  const total = files.reduce((n, f) => n + f.teams.own.frames, 0);
+    const noHeights = files.some((f) => !f.own_attacks) && (measure === "line_height" || measure === "block_height");
+    return (
+      <Card title="Altura y anchura del bloque" note={`C4 · archivo ${files.map((f) => `${f.video_id}: ${f.parts} partes`).join(" · ")}`}>
+        {header}
+        {noHeights ? (
+          <p className="text-sm text-warn">Este archivo no sabe hacia dónde ataca el equipo, así que no tiene alturas, solo ancho y largo.</p>
+        ) : (
+          <BinChart key={`${binMin}-${measure}-f`} bins={rows} aLabel={match.focus_team} bLabel={match.other_team} />
+        )}
+        <p className="mt-3 text-xs text-pretty text-faint">
+          Leído del archivo de métricas del tracking de la carpeta del partido, porque la app no tiene posiciones para calcularlo. Un 0 es un tramo
+          sin cuadros suficientes.
+        </p>
+      </Card>
+    );
+  }
 
+  const why = !folder
+    ? "Este partido no tiene carpeta (se pone en «editar datos»), así que no hay tracking que leer."
+    : !fixed
+      ? "Buscando las partes procesadas en la carpeta del partido…"
+      : fixed.unoriented.length > 0
+        ? `Hay ${fixed.unoriented.length} parte(s) con posiciones, pero no se sabe hacia dónde ataca cada equipo, y sin eso no hay alturas.`
+        : parts.length > 0
+          ? "Las partes procesadas no tienen cuadros con suficientes jugadoras a la vista en los tramos de juego."
+          : "Todavía no hay partes procesadas de este partido.";
   return (
-    <Card title="Altura y anchura del bloque" note={`C4 · ${files.map((f) => `${f.video_id}: ${f.parts} partes`).join(" · ")} · ${files[0].source}`}>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="seg">
-          {([5, 10] as const).map((m) => (
-            <button key={m} type="button" aria-pressed={binMin === m} onClick={() => setBinMin(m)} className="seg-opt">
-              Cada {m} min
-            </button>
-          ))}
-        </div>
-        <select className={input} value={measure} aria-label="Medida" onChange={(e) => setMeasure(e.target.value as Measure)}>
-          {Object.entries(MEASURES).map(([k, v]) => (
-            <option key={k} value={k}>
-              {v}
-            </option>
-          ))}
-        </select>
-      </div>
-      {noHeights ? (
-        <p className="text-sm text-warn">Para las alturas hace falta saber hacia dónde ataca el equipo: vuelve a correr el comando con --own-attacks.</p>
-      ) : (
-        <BinChart key={`${binMin}-${measure}`} bins={rows.map(({ label: l, a, b }) => ({ label: l, a, b }))} aLabel={match.focus_team} bLabel={match.other_team} />
-      )}
-      <p className="mt-3 text-xs text-pretty text-faint">
-        Mediana de cada tramo de minutos de juego, con las jugadoras de campo que salen en cuadro (la portera se quita si va sola atrás). Un cuadro
-        cuenta si se ven al menos {files[0].min_visible} de un equipo: para {match.focus_team} contaron {valid} de {total} cuadros. Lo que no sale
-        en cuadro no se mide, así que describe sobre todo la zona de la jugada. Un 0 es un tramo sin cuadros suficientes. Aún no distingue quién
-        tiene el balón: cuando se cruce con los eventos, se podrá ver el bloque defendiendo.
-      </p>
-    </Card>
+    <Locked
+      reason="tracking"
+      title="Altura y anchura del bloque"
+      why={why}
+      need={
+        !folder
+          ? "poner la carpeta del partido y procesar el tracking."
+          : fixed && fixed.unoriented.length > 0
+            ? "indicar hacia dónde ataca cada equipo en la vista Balón de la mesa de corrección."
+            : "procesar el tracking del partido (pestaña Tracking); la app calcula la forma sola al leerlo."
+      }
+    />
   );
 }

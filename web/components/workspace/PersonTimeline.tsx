@@ -272,14 +272,18 @@ export function PersonTimeline({
         ))}
         {offCamera
           .filter(([a, b]) => b >= v0 && a <= v1)
-          .map(([a, b]) => (
-            <span
-              key={`o${a}`}
-              className="absolute top-4 bottom-4 rounded-sm bg-faint/40"
-              style={{ left: `${pct(a + stride)}%`, width: `max(2px, ${pct(b) - pct(a + stride)}%)` }}
-              title={`Fuera de cuadro ${((b - a) / fps).toFixed(1)} s: se rellena al guardar`}
-            />
-          ))}
+          .map(([a, b]) => {
+            // 2 to 7 s out of the camera's reach: green, nothing to fill by hand.
+            const green = (b - a) / fps >= 2 && (b - a) / fps <= 7;
+            return (
+              <span
+                key={`o${a}`}
+                className={`absolute top-4 bottom-4 rounded-sm ${green ? "bg-ok/50" : "bg-faint/40"}`}
+                style={{ left: `${pct(a + stride)}%`, width: `max(2px, ${pct(b) - pct(a + stride)}%)` }}
+                title={`Fuera de cuadro ${((b - a) / fps).toFixed(1)} s: se rellena al guardar${green ? " (verde: de 2 a 7 s fuera de la cámara, no hace falta rellenarlo a mano)" : ""}`}
+              />
+            );
+          })}
         {open
           .filter(([a, b]) => b >= v0 && a <= v1)
           .map(([a, b]) => (

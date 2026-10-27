@@ -188,7 +188,18 @@ export interface Match {
   report: Report;
   // Possession read from the followed ball, in seconds, kept when the report is built (the match list shows it without
   // reading the tracking files). Absent until the report of a match with the ball followed is opened.
-  possession?: { own: number; opp: number; followed_s: number };
+  possession?: {
+    own: number;
+    opp: number;
+    followed_s: number;
+    // Of the time the game was alive: the share credited to a team, and the share that is a measured contact
+    // (lib/possession.ts summarizePossession). Absent in matches saved before: the figure then has no coverage to show.
+    coverage?: number | null;
+    contact_coverage?: number | null;
+  };
+  // Technical details of the match (Configuración del partido > Detalles técnicos, lib/tech.ts): only the parameters the
+  // analyst changed; the rest are the defaults. Part of the backup with the rest of the match.
+  tech?: { possession?: Partial<Record<string, number | boolean>> };
   // Penalty shootout after a draw (lib/shootout.ts), in kick order. Absent: none.
   shootout?: ShootoutKick[];
   is_demo?: boolean;
@@ -430,6 +441,8 @@ export interface TrackEdits {
   autoRejected?: string[];
   // Anchors mode (lib/anchors.ts): doubts of links_<part>.json already resolved, by doubtKey. Absent in older edits.
   anchorDoubts?: string[];
+  // Splits of `splits` created by a fill by stretches (editsFromLinks, links with `segments`): «Empezar de cero» removes them.
+  linkSplits?: { track: number; frame: number }[];
   // Double boxes of a player skipped in the table («Siguiente / saltar»), as "<identity>:<frame>" (lib/doubles.ts).
   twiceSeen?: string[];
 }

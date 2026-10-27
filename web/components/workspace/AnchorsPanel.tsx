@@ -1,12 +1,12 @@
 "use client";
 
 import { ArrowBendUpRight, ArrowsSplit, CircleDashed, LinkBreak, Question, UserCircleDashed, type Icon } from "@phosphor-icons/react";
-import { ArrowClockwise, ArrowCounterClockwise, Check, DownloadSimple, Flask, Lightning, MagicWand, Scissors, Timer, UserSwitch, Warning, X } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, Check, DownloadSimple, FastForward, Flask, Lightning, LinkSimple, MagicWand, Scissors, Timer, UserSwitch, Warning, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconButton, Modal } from "@/components/Modal";
 import { DoubtCard, boxLabel } from "@/components/workspace/DoubtCard";
 import { ResetPart } from "@/components/workspace/ResetPart";
-import { answerDoubt, doubtBoxes, DOUBT_TYPES, NOT_PLAYER, stepFrames, type Answer, type RichDoubt } from "@/lib/doubts";
+import { answerDoubt, doubtBoxes, DOUBT_TYPES, NOT_PLAYER, staleTwoPlaces, stepFrames, type Answer, type RichDoubt } from "@/lib/doubts";
 import {
   DEFAULT_DENSITY,
   dropsByReason,
@@ -14,7 +14,14 @@ import {
   densityCounts,
   DOUBT_LABELS,
   anchorPaths,
+  acceptTramo,
   afterResolve,
+  chainIndex,
+  chainLookup,
+  chainOverlaps,
+  pendingTramos,
+  resolveOverlap,
+  tramoKey,
   doubtFocus,
   linksProtection,
   PLAYER_KEYS,
@@ -36,7 +43,9 @@ import {
   type Anchor,
   type AnchorFocus,
   type AnchorSuggestion,
+  type ChainOverlap,
   type Doubt,
+  type TramoSuggestion,
   type LinksFile,
   type SuggestFile,
   type TimedAction,
@@ -45,6 +54,7 @@ import { downloadText, fmtT, isTyping } from "@/lib/format";
 import { readLocal, writeLocal } from "@/lib/local";
 import { setPref, usePref } from "@/lib/store";
 import { phaseName, type RunStatus, type RunTask } from "@/lib/runTask";
+import { applyQuickJoin, holeKey, quickHoles, quickProgress, type QuickCandidate, type QuickHole } from "@/lib/quickJoin";
 import type { FeetFile } from "@/lib/feetFix";
 import { dropBoxes, editsKey, merge, separateRun, setPerson, type Person, type TracksFile } from "@/lib/tracks";
 import type { RosterPlayer, TrackEdits } from "@/lib/types";
@@ -72,6 +82,12 @@ const DOUBT_HELP: Record<string, string> = {
   default: `Clic en la caja que es ella. Enter: está bien. D: es otra. ${CUT}`,
 };
 
+// The links of the part: the file by stretches (links_<part>_exp_tramos.json) and, when it does not exist yet, the one
+// Python used to write (links_<part>_exp.json).
+async function readLinksFile(paths: { links: string; linksOld: string | null }): Promise<string | null> {
+  return (await readLocal(paths.links)) ?? (paths.linksOld ? await readLocal(paths.linksOld) : null);
+}
+
 export type BoxPick = (chosen: { track: number; id: number }, highlighted: { track: number; id: number }[], frame: number) => boolean;
 
 type Undo = { kind: "anchors"; anchors: Anchor[]; skipped: string[] } | { kind: "edits" };
@@ -94,6 +110,7 @@ export function AnchorsPanel({
   pickRef,
   playerOfId,
   people,
+  selectedId = null,
   onMsg,
   videoUrl = null,
 }: {
@@ -120,11 +137,13 @@ export function AnchorsPanel({
   pickRef: React.RefObject<BoxPick | null>;
   playerOfId: (id: number) => string | undefined;
   // The people of the table (who is verified or named: the fill asks before touching them).
-  people: Pick<Person, "id" | "player_id" | "done" | "tracks">[];
+  people: Person[];
+  // The person selected in the table (the quick join starts with her, if she has a name).
+  selectedId?: number | null;
   onMsg: (text: string) => void;
 }) {
   const fps = data.fps;
-  const [tab, setTab] = useState<"anchors" | "doubts">("anchors");
+  const [tab, setTab] = useState<"anchors" | "doubts" | "quick">("anchors");
   const [example, setExample] = useState(false);
   // The fill is B (links_<part>_exp.json, fewer jumps): the recommended mode.
   const variant = "exp" as const;
@@ -141,6 +160,16 @@ export function AnchorsPanel({
   const [stack, setStack] = useState<Undo[]>([]);
   const [doubtPage, setDoubtPage] = useState(0);
   const [otherFor, setOtherFor] = useState<string | null>(null);
+  // A-3: warning when an anchor lands on a chain that overlaps in time with another chain of the same player.
+  const [overlapWarn, setOverlapWarn] = useState<{ player: string; items: ChainOverlap[] } | null>(null);
+  // A-2: the suggestion of a free piece being looked at, and the page of the list.
+  const [sugOpen, setSugOpen] = useState<string | null>(null);
+  const [sugPage, setSugPage] = useState(0);
+  // A-5: quick join. The player (name), the frame it is at, the holes already skipped and the seconds to cover at the start.
+  const [quickPlayer, setQuickPlayer] = useState<string | null>(null);
+  const [quickCursor, setQuickCursor] = useState(0);
+  const [quickSkipped, setQuickSkipped] = useState<string[]>([]);
+  const [quickBase, setQuickBase] = useState<{ player: string; totalS: number; n: number } | null>(null);
   // Stopwatch: kept in this browser only (preferences, outside the backup); nothing is sent anywhere.
   const timingRaw = usePref(TIMING_KEY, "[]");
   const timing = useMemo(() => {
@@ -155,7 +184,7 @@ export function AnchorsPanel({
   const loadKey = `${paths.dir}|${part}|${paths.links}`;
   useEffect(() => {
     let live = true;
-    void Promise.all([readLocal(paths.suggest), readLocal(paths.anchors), readLocal(paths.links)]).then(([s, a, l]) => {
+    void Promise.all([readLocal(paths.suggest), readLocal(paths.anchors), readLinksFile(paths)]).then(([s, a, l]) => {
       if (!live) return;
       try {
         setSuggest(s ? (JSON.parse(s) as SuggestFile) : null);
@@ -184,12 +213,16 @@ export function AnchorsPanel({
   }, [loadKey]);
 
   const roster10 = useMemo(() => [...roster].sort((a, b) => (a.number ?? 999) - (b.number ?? 999)), [roster]);
+  const chainIdx = useMemo(() => (suggest ? chainIndex(suggest.chains) : new Map<string, number | string>()), [suggest]);
+  const chainLook = useMemo(() => (suggest ? chainLookup(suggest.chains) : new Map()), [suggest]);
   const counts = useMemo(() => (suggest ? densityCounts(suggest.suggestions, fps) : []), [suggest, fps]);
   const curCount = counts.find((c) => c.density === density);
   const list = useMemo(() => (suggest ? filterByDensity(suggest.suggestions, density, fps) : []), [suggest, density, fps]);
   const queue = useMemo(() => (suggest ? pendingSuggestions(list, anchors, skipped, suggest.chains, density, fps) : []), [list, anchors, skipped, suggest, density, fps]);
   const cur: AnchorSuggestion | null = queue[0] ?? null;
   const done = list.length - queue.length;
+  // A-3, before confirming: does the chain of this moment overlap with another one already anchored to the chosen player?
+  const liveOverlap = useMemo(() => (cur && chosen ? chainOverlaps(chainLook, chainIdx, anchors, { frame: cur.frame, track: cur.track, player: chosen }) : []), [cur, chosen, chainLook, chainIdx, anchors]);
 
   // When the current moment changes, the video goes there and the stopwatch starts.
   const shownAt = useRef(0);
@@ -226,7 +259,21 @@ export function AnchorsPanel({
     if (!player) return onMsg("Elige la jugadora (su tecla o la lista) o pulsa «No sé».");
     setStack((s) => [...s.slice(-199), { kind: "anchors", anchors, skipped }]);
     record("ancla");
+    // A-3: the anchor is saved anyway (nothing is blocked); the warning stays until it is answered.
+    const ov = chainOverlaps(chainLook, chainIdx, anchors, { frame: cur.frame, track: cur.track, player });
+    setOverlapWarn(ov.length ? { player, items: ov } : null);
     saveAnchors(setAnchor(anchors, { frame: cur.frame, track: cur.track, player }));
+  };
+  // The overlap of the chain just anchored (or of the other one) leaves its person (partir) or its boxes are left out
+  // (descartar). One action for the undo.
+  const fixOverlap = (o: ChainOverlap, which: "esta" | "otra", how: "partir" | "descartar") => {
+    const chain = chainLook.get(String(which === "esta" ? o.chain : o.other));
+    if (!chain) return;
+    const r = resolveOverlap(edits, data, chain, o.from, o.to, how);
+    if (r.boxes === 0) return onMsg("No hay cajas de esa cadena en el solape.");
+    editsChange(r.edits);
+    onMsg(`${how === "partir" ? `Solape partido: ${r.boxes} tramo(s) quedan como personas aparte` : `Solape descartado: ${r.boxes} caja(s) fuera`} (cadena ${String(which === "esta" ? o.chain : o.other)}, ${fmtT(o.from / fps)}–${fmtT(o.to / fps)}). Ctrl + Z lo deshace.`);
+    setOverlapWarn((w) => (w ? { ...w, items: w.items.filter((x) => x !== o) } : w));
   };
   const skip = () => {
     if (!cur) return;
@@ -249,7 +296,7 @@ export function AnchorsPanel({
 
   // Links: Python's identities as ordinary edits of the table (Ctrl + Z undoes them in one step).
   const reloadLinks = async () => {
-    const text = await readLocal(paths.links);
+    const text = await readLinksFile(paths);
     if (!text) {
       setLinks(null);
       return setLinksState("missing");
@@ -273,7 +320,7 @@ export function AnchorsPanel({
     setLinksState("applied");
     const by = reasonsText(r.droppedBy);
     onMsg(
-      `Rellenado (B): ${r.players} jugadora(s), ${r.tracks} trozo(s) con nombre nuevo${r.dropped ? `. B quitó ${r.dropped} caja(s) (${by})` : ""}${r.skipped ? `; ${r.skipped} trozo(s) de jugadoras verificadas o con nombre se dejaron como estaban` : ""}${r.conflicts.length ? `; ${r.conflicts.length} trozo(s) con dos nombres se dejaron como estaban` : ""}. Ctrl + Z lo deshace.`,
+      `Rellenado (B): ${r.players} jugadora(s), ${r.tracks} trozo(s) con nombre nuevo${r.dropped ? `. B quitó ${r.dropped} caja(s) (${by})` : ""}${r.skipped ? `; ${r.skipped} trozo(s) de jugadoras verificadas o con nombre se dejaron como estaban` : ""}${r.stretches ? `; ${r.stretches} tramo(s) en ${r.cutTracks} trozo(s) partidos (${Object.entries(r.stretchSeconds).map(([p, s]) => `${p} ${Math.round(s)} s`).join(", ")})` : ""}${r.conflicts.length ? `; ${r.conflicts.length} trozo(s) con dos nombres se dejaron como estaban` : ""}. Ctrl + Z lo deshace.`,
     );
   };
   // What a new run of Python rewrites, said before it runs (null: nothing to lose).
@@ -285,11 +332,13 @@ export function AnchorsPanel({
     suggest || anchors.length ? `${suggest ? `Se reescribe suggest_${part}.json (${suggest.suggestions.length} sugerencias).` : ""}${keptAnchors}` : null;
   const warnFill = () =>
     links
-      ? `Se reescribe links_${part}${variant ? "_exp" : ""}.json (relleno B; ${links.doubt_summary?.tasks ?? links.doubts.length} dudas por revisar; las ${(edits.anchorDoubts ?? []).length} resueltas siguen marcadas en la mesa).${keptAnchors} Al terminar se pregunta antes de tocar jugadoras verificadas o con nombre.`
+      ? `Se reescribe links_${part}${variant ? "_exp_tramos" : ""}.json (relleno B por tramos; ${links.doubt_summary?.tasks ?? links.doubts.length} dudas por revisar; las ${(edits.anchorDoubts ?? []).length} resueltas siguen marcadas en la mesa).${keptAnchors} Al terminar se pregunta antes de tocar jugadoras verificadas o con nombre.`
       : null;
 
   const resolved = edits.anchorDoubts;
-  const doubts = useMemo(() => sortDoubts(links?.doubts ?? [], resolved ?? []), [links, resolved]);
+  // «En dos sitios» that a fill by stretches already settled (the two boxes are now two people) are not asked again.
+  const settled = useMemo(() => staleTwoPlaces(links?.doubts ?? [], data, edits), [links, data, edits]);
+  const doubts = useMemo(() => sortDoubts(links?.doubts ?? [], [...(resolved ?? []), ...settled]), [links, resolved, settled]);
   const pages = Math.max(1, Math.ceil(doubts.pending.length / DOUBTS_PER_PAGE));
   const page = Math.min(doubtPage, pages - 1);
   // A doubt's time runs from the previous action (looking at it is part of the work).
@@ -374,6 +423,93 @@ export function AnchorsPanel({
     advance(d);
   };
 
+  // A-2: free pure pieces that Python found likely (union_dudosa with p >= 0.8): accept / reject, one click, best p first.
+  const tramos = useMemo(() => pendingTramos(links, resolved), [links, resolved]);
+  const tramoSecs = (t: TramoSuggestion) => ((t.frame_fin - t.frame_ini) / fps + data.stride / fps).toFixed(1);
+  const showTramo = (t: TramoSuggestion) => {
+    setSugOpen(tramoKey(t));
+    setViewFrame(t.frame_ini);
+    onSeek(t.frame_ini);
+    onFocus({ frame: t.frame_ini, marks: [{ track: t.track, label: "?", what: `trozo ${t.track}` }] });
+    const i = tramos.findIndex((x) => tramoKey(x) === tramoKey(t));
+    if (i >= 0) setSugPage(Math.floor(i / DOUBTS_PER_PAGE));
+  };
+  // After answering one, the next one opens (or the highlight goes).
+  const nextTramo = (t: TramoSuggestion) => {
+    const rest = tramos.filter((x) => tramoKey(x) !== tramoKey(t));
+    const i = tramos.findIndex((x) => tramoKey(x) === tramoKey(t));
+    const n = rest[Math.min(Math.max(i, 0), rest.length - 1)];
+    if (n) showTramo(n);
+    else {
+      setSugOpen(null);
+      onFocus(null);
+    }
+  };
+  const tramoAccept = (t: TramoSuggestion) => {
+    const r = acceptTramo(edits, data, t, named);
+    if (r.status === "empty") return onMsg("Ese trozo ya no tiene cajas en el tramo.");
+    if (r.status === "overlap") return onMsg(`No se asignó: ${t.person} ya tiene ${r.overlap} cuadro(s) con otra caja en ese tramo. Rechaza la unión o arréglalo en la mesa.`);
+    record("duda");
+    editsChange({ ...r.edits, anchorDoubts: [...(r.edits.anchorDoubts ?? []), tramoKey(t)] });
+    onMsg(r.status === "same" ? `${t.person}: ese tramo ya era suyo.` : `${t.person}: +${tramoSecs(t)} s del trozo ${t.track}. Ctrl + Z lo deshace.`);
+    nextTramo(t);
+  };
+  const tramoReject = (t: TramoSuggestion) => {
+    record("duda");
+    editsChange({ ...edits, anchorDoubts: [...(edits.anchorDoubts ?? []), tramoKey(t)] });
+    nextTramo(t);
+  };
+  const openTramo = tramos.find((t) => tramoKey(t) === sugOpen) ?? null;
+
+  // A-5: quick join. Her holes, the pieces that fit each one, and where we are.
+  const quickNames = useMemo(() => {
+    const order = new Map(roster.map((r) => [r.player_id, r.number ?? 999]));
+    return [...new Set(people.filter((p) => p.player_id).map((p) => p.player_id))].sort((a, b) => (order.get(a) ?? 999) - (order.get(b) ?? 999) || a.localeCompare(b));
+  }, [people, roster]);
+  const qName = quickPlayer ?? people.find((p) => p.id === selectedId)?.player_id ?? "";
+  const qPerson = qName ? people.find((p) => p.player_id === qName) : undefined;
+  const qHoles = useMemo(() => (tab === "quick" && qPerson ? quickHoles(data, edits, people, qPerson.id) : []), [tab, data, edits, people, qPerson]);
+  const qSkip = useMemo(() => new Set(quickSkipped), [quickSkipped]);
+  const qNav = qHoles.filter((h) => !h.green);
+  const qTodo = qNav.filter((h) => !qSkip.has(holeKey(h)));
+  const qCur: QuickHole | null = qTodo.find((h) => h.a >= quickCursor) ?? qTodo[0] ?? null;
+  const qProg = quickProgress(qHoles, qSkip);
+  const qTotalS = qNav.reduce((t, h) => t + h.seconds, 0);
+  // The seconds to cover when she was chosen (during render: a new player starts a new count).
+  if (tab === "quick" && qPerson && quickBase?.player !== qName) setQuickBase({ player: qName, totalS: qTotalS, n: qNav.length });
+  const qCovered = quickBase && quickBase.player === qName ? Math.max(0, quickBase.totalS - qTotalS) : 0;
+  const qCurKey = qCur ? holeKey(qCur) : null;
+  useEffect(() => {
+    if (tab !== "quick") return;
+    if (!qCur) return onFocus(null);
+    const c = qCur.candidates[0];
+    const at = c ? c.a : qCur.a;
+    onSeek(at);
+    onFocus({ frame: at, marks: qCur.candidates.map((x, i) => ({ track: x.track, label: String(i + 1), what: `pieza ${i + 1} (trozo ${x.track})` })) });
+    // Only when the hole changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qCurKey, tab]);
+  const quickJoin = (c: QuickCandidate) => {
+    if (!qPerson) return;
+    const r = applyQuickJoin(data, edits, people, qPerson.id, c);
+    if (!r) return onMsg("No se unió: ella ya tiene otra caja en esos cuadros.");
+    record("duda");
+    editsChange(r.edits);
+    onMsg(`${qName}: +${c.seconds.toFixed(1)} s${c.name ? ` de ${c.name}${r.cut ? " (ella conserva el resto)" : ""}` : ""}. Ctrl + Z lo deshace.`);
+  };
+  const quickSkip = () => {
+    if (!qCur) return;
+    setQuickSkipped((k) => [...k, holeKey(qCur)]);
+    setQuickCursor(qCur.a + 1);
+  };
+  const quickBack = () => {
+    if (!qCur) return;
+    const prev = [...qNav].reverse().find((h) => h.a < qCur.a);
+    if (!prev) return;
+    setQuickSkipped((k) => k.filter((x) => x !== holeKey(prev)));
+    setQuickCursor(prev.a);
+  };
+
   // A click on a highlighted box of the open doubt: «this is her» (Correction calls it through pickRef).
   useEffect(() => {
     pickRef.current = (chosen, highlighted, frame) => {
@@ -404,6 +540,12 @@ export function AnchorsPanel({
           if (n) goDoubt(n);
           return stop();
         }
+        if (!openD && openTramo) {
+          const k0 = e.key.toLowerCase();
+          if (e.key === "Enter") return stop(), tramoAccept(openTramo);
+          if (k0 === "x") return stop(), tramoReject(openTramo);
+          if (k0 === "n") return stop(), nextTramo(openTramo);
+        }
         if (!openD) return;
         if (otherFor !== null) {
           if (e.key === "Escape") return stop(), setOtherFor(null);
@@ -423,6 +565,20 @@ export function AnchorsPanel({
         if (e.key === "Enter") return stop(), openD.kind === "dos_sitios" ? answer(openD, "both") : doubtOk(openD);
         if (k === "d") return stop(), setOtherFor(doubtKey(openD));
         if (k === "s") return stop(), doubtDrop(openD);
+        return;
+      }
+      if (tab === "quick") {
+        const k1 = e.key.toLowerCase();
+        if (!qCur) return;
+        if (/^[1-4]$/.test(k1)) {
+          const c = qCur.candidates[Number(k1) - 1];
+          stop();
+          if (c) quickJoin(c);
+          return;
+        }
+        if (e.key === "Enter") return stop(), qCur.candidates[0] ? quickJoin(qCur.candidates[0]) : quickSkip();
+        if (k1 === "n") return stop(), quickSkip();
+        if (k1 === "b") return stop(), quickBack();
         return;
       }
       if (tab !== "anchors") return;
@@ -468,6 +624,10 @@ export function AnchorsPanel({
         </button>
         <button type="button" className="seg-opt flex-1" aria-pressed={tab === "doubts"} onClick={() => setTab("doubts")}>
           Dudas {links ? <span className="tc ml-1 text-faint">{doubts.pending.length}</span> : null}
+          {tramos.length > 0 && <span className="tc ml-1 text-accent-100" title={`${tramos.length} unión(es) sugerida(s) por aceptar`}>+{tramos.length}</span>}
+        </button>
+        <button type="button" className="seg-opt flex-1" aria-pressed={tab === "quick"} title="Unión rápida: recorre los huecos de una jugadora y une la pieza que cabe, con una tecla" onClick={() => setTab("quick")}>
+          Unión rápida
         </button>
       </div>
       <IconButton label="Tipos de duda: qué es cada una y qué hacer" onClick={() => setLegend(true)}>
@@ -486,6 +646,97 @@ export function AnchorsPanel({
     <p className="mb-2 rounded-lg bg-warn-900/60 px-2.5 py-1.5 text-[11px] text-warn">
       Datos de ejemplo: sugerencias, relleno y dudas inventados a partir de esta parte, no del modelo. Las anclas se guardan aparte (auto/ejemplo/).
     </p>
+  );
+
+  // A-5: the quick join of one player.
+  const quickBody = (
+    <div className="space-y-2 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="text-ink-2">Jugadora</span>
+        <select
+          className="input h-8 min-w-0 flex-1 py-0 text-xs"
+          value={qName}
+          aria-label="Jugadora cuyos huecos se recorren"
+          onChange={(e) => {
+            setQuickPlayer(e.target.value);
+            setQuickCursor(0);
+            setQuickSkipped([]);
+            e.currentTarget.blur();
+          }}
+        >
+          <option value="">Elegir…</option>
+          {quickNames.map((n) => (
+            <option key={n} value={n}>
+              {shownName(n)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {!qPerson ? (
+        <p className="text-ink-2">Elige una jugadora con nombre en la mesa: se recorren sus huecos en orden y se une la pieza que cabe en cada uno.</p>
+      ) : (
+        <>
+          <div className="space-y-1">
+            <div className="h-1 overflow-hidden rounded-full bg-raised">
+              <div className="h-full bg-accent transition-[width] duration-300" style={{ width: `${quickBase && quickBase.totalS > 0 ? Math.min(100, (100 * qCovered) / quickBase.totalS) : 0}%` }} />
+            </div>
+            <p className="tc text-ink-2" title="Huecos que faltan por revisar (sin los verdes ni los saltados) y segundos de hueco que se han cubierto desde que elegiste a la jugadora">
+              {qProg.left} hueco(s) por revisar ({qProg.leftS.toFixed(0)} s) · {qCovered.toFixed(0)} s cubiertos
+              {qProg.green > 0 && <span className="text-ok"> · {qProg.green} verde(s)</span>}
+            </p>
+          </div>
+          {qCur ? (
+            <div className="space-y-1.5">
+              <p className="text-ink-2">
+                Hueco <span className="tc text-ink">{fmtT(qCur.a / fps)}–{fmtT(qCur.b / fps)}</span> ({qCur.seconds.toFixed(1)} s)
+                {qCur.offCamera && <span className="text-faint"> · salió de cuadro</span>}
+              </p>
+              {qCur.candidates.length === 0 ? (
+                <p className="rounded-lg bg-raised/60 px-2 py-1.5 text-faint">Ninguna pieza cabe en este hueco (tiempo y distancia a los dos lados). Si es corto se rellena al guardar; si no, márcala a mano en la mesa (p). Salta con N.</p>
+              ) : (
+                qCur.candidates.map((c, i) => (
+                  <button
+                    key={`${c.from}:${c.a}`}
+                    type="button"
+                    className="flex w-full items-center gap-1.5 rounded-lg bg-raised/60 px-2 py-1 text-left hover:bg-raised"
+                    onClick={() => quickJoin(c)}
+                    title={`Unir: la pieza ${fmtT(c.a / fps)}–${fmtT(c.b / fps)} pasa a ${qName}. Suma de distancias a los dos extremos del hueco: ${c.cost} m`}
+                  >
+                    <span className="tc grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px] font-bold text-bg" style={{ background: FOCUS_COLORS[i % FOCUS_COLORS.length] }}>
+                      {i + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="text-ink">{c.name || "sin nombre"}</span>
+                      <span className="text-faint"> · trozo {c.track} · {c.seconds.toFixed(1)} s · {c.cost} m</span>
+                      {c.twoSides && c.name && <span className="text-warn"> · se corta de {c.name} (conserva el resto)</span>}
+                      {c.verified && <span className="text-warn"> · verificada</span>}
+                    </span>
+                    <kbd className="kbd">{i + 1}</kbd>
+                  </button>
+                ))
+              )}
+              <div className="flex gap-1.5">
+                <button type="button" className="btn btn-primary flex-1 !gap-1 !px-2 !py-1 text-[11px]" disabled={qCur.candidates.length === 0} onClick={() => qCur.candidates[0] && quickJoin(qCur.candidates[0])}>
+                  <LinkSimple size={13} /> Unir la 1 <kbd className="tc opacity-70">Enter</kbd>
+                </button>
+                <button type="button" className="btn !gap-1 !px-2 !py-1 text-[11px]" title="No unir nada aquí y pasar al siguiente hueco" onClick={quickSkip}>
+                  <FastForward size={13} /> Saltar <kbd className="tc text-faint">N</kbd>
+                </button>
+                <button type="button" className="btn btn-ghost !gap-1 !px-2 !py-1 text-[11px]" title="Volver al hueco anterior" onClick={quickBack}>
+                  <ArrowCounterClockwise size={13} /> <kbd className="tc text-faint">B</kbd>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-ok">Sin huecos por revisar para {qName}. Los verdes (de 2 a 7 s fuera de la cámara) no hace falta rellenarlos.</p>
+          )}
+          <p className="text-[10px] text-faint">
+            Aquí no se pregunta «está en dos sitios»: la pieza se corta de quien la tiene (ella conserva lo anterior y lo posterior) y pasa a {qName}. Nada se une solo; cada unión se deshace con Ctrl + Z.
+            <kbd className="kbd">1</kbd>–<kbd className="kbd">4</kbd> unir esa pieza · <kbd className="kbd">Enter</kbd> la 1 · <kbd className="kbd">N</kbd> saltar · <kbd className="kbd">B</kbd> anterior.
+          </p>
+        </>
+      )}
+    </div>
   );
 
   let body: React.ReactNode;
@@ -568,6 +819,39 @@ export function AnchorsPanel({
         <div className="h-1 overflow-hidden rounded-full bg-raised">
           <div className="h-full bg-accent transition-[width] duration-300" style={{ width: `${list.length ? (100 * done) / list.length : 0}%` }} />
         </div>
+        {overlapWarn && overlapWarn.items.length > 0 && (
+          <div className="space-y-1.5 rounded-lg bg-warn-900/60 p-2 text-[11px] text-warn" role="alert">
+            {overlapWarn.items.map((o) => (
+              <div key={`${o.chain}:${o.other}`} className="space-y-1">
+                <p className="flex items-start gap-1.5">
+                  <Warning size={13} className="mt-px shrink-0" />
+                  <span>
+                    Esta cadena ({String(o.chain)}) se solapa con otra de {overlapWarn.player} ({String(o.other)}) entre {fmtT(o.from / fps)} y {fmtT(o.to / fps)} ({((o.to - o.from) / fps).toFixed(1)} s): en el solape una de las dos es otra
+                    persona. El ancla se guardó igual.
+                  </span>
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  <button type="button" className="btn !px-1.5 !py-0.5 text-[11px]" title="La cadena que acabas de anclar pierde el solape: sus tramos ahí quedan como personas aparte, sin nombre" onClick={() => fixOverlap(o, "esta", "partir")}>
+                    <Scissors size={12} /> Partir (esta)
+                  </button>
+                  <button type="button" className="btn !px-1.5 !py-0.5 text-[11px]" title="Las cajas de la cadena que acabas de anclar en el solape no cuentan" onClick={() => fixOverlap(o, "esta", "descartar")}>
+                    <X size={12} /> Descartar (esta)
+                  </button>
+                  <button type="button" className="btn btn-ghost !px-1.5 !py-0.5 text-[11px]" title="La otra cadena (ya anclada a ella) pierde el solape: sus tramos ahí quedan como personas aparte" onClick={() => fixOverlap(o, "otra", "partir")}>
+                    <Scissors size={12} /> Partir (la otra)
+                  </button>
+                  <button type="button" className="btn btn-ghost !px-1.5 !py-0.5 text-[11px]" title="Las cajas de la otra cadena en el solape no cuentan" onClick={() => fixOverlap(o, "otra", "descartar")}>
+                    <X size={12} /> Descartar (la otra)
+                  </button>
+                  <button type="button" className="btn btn-ghost !px-1.5 !py-0.5 text-[11px]" onClick={() => setOverlapWarn((w) => (w ? { ...w, items: w.items.filter((x) => x !== o) } : w))}>
+                    Dejar así
+                  </button>
+                </div>
+              </div>
+            ))}
+            <p className="text-faint">«Descartar» es definitivo para el relleno; «Partir» se puede reemplazar si vuelves a rellenar por tramos. Ctrl + Z deshace cualquiera.</p>
+          </div>
+        )}
         {cur ? (
           <>
             <p className="text-xs text-ink-2">
@@ -591,6 +875,14 @@ export function AnchorsPanel({
               ))}
             </div>
             {roster10.length === 0 && <p className="text-xs text-warn">Sin plantilla: añádela en Configuración para nombrar anclas.</p>}
+            {chosen && liveOverlap.length > 0 && (
+              <p className="flex items-start gap-1.5 text-[11px] text-warn" role="status">
+                <Warning size={13} className="mt-px shrink-0" />
+                <span>
+                  Ojo: esta cadena se solapa con otra de {chosen} ({liveOverlap.map((o) => `${fmtT(o.from / fps)}–${fmtT(o.to / fps)}`).join(", ")}). Puedes anclar igual: después se ofrece partir o descartar el solape.
+                </span>
+              </p>
+            )}
             <div className="flex gap-2">
               <button type="button" className="btn btn-primary flex-1" disabled={!chosen} onClick={() => confirm()}>
                 <Check size={14} />
@@ -627,6 +919,7 @@ export function AnchorsPanel({
         </div>
       </div>
     );
+  else if (tab === "quick") body = quickBody;
   else if (!links)
     body = <p className="text-xs text-ink-2">Las dudas salen de links_{part}.json. Pulsa «Rellenar» en Anclas.</p>;
   else if (openD) {
@@ -699,6 +992,53 @@ export function AnchorsPanel({
               {(links.doubt_summary?.auto_resolved?.dos_sitios ?? 0) > 0 && <li>En dos sitios resueltas solas (por ancla o duración): {links.doubt_summary?.auto_resolved?.dos_sitios}</li>}
             </ul>
           </details>
+        )}
+        {tramos.length > 0 && (
+          <div className="space-y-1 rounded-lg bg-accent-900/30 p-1.5">
+            <p className="flex items-center gap-1 text-[11px] text-accent-100">
+              <LinkSimple size={13} aria-hidden />
+              <span>
+                {tramos.length} unión(es) sugerida(s) · p ≥ 80 %, costo ≤ 1.0 · nada se asigna solo
+              </span>
+            </p>
+            {tramos.slice(sugPage * DOUBTS_PER_PAGE, sugPage * DOUBTS_PER_PAGE + DOUBTS_PER_PAGE).map((t) => {
+              const tk = tramoKey(t);
+              const open = sugOpen === tk;
+              return (
+                <div key={tk} className={`flex items-center gap-1 rounded-lg px-2 py-1 ${open ? "bg-raised ring-1 ring-accent/60" : "bg-raised/60"}`}>
+                  <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs" onClick={() => showTramo(t)} title={`Trozo ${t.track}, cuadros ${t.frame_ini}–${t.frame_fin}: clic para ir al cuadro`}>
+                    <span className="tc text-ink">{fmtT(t.frame_ini / fps)}</span>
+                    <span className="truncate text-ink">{t.person}</span>
+                    <span className="tc shrink-0 text-faint">
+                      {tramoSecs(t)} s · {Math.round(t.p * 100)} % · {t.cost.toFixed(2)}
+                    </span>
+                  </button>
+                  <IconButton label={`Aceptar: el trozo ${t.track} pasa a ${t.person}${open ? " (Enter)" : ""}`} tone="accent" onClick={() => tramoAccept(t)}>
+                    <Check size={13} />
+                  </IconButton>
+                  <IconButton label={`Rechazar${open ? " (X)" : ""}`} onClick={() => tramoReject(t)}>
+                    <X size={13} />
+                  </IconButton>
+                </div>
+              );
+            })}
+            {tramos.length > DOUBTS_PER_PAGE && (
+              <div className="flex items-center justify-center gap-2 text-xs text-faint">
+                <button type="button" className="btn btn-ghost !px-2 !py-0.5" disabled={sugPage === 0} onClick={() => setSugPage(sugPage - 1)}>
+                  ‹
+                </button>
+                <span className="tc">
+                  {sugPage + 1} / {Math.ceil(tramos.length / DOUBTS_PER_PAGE)}
+                </span>
+                <button type="button" className="btn btn-ghost !px-2 !py-0.5" disabled={(sugPage + 1) * DOUBTS_PER_PAGE >= tramos.length} onClick={() => setSugPage(sugPage + 1)}>
+                  ›
+                </button>
+              </div>
+            )}
+            <p className="text-[10px] text-faint">
+              Clic en la fila: ir al cuadro (el trozo sale con «?»). <kbd className="kbd">Enter</kbd> acepta · <kbd className="kbd">X</kbd> rechaza · <kbd className="kbd">N</kbd> siguiente. Aceptar se deshace con Ctrl + Z.
+            </p>
+          </div>
         )}
         <p className="text-[11px] text-faint">
           <kbd className="kbd">Tab</kbd> siguiente · <kbd className="kbd">Shift</kbd>+<kbd className="kbd">Tab</kbd> anterior
@@ -861,7 +1201,7 @@ export function AnchorsPanel({
           </ul>
           <p className="mt-3 text-xs text-faint">
             Teclas en una duda: <kbd className="kbd">1</kbd>/<kbd className="kbd">A</kbd> y <kbd className="kbd">2</kbd>/<kbd className="kbd">B</kbd> eligen caja, <kbd className="kbd">0</kbd> ninguna,{" "}
-            <kbd className="kbd">Enter</kbd> está bien, <kbd className="kbd">D</kbd> es otra, <kbd className="kbd">S</kbd> cortar, <kbd className="kbd">←</kbd>/<kbd className="kbd">→</kbd> cuadros, <kbd className="kbd">Tab</kbd> siguiente. En anclas: <kbd className="kbd">x</kbd> no es jugadora, <kbd className="kbd">n</kbd> saltar (solo la oculta aquí, no influye en el relleno).
+            <kbd className="kbd">Enter</kbd> está bien, <kbd className="kbd">D</kbd> es otra, <kbd className="kbd">S</kbd> cortar, <kbd className="kbd">←</kbd>/<kbd className="kbd">→</kbd> cuadros, <kbd className="kbd">Tab</kbd> siguiente. En anclas: <kbd className="kbd">x</kbd> no es jugadora, <kbd className="kbd">n</kbd> saltar (solo la oculta aquí, no influye en el relleno). Uniones sugeridas: <kbd className="kbd">Enter</kbd> acepta, <kbd className="kbd">X</kbd> rechaza, <kbd className="kbd">N</kbd> siguiente. Unión rápida: <kbd className="kbd">1</kbd>–<kbd className="kbd">4</kbd> o <kbd className="kbd">Enter</kbd> une, <kbd className="kbd">N</kbd> salta, <kbd className="kbd">B</kbd> vuelve. En la mesa, ante un salto: <kbd className="kbd">Q</kbd> quita el cuadro siguiente (si el aviso sigue, el previo), <kbd className="kbd">Alt</kbd>+<kbd className="kbd">Q</kbd> el previo, <kbd className="kbd">[</kbd> / <kbd className="kbd">]</kbd> quitan su tramo anterior / siguiente.
           </p>
         </Modal>
       )}

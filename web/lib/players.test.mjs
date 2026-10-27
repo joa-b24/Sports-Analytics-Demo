@@ -77,3 +77,47 @@ test("touches, passes and minutes from a corrected part with the ball followed",
   // Nobody's events were tagged with a name: her event figures are not noted, not zero.
   assert.equal(metricValue(by["opp|R7"], metric("recoveries")), null);
 });
+
+// ---------------------------------------------------------------------------------------------- minutes played
+const file2 = (video_id, names, frames = 900) => ({
+  kind: "tracks_fixed", match_id: "m", video_id, fps: 30, start_frame: 0, end_frame: frames, stride: 3,
+  venue: { length_m: 105, width_m: 68 }, ball: [],
+  people: names.map(([n, id]) => ({ id, team: "own", player_id: n, tracks: [id] })),
+  frames: Array.from({ length: 20 }, (_, k) => ({ frame: k * 3, positions: names.filter(([, , seen = true]) => seen !== false).map(([, id]) => ({ id, x: 50 + 0.1 * k, y: 30, source: "auto" })) })),
+});
+const seg = (start, end) => [{ segment_id: "s", start, end, tipo: "juego" }];
+const sub = (t, out, inn, video_id = "v1") => ev(`s${t}`, "substitution", "own", out, { t_video: t, video_id, player_in: inn });
+
+test("minutes played: clock of the half, substitutions and no-data substitute", () => {
+  // Half = 600 s of play (100 to 700) => 10 min. Paz starter all half; Kat starter, out at 400 (5 min); Ita comes in.
+  // First clip: only Paz and Kat. A later clip of the same half has everybody.
+  const later = { ...file2("v1", [["Paz", 1], ["Kat", 2], ["Ita", 3], ["Mia", 4]]), start_frame: 900, end_frame: 1800 };
+  const parts = [{ file: file2("v1", [["Paz", 1], ["Kat", 2], ["Ita", 3, false], ["Mia", 4, false]]), ownRight: true }, { file: later, ownRight: true }];
+  const base = { parts, playByVideo: { v1: seg(100, 700) } };
+  const m = (events) => Object.fromEntries(playerRows({ events, ...base }).map((r) => [r.id, r.minutes_played]));
+  const none = m([]);
+  assert.equal(none.Paz, 10);
+  assert.equal(none.Kat, 10);
+  assert.equal(none.Ita, null); // substitute with no substitution tagged
+  const withSub = m([sub(400, "Kat", "Ita")]);
+  assert.equal(withSub.Kat, 5);
+  assert.equal(withSub.Ita, 5); // enters at 400: 700 - 400 = 300 s
+  assert.equal(withSub.Paz, 10);
+  assert.equal(withSub.Mia, null);
+});
+
+test("minutes played add the halves, which can come in several videos", () => {
+  const parts = [
+    { file: file2("v1", [["Paz", 1], ["Kat", 2]]), ownRight: true },
+    { file: file2("v2", [["Paz", 1]]), ownRight: true },
+    { file: file2("v3", [["Paz", 1]]), ownRight: true },
+  ];
+  const playByVideo = { v1: seg(0, 600), v2: seg(10, 310), v3: seg(0, 300) };
+  const rows = playerRows({
+    events: [], parts, playByVideo,
+    videoPeriods: [{ video_id: "v1", period: 1 }, { video_id: "v2", period: 2 }, { video_id: "v3", period: 2 }],
+  });
+  const by = Object.fromEntries(rows.map((r) => [r.id, r.minutes_played]));
+  assert.equal(by.Paz, 20); // 600 + 300 + 300 = 1200 s
+  assert.equal(by.Kat, null); // starter in half 1, not in the first clip of half 2 and no entry tagged: no data
+});

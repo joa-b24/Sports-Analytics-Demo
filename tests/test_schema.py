@@ -2,9 +2,9 @@ import pandas as pd
 import pytest
 
 from sportsan.mock.generate import generate
-from sportsan.io import load_ball, load_events, load_tracking
+from sportsan.io import load_ball, load_events, load_possession, load_tracking
 from sportsan.metrics.team_shape import heatmap, team_shape
-from sportsan.schema import SchemaError, validate_events, validate_passes, validate_tracking
+from sportsan.schema import SchemaError, validate_events, validate_passes, validate_possession, validate_tracking
 
 
 @pytest.fixture(scope="module")
@@ -204,3 +204,71 @@ def test_tarjetas_atajadas_y_cambios(mock_dir):
     fails(lambda ev: ev.loc.__setitem__((shot, "outcome"), None))            # atajado sin resultado
     fails(lambda ev: ev.loc.__setitem__((other, "player_in"), "Otra"))       # quien entra en otro tipo
     fails(lambda ev: ev.loc.__setitem__((sub, "x"), 50.0))                   # un cambio con posición
+
+
+# ---- posesión derivada (possession_<video_id>.csv) ----
+_POSS_CSV = (
+    "video_id,segment_id,t_start,t_end,team,first_player,last_player,kind,flags\n"
+    'v1,s01,10,12.5,own,Ana,#7,control,"ball_source=manual"\n'
+    'v1,s01,12.5,14,none,,,loose,"ball_interp,ball_source=interp,flight"\n'
+    'v1,s02,14,20,opp,#3,#3,contested,"player_interp,ball_source=mixed,joined_cut"\n'
+)
+
+
+def _poss(rows=None):
+    base = [
+        dict(video_id="v1", segment_id="s01", t_start=0.0, t_end=2.0, team="own", first_player="Ana",
+             last_player="Ana", kind="control", flags="ball_source=manual"),
+        dict(video_id="v1", segment_id="s01", t_start=2.0, t_end=3.5, team="none", first_player=None,
+             last_player=None, kind="loose", flags="ball_interp,ball_source=interp"),
+        dict(video_id="v2", segment_id="s09", t_start=1.0, t_end=2.0, team="opp", first_player="#3",
+             last_player="#3", kind="unknown", flags=""),
+    ]
+    return pd.DataFrame(rows or base)
+
+
+def test_possession_valid():
+    assert len(validate_possession(_poss())) == 3
+
+
+def test_possession_missing_column():
+    with pytest.raises(SchemaError, match="faltan columnas"):
+        validate_possession(_poss().drop(columns=["kind"]))
+
+
+@pytest.mark.parametrize("column,value", [("team", "ref"), ("kind", "wild")])
+def test_possession_invalid_enum(column, value):
+    df = _poss()
+    df.loc[0, column] = value
+    with pytest.raises(SchemaError, match=column):
+        validate_possession(df)
+
+
+@pytest.mark.parametrize("t_end", [0.0, -1.0])
+def test_possession_end_not_after_start(t_end):
+    df = _poss()
+    df.loc[0, "t_end"] = t_end
+    with pytest.raises(SchemaError):
+        validate_possession(df)
+
+
+def test_possession_overlap_same_video_only():
+    df = _poss()
+    df.loc[1, "t_start"] = 1.5  # solapa con la fila 0 en v1
+    with pytest.raises(SchemaError, match="solapados"):
+        validate_possession(df)
+    df = _poss()
+    df.loc[2, "video_id"] = "v1"
+    df.loc[2, "t_start"] = 1.0  # v1 otra vez: solapa
+    with pytest.raises(SchemaError, match="solapados"):
+        validate_possession(df)
+
+
+def test_possession_load_csv_as_written_by_app(tmp_path):
+    path = tmp_path / "possession_v1.csv"
+    path.write_text(_POSS_CSV, encoding="utf-8")
+    df = load_possession(path)
+    assert list(df["team"]) == ["own", "none", "opp"]
+    assert df.loc[1, "flags"] == "ball_interp,ball_source=interp,flight"
+    assert pd.isna(df.loc[1, "first_player"])
+    assert len(load_possession(tmp_path)) == 3

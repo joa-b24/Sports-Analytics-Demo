@@ -142,6 +142,33 @@ red de pases y de los pases por jugadora (no sale del tracking). En la app viven
 | to_id | str | sí | quien recibe; solo en los completos |
 | outcome | str | no | `complete` (llega a una compañera) o `incomplete` (la perdió el equipo) |
 
+## `possession_<video_id>.csv` (posesión derivada, `matches/<match_id>/`, fuera de git)
+
+Tabla derivada, no etiquetada: la app la calcula desde `tracks_fixed_*` (balón revisado y jugadoras) con
+`web/lib/possession.ts` (`possessionCsv` / `parsePossessionCsv`) y la guarda con `writeLocal`. Una fila por intervalo.
+Se valida con `validate_possession` de `schema.py` (`load_possession` en `io.py`). Lleva nombres de plantilla: no va al repo.
+No sustituye a los eventos: es lo que se puede leer del balón y las posiciones donde se siguió el balón.
+
+| columna | tipo | nulos | descripción |
+|---|---|---|---|
+| video_id | str | no | |
+| segment_id | str | no | primer tramo de juego que toca el intervalo (los tramos de juego se unen y la unión se marca con `joined_cut`) |
+| t_start, t_end | float | no | segundos de `t_video` del video original; `t_start < t_end`; sin solapes dentro de un `video_id` |
+| team | str | no | `own`, `opp` o `none` (nadie la tiene) |
+| first_player, last_player | str | sí | primera y última jugadora con el balón en el intervalo: nombre de plantilla o `#<id>` |
+| kind | str | no | `control`, `contested`, `loose`, `dead` o `unknown` |
+| flags | str | sí | texto separado por comas (el campo va entre comillas si lleva comas): `ball_interp`, `player_interp`, `ball_source=manual\|auto\|event\|interp\|mixed` y notas: `joined_cut`, `cut_reset`, `blocked`, `ball_jump`, `no_measured_touch`, `flight`, `short_touch`, `out`, `rest`, `no_players` |
+
+Control: balón a menos de 2.0 m de una jugadora durante al menos 0.5 s (parámetros calibrables; la analista usa 0.3 s
+ahora). El balón o la jugadora interpolados no se descartan: llevan la bandera `ball_interp` / `player_interp`, y una
+racha que solo tiene balón interpolado sale `kind=unknown`. Fuera de cuadro (la cámara no ve toda la cancha) no hay
+intervalo con equipo asignado: lo no seguido no se rellena.
+
+`report_<match_id>.json > summary.ball` gana `possession_detail` (`PossessionSummary` de `possession.ts`: segundos por
+equipo, por fuente de balón y por `kind`, segundos sobre balón o jugadoras interpoladas, `auto_share`, `auto_dominant`,
+y `measured` / `pct_own_measured` con solo posiciones medidas) y `possession_warning` (texto, o nulo, cuando la mayor
+parte de lo asignado descansa en el balón del tracker sin revisar). `possession` (`own`, `opp`, `unassigned`) sigue igual.
+
 ## Tablas de la app web (`web/lib/types.ts`)
 
 Viven en el navegador y se exportan como un JSON de respaldo. Los eventos usan las columnas de arriba.

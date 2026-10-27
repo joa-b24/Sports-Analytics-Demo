@@ -3,7 +3,7 @@
 // written before that get the boxes worked out here from the tracks (marked `derived`, shown as such).
 // Pure functions: no storage, no React.
 import type { Doubt } from "./anchors.ts";
-import { dropBoxes, identityOf, merge, separateRun, type DetBox, type TracksFile } from "./tracks.ts";
+import { droppedSet, dropBoxes, identityOf, isDropped, merge, separateRun, type DetBox, type TracksFile } from "./tracks.ts";
 import { PITCH, type TrackEdits } from "./types.ts";
 
 // Contract of the new fields of a doubt (sportsan.tracking.anchors fill):
@@ -107,6 +107,29 @@ export function doubtBoxes(d: RichDoubt, file: TracksFile, edits: TrackEdits): {
     if (boxAt(file, d.frame, d.track)) boxes.push({ role: d.kind === "salto" ? "after" : "cand", frame: d.frame, track: d.track });
   } else if (boxAt(file, d.frame, d.track)) boxes.push({ role: "a", frame: d.frame, track: d.track });
   return { boxes, derived: true };
+}
+
+// «En dos sitios» doubts that no longer hold with the edits: the named player has at most one live box in that frame
+// (a fill by stretches cut the track so the two boxes are now two people). Keys (doubtKey) to count as resolved. A doubt
+// is kept when nobody carries that name in the table yet (before the fill is applied there is nothing to compare).
+export function staleTwoPlaces(doubts: Doubt[], file: TracksFile, edits: TrackEdits): string[] {
+  const todo = doubts.filter((d) => d.kind === "dos_sitios" && d.players.length > 0);
+  if (!todo.length) return [];
+  const named = new Map<string, Set<number>>();
+  for (const [id, p] of Object.entries(edits.people)) {
+    if (p.player_id) named.set(p.player_id, (named.get(p.player_id) ?? new Set()).add(Number(id)));
+  }
+  const dropped = droppedSet(edits);
+  const frames = new Map(file.frames.map((f) => [f.frame, f]));
+  const out: string[] = [];
+  for (const d of todo) {
+    const ids = named.get(d.players[0]);
+    const fr = frames.get(d.frame);
+    if (!ids || !fr) continue;
+    const n = fr.boxes.filter((b) => !isDropped(dropped, b, d.frame) && ids.has(identityOf(b, d.frame, edits))).length;
+    if (n <= 1) out.push(`${d.kind}:${d.frame}:${d.track}`);
+  }
+  return out;
 }
 
 // Meters of the venue between two boxes, the seconds and the speed (null when a position is missing).

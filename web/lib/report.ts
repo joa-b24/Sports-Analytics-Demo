@@ -32,7 +32,9 @@ import {
 } from "./analysis.ts";
 import type { ClipEdit } from "./annotations.ts";
 import { fmtT, youtubeLink } from "./format.ts";
-import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, possessionCells, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
+import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
+import { possessionParamsOf, techSummary } from "./tech.ts";
+import { autoWarning, possessionCellsOf, possessionIntervals, summarizePossession, type PossessionResult, type PossessionSummary } from "./possession.ts";
 import type { Segment } from "./segments.ts";
 import { LANES_5, THIRDS_3, countByType, laneThirdOf, zoneGrid5x3 } from "./stats.ts";
 import { EMPTY_REPORT, type ManualResult, type Match, type MatchEvent, type Play, type Report, type RosterPlayer, type ShootoutKick } from "./types.ts";
@@ -134,19 +136,18 @@ function addSpan(cells: Set<string>, video: string, t0: number, t1: number, play
   }
 }
 
-export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, Segment[]>, parts: Oriented[]): LevelInfo {
+export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, Segment[]>, parts: Oriented[], poss: PossessionResult = possessionIntervals(parts, segmentsByVideo)): LevelInfo {
   const closed = (v: string) => (segmentsByVideo[v] ?? []).filter((g) => g.tipo === "juego" && g.end !== null);
   const hasPlay = Object.keys(segmentsByVideo).some((v) => closed(v).length > 0);
   const play_s = hasPlay ? Object.keys(segmentsByVideo).reduce((s, v) => s + playInside(closed(v), 0, Infinity), 0) : null;
   const share = (seconds: number) => (play_s ? Math.min(1, seconds / play_s) : null);
 
-  const ballCells = new Map<string, PossessionState>();
+  const ballCells = possessionCellsOf(poss.samples);
   const trackCells = new Set<string>();
   let ownSeen = 0;
   let ownNamed = 0;
   for (const o of parts) {
     const play = hasPlay ? closed(o.file.video_id) : null;
-    possessionCells(o, play, ballCells);
     // Reviewed: exported from the correction table (not built from an uncorrected part) and with players of a team in
     // it. A file exported only for its ball has no reviewed positions.
     const reviewed = !o.file.auto && o.file.frames.length > 0 && o.file.people.some((p) => p.team === "own" || p.team === "opp");
@@ -375,6 +376,13 @@ export interface BallSummary {
   // Of the play time; null without play stretches.
   share: number | null;
   possession: Record<PossessionState, number>;
+  // The same possession split by ball source (manual / tracker / event / interpolated) and by kind of interval, with the
+  // share on interpolated data (lib/possession.ts summarizePossession).
+  possession_detail: PossessionSummary;
+  // Set when most of the assigned time rests on the tracker's ball, which nobody reviewed: say it where the figure is shown.
+  possession_warning: string | null;
+  // The technical parameters the possession was computed with (lib/tech.ts): the defaults, or what was changed.
+  possession_params: string;
   passes: Record<Side, TeamPasses>;
   // Changes of team read from the ball: confirmed by a tagged loss within 2 s, or only inferred; and tagged losses where
   // the ball was followed that no change matches.
@@ -538,12 +546,18 @@ export function buildReport(input: ReportInput): ReportData {
   };
   const side = (e: MatchEvent) => e.team as Side;
 
-  const level = dataLevel(raw, segmentsByVideo, parts);
-  const br = level.sources.ball ? ballReport(parts, segmentsByVideo, raw) : null;
+  // Possession as intervals (lib/possession.ts): one reading for the coverage, the possession and its warnings.
+  const poss = possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match));
+  const level = dataLevel(raw, segmentsByVideo, parts, poss);
+  const br = level.sources.ball ? ballReport(parts, segmentsByVideo, raw, possessionCellsOf(poss.samples)) : null;
+  const possSummary = br ? summarizePossession(poss.samples) : null;
   const ballSummary: BallSummary | null = br && {
     followed_s: br.followed_s,
     share: level.play_s ? Math.min(1, br.followed_s / level.play_s) : null,
     possession: br.possession,
+    possession_detail: possSummary as PossessionSummary,
+    possession_warning: possSummary ? autoWarning(possSummary) : null,
+    possession_params: techSummary(match),
     passes: br.passes,
     changes: {
       confirmed: br.changes.filter((c) => c.confirmed).length,

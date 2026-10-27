@@ -17,8 +17,11 @@ Archivos en `matches/<id>/tracking/auto/` (contrato con la app web):
 - Cada duda trae "boxes":[{frame,track,player,role,t,chain}] con las cajas implicadas y sus cuadros exactos (salto: antes y
   despues + "jump"; dos_sitios: a y b; union_dudosa: a, b y candidata(s); hueco_largo: antes y despues + t0,t1; sin_nombre: a +
   t0,t1) y, en salto/dos_sitios/union_dudosa, "resolution":{"options":[...],"default":...} (ver RESOLUTION).
-- `links_<parte>_exp.json` (fill --variant exp, variante B) mismo formato + "variant":"exp" y "passes" (conteos por pasada:
+- `links_<parte>_exp_tramos.json` (fill --variant exp, variante B; antes links_<parte>_exp.json, que ya no se pisa) mismo formato + "variant":"exp" y "passes" (conteos por pasada:
                            exclusion, doubles, jumps, holes); drops con reason exclusion|ruta|ambas|salto
+  Por tramos (segments.py; formato en docs/propuesta_union_tracks.md, «Tramos por identidad»): cada identidad trae
+  "segments":[[track,cuadro_ini,cuadro_fin],...] y "segments_interpolated"; y el archivo "segment_policy",
+  "segments_summary", "segment_drops" y "suggestions" (trozos libres p>=0.8 y costo<=1.0, no asignados), "segment_doubts" (pasadas 3 y 4 sobre las cajas de los tramos).
 - `links_<parte>.json`    {"part","identities":[{"player","chains","tracks","t_ranges","interpolated"}],
                            "doubts":[{"kind","frame","track","players","note"}],
                            "drops":[{"frame","track","player","reason"}]  (dobles cajas descartadas, doubles.py;
@@ -50,6 +53,7 @@ from sportsan.tracking.anchors import (
     Chain,
     Fill,
     _finite_end,
+    _reaches,
     build_chains,
     camera_sign,
     hybrid_rate,
@@ -63,6 +67,8 @@ from sportsan.tracking.anchors import (
     transition_cost,
 )
 from sportsan.tracking.doubles import box_entry, jump_info
+from sportsan.tracking.segments import (DEFAULT_POLICY, SUGGEST_COST_MAX, SUGGEST_P_MIN, SegmentPolicy, accepts, chain_members, conflicts as segment_conflicts,
+                                        selected_boxes, to_segments)
 from sportsan.tracking.tracklets import (
     FEATURES,
     LINK_P_MIN,
@@ -420,7 +426,8 @@ def _stride(prep: Prepared) -> int:
 
 
 def exp_passes(prep: Prepared, identities: list[dict], names: list[str], owner: dict[int, int], anchor_of: dict[int, int],
-               weights=None, progress: "Progress | None" = None) -> tuple[list[dict], list[dict], dict, dict[str, list]]:
+               weights=None, progress: "Progress | None" = None,
+               selected: "dict[str, set[tuple[int, int]]] | None" = None) -> tuple[list[dict], list[dict], dict, dict[str, list]]:
     """Pasadas 1b-4 de la variante B sobre las identidades (tracks completos, como las aplica la app). Devuelve
     (drops, dudas, conteos por pasada, tramos interpolados por jugadora).
 
@@ -429,7 +436,11 @@ def exp_passes(prep: Prepared, identities: list[dict], names: list[str], owner: 
     2.  Dobles cajas residuales (doubles.resolve, pesos por defecto, margen ROUTE_MARGIN): `ruta` / `ambas` / dos_sitios.
     3.  Saltos imposibles: picos y excursiones <= 0.8 s se descartan (`salto`); los demás, tarea `salto`. Arranques y
         frenadas imposibles se cuentan (informativo).
-    4.  Huecos <= 4 s posibles: interpolados; imposibles: tarea `salto`; > 4 s: `hueco_largo` (informativo)."""
+    4.  Huecos <= 4 s posibles: interpolados; imposibles: tarea `salto`; > 4 s: `hueco_largo` (informativo).
+
+    `selected` (modo por tramos): cajas (cuadro, track) de cada jugadora, que son las de sus tramos. Entonces no hay tracks
+    mezclados que excluir ni dobles cajas entre identidades (los tramos no se solapan), y las pasadas 3 y 4 recorren solo
+    esas cajas."""
     from sportsan.tracking import doubles as D
 
     pg = progress or Progress(None)
@@ -456,7 +467,7 @@ def exp_passes(prep: Prepared, identities: list[dict], names: list[str], owner: 
 
     # 1b. exclusión
     before = 0
-    for p, tracks in tracks_of.items():
+    for p, tracks in ({} if selected is not None else tracks_of).items():
         mine = own.get(p, set())
         for f, r in prep.rows.items():
             bs = [b for b in r if b.track in tracks]
@@ -471,7 +482,7 @@ def exp_passes(prep: Prepared, identities: list[dict], names: list[str], owner: 
     pg.log("dobles", 0, 1)
     # 2. dobles cajas que quedan (dos cadenas suyas solapadas, o tracks suyos fuera de toda cadena suya)
     rows2 = {f: [b for b in r if (f, b.track) not in dropped] for f, r in prep.rows.items()}
-    dr = D.resolve(rows2, tracks_of, fps, stride, anchored, own, chain_s, prep.conf, weights)
+    dr = D.resolve(rows2, {} if selected is not None else tracks_of, fps, stride, anchored, own, chain_s, prep.conf, weights)
     for d in dr.drops:
         drop(d["frame"], d["track"], d["player"], d["reason"])
     doubts = list(dr.doubts)
@@ -482,7 +493,7 @@ def exp_passes(prep: Prepared, identities: list[dict], names: list[str], owner: 
     holes = {"interpolated": 0, "interpolated_s": 0.0, "impossible": 0, "long": 0}
     for k, (p, tracks) in enumerate(tracks_of.items()):
         pg.log("saltos", k, len(tracks_of))
-        path = D.route(prep.rows, tracks, dropped, prep.conf)
+        path = D.route(prep.rows, tracks, dropped, prep.conf, None if selected is None else selected.get(p, set()))
         jumps_before += sum(D._is_jump(a, b, fps) for a, b in zip(path, path[1:]))
         out, left, clean = D.jump_pass(path, fps, stride)
         for q in out:
@@ -516,8 +527,8 @@ def exp_passes(prep: Prepared, identities: list[dict], names: list[str], owner: 
                                note=f"{p} sin verse {(b[0] - a[0]) / fps:.0f} s"))
     pg.log("saltos", len(tracks_of), len(tracks_of))
     holes["interpolated_s"] = round(holes["interpolated_s"], 2)
-    left_dbl = sum(sum(b.track in tr and (f, b.track) not in dropped for b in r) > 1
-                   for tr in tracks_of.values() for f, r in prep.rows.items())
+    left_dbl = 0 if selected is not None else sum(sum(b.track in tr and (f, b.track) not in dropped for b in r) > 1
+                                                  for tr in tracks_of.values() for f, r in prep.rows.items())
     passes = {"exclusion": {"dropped": n_excl},
               "doubles": {"frames_before": before, "frames_after": int(left_dbl), "dropped": dict(dr.by_reason),
                           "undecided": len(dr.doubts)},
@@ -527,10 +538,86 @@ def exp_passes(prep: Prepared, identities: list[dict], names: list[str], owner: 
     return drops, doubts, passes, interp
 
 
+def _segment_selection(prep: "Prepared", owner: dict[int, int], f: "Fill", anchor_of: dict[int, int],
+                       anchor_boxes: dict[int, list[tuple[int, int]]], names: list[str], pol: SegmentPolicy,
+                       unnamed_cost: float) -> tuple[dict[str, set], dict]:
+    """Cajas (cuadro, track) que entran en los tramos de cada jugadora y cuántas cadenas se abstuvieron por la política."""
+    by_id = {c.id: c for c in prep.chains}
+    pol = SegmentPolicy(unnamed_cost if pol.max_cost is None else min(pol.max_cost, unnamed_cost), pol.min_entry_p,
+                        pol.prior_ok, pol.internal_p, pol.reject_close)
+    sel: dict[str, set] = {names[p]: set() for p in set(owner.values())}
+    abstained = trimmed = kept = 0
+    for cid, p in owner.items():
+        c = by_id[cid]
+        members = chain_members(c)
+        if anchor_of.get(cid) == p:          # ancla: manda la persona; parte de los trozos con su caja marcada
+            seeds = set()
+            for fr_, tr_ in anchor_boxes.get(cid, []):
+                near = [(abs(b.frame - fr_), k) for k, m in enumerate(members) for b in m.boxes
+                        if b.track == tr_ and abs(b.frame - fr_) <= MAX_ANCHOR_SNAP]
+                if near:
+                    seeds.add(min(near)[1])
+            seeds = seeds or set(range(len(members)))
+        else:
+            if not accepts(pol, f.cost.get(cid), f.entry_p.get(cid), cid in f.close):
+                abstained += 1
+                continue
+            seeds = {len(members) - 1} if cid in f.rev else {0}
+        boxes = selected_boxes(c, seeds, pol.internal_p)
+        if len(boxes) < len(c.tl.boxes):
+            trimmed += 1
+        kept += 1
+        sel[names[p]] |= boxes
+    return sel, {"chains_kept": kept, "chains_abstained": abstained, "chains_trimmed": trimmed}
+
+
+def _suggestions(prep: "Prepared", owner: dict[int, int], names: list[str], selected: dict[str, set], own_ok: set[int],
+                 fps: float) -> list[dict]:
+    """Trozos puros que ningún tramo cubre y que una jugadora podría tener: la unión desde su última cadena anterior tiene
+    p >= SUGGEST_P_MIN y costo <= SUGGEST_COST_MAX, sin solaparse con lo suyo y llegando a su siguiente cadena. No se asignan:
+    la app los ofrece con un clic (`union_dudosa`). Una sugerencia por trozo (la jugadora de menor costo)."""
+    by_id = {c.id: c for c in prep.chains}
+    taken = set().union(*selected.values()) if selected else set()
+    seq: dict[int, list[Chain]] = {}
+    for cid, p in owner.items():
+        seq.setdefault(p, []).append(by_id[cid])
+    for v in seq.values():
+        v.sort(key=lambda c: c.start)
+    out = []
+    for c in prep.chains:
+        if c.id not in own_ok:
+            continue
+        for t in chain_members(c):
+            if not t.boxes or any((b.frame, b.track) in taken for b in t.boxes):
+                continue
+            tc = Chain(-1, t, t.id, t.id, c.team)
+            best = None
+            for p, lst0 in seq.items():
+                lst = [x for x in lst0 if x.id != c.id]
+                prev = [x for x in lst if x.end < tc.start]
+                if not prev or any(tc.start <= x.end and x.start <= tc.end for x in lst):
+                    continue
+                a = prev[-1]
+                nxt = next((x for x in lst if x.start > tc.end), None)
+                pr = prep.link_p.get((a.last, t.id))
+                if pr is None or pr < SUGGEST_P_MIN or not _reaches(tc, nxt, fps):
+                    continue
+                cost = transition_cost(a, tc, fps, prep.link_p)
+                if np.isfinite(cost) and cost <= SUGGEST_COST_MAX and (best is None or cost < best[0]):
+                    best = (cost, p, pr)
+            if best:
+                out.append(dict(kind="union_dudosa", person=names[best[1]], track=int(t.track), frame_ini=int(t.start),
+                                frame_fin=int(t.end), p=round(float(best[2]), 4), cost=round(float(best[0]), 3)))
+    out.sort(key=lambda d: (d["frame_ini"], d["track"]))
+    return out
+
+
 def fill_part(prep: Prepared, anchors: list[dict], unnamed_cost: float = UNNAMED_COST_REAL, doubles: bool = False,
-              weights=None, variant: str = "", progress: "Progress | None" = None) -> FillResult:
+              weights=None, variant: str = "", progress: "Progress | None" = None,
+              policy: "SegmentPolicy | None" = None) -> FillResult:
     """`variant=""`: versión A (la de siempre). `variant="exp"`: variante B, relleno con exclusión (una jugadora no recibe
-    dos cadenas solapadas) y después `exp_passes`; ignora `doubles`."""
+    dos cadenas solapadas) y después `exp_passes`; ignora `doubles`. En B cada identidad lleva además `segments` (tramos
+    [track, cuadro_ini, cuadro_fin] que sí se asignan, ver `segments.py`) según `policy` (por defecto `DEFAULT_POLICY`)."""
     from sportsan.tracking.coverage import at_edge, bridge_possible
 
     exp = variant == "exp"
@@ -545,6 +632,7 @@ def fill_part(prep: Prepared, anchors: list[dict], unnamed_cost: float = UNNAMED
     names: list[str] = []
     ignored: list[dict] = []
     anchor_of: dict[int, int] = {}
+    anchor_boxes: dict[int, list[tuple[int, int]]] = {}
     for a in anchors:
         player = str(a["player"])
         cid = resolve_anchor(prep, index, by_track, int(a["frame"]), int(a["track"]))
@@ -558,6 +646,8 @@ def fill_part(prep: Prepared, anchors: list[dict], unnamed_cost: float = UNNAMED
         p = names.index(player)
         if anchor_of.setdefault(cid, p) != p:
             ignored.append({**a, "reason": "la cadena ya tiene otra jugadora"})
+        else:
+            anchor_boxes.setdefault(cid, []).append((int(a["frame"]), int(a["track"])))
     team_of_person: dict[int, str] = {}
     for cid, p in anchor_of.items():
         team_of_person.setdefault(p, by_id[cid].team)
@@ -682,8 +772,23 @@ def fill_part(prep: Prepared, anchors: list[dict], unnamed_cost: float = UNNAMED
     drops: list[dict] = []
     doubles_summary: dict = {}
     passes: dict = {}
+    selected: dict[str, set] = {}
+    seg_info: dict = {}
     if exp:
+        pol = policy or DEFAULT_POLICY
+        selected, seg_info = _segment_selection(prep, owner, f, anchor_of, anchor_boxes, names, pol, unnamed_cost)
+        track_frames: dict[int, list[int]] = {}
+        for fr_ in sorted(prep.rows):
+            for b_ in prep.rows[fr_]:
+                track_frames.setdefault(b_.track, []).append(fr_)
+        for idt in identities:
+            idt["segments"] = to_segments(selected.get(idt["player"], set()), track_frames)
         drops, exp_doubts, passes, interp = exp_passes(prep, identities, names, owner, anchor_of, weights, progress)
+        # Mismas pasadas 3 y 4 sobre las cajas de los tramos (lo que aplica la app nueva); los campos de arriba no cambian.
+        seg_drops, seg_doubts, seg_passes, seg_interp = exp_passes(prep, identities, names, owner, anchor_of, weights, None,
+                                                                    selected=selected)
+        for idt in identities:
+            idt["segments_interpolated"] = seg_interp.get(idt["player"], [])
         for idt in identities:
             idt["interpolated"] = interp.get(idt["player"], [])
         interp_s = passes["holes"]["interpolated_s"]
@@ -738,6 +843,18 @@ def fill_part(prep: Prepared, anchors: list[dict], unnamed_cost: float = UNNAMED
     if exp:
         summary["auto_resolved"]["drops"] = {r: sum(d["reason"] == r for d in drops) for r in ("exclusion", "ruta", "ambas", "salto")}
         out["variant"] = "exp"
+        out["segment_policy"] = {**pol.as_dict(), "unnamed_cost": unnamed_cost}
+        sd = [{**d, "task": d["kind"] in TASK_KINDS} for d in sorted(seg_doubts, key=lambda d: (d["kind"] != "salto", d["frame"]))]
+        for d in sd:
+            for bx in d.get("boxes", []):
+                bx["chain"] = index.get((bx["frame"], bx["track"]))
+        out["segments_summary"] = {**seg_info, "conflicts": segment_conflicts(identities),
+                                   "boxes": {p: len(b) for p, b in sorted(selected.items())},
+                                   "jumps": seg_passes["jumps"], "holes": seg_passes["holes"],
+                                   "tasks": sum(d["task"] for d in sd)}
+        out["suggestions"] = _suggestions(prep, owner, names, selected, own_ok, fps)
+        out["segment_drops"] = seg_drops
+        out["segment_doubts"] = sd
         out["passes"] = {"exclusion": {"blocked": f.excluded, **passes["exclusion"]},
                          **{k: v for k, v in passes.items() if k != "exclusion"}}
     return FillResult(names, owner, f, ignored, out)
@@ -773,6 +890,11 @@ def cli(argv: list[str]) -> None:
     ap.add_argument("--zones", choices=["thirds", "quantiles"], default="thirds", help="hybrid: cortes de franja (tercios del ancho o terciles de las cadenas)")
     ap.add_argument("--unnamed-cost", type=float, default=UNNAMED_COST_REAL, help="fill: costo de dejar una cadena sin nombre")
     ap.add_argument("--out", help="fill: escribir el resultado en este archivo (relativo a tracking/auto/ si no es absoluta) en vez de links_<parte>.json")
+    ap.add_argument("--seg-max-cost", type=float, help="fill --variant exp: costo máximo de una cadena para que entre en los tramos (por defecto, el de la política)")
+    ap.add_argument("--seg-min-entry-p", type=float, help="fill --variant exp: p mínima de la unión que enlaza una cadena con la anterior de la jugadora")
+    ap.add_argument("--seg-internal-p", type=float, help="fill --variant exp: p mínima de las uniones internas de la cadena para conservar sus trozos")
+    ap.add_argument("--seg-reject-close", choices=["yes", "no"], help="fill --variant exp: abstenerse si otra jugadora quedó casi empatada")
+    ap.add_argument("--seg-prior-ok", choices=["yes", "no"], help="fill --variant exp: aceptar cadenas sin candidato de unión (costo a priori)")
     ap.add_argument("--no-feet", action="store_true")
     ap.add_argument("--doubles", action="store_true", help="fill: resolver las dobles cajas con «drops» (apagado por defecto: aún no es seguro, ver revision/dobles_cajas.md)")
     ap.add_argument("--variant", choices=["exp"], help="fill: variante B (experimento): exclusión en la asignación, dobles cajas, "
@@ -809,16 +931,23 @@ def cli(argv: list[str]) -> None:
         if not af.exists():
             raise SystemExit(f"Falta {af} (lo escribe la app)")
         pg.log("relleno", 0, 1)
+        pol = DEFAULT_POLICY
+        over = {k: v for k, v in (("max_cost", args.seg_max_cost), ("min_entry_p", args.seg_min_entry_p),
+                                  ("internal_p", args.seg_internal_p),
+                                  ("prior_ok", None if args.seg_prior_ok is None else args.seg_prior_ok == "yes"),
+                                  ("reject_close", None if args.seg_reject_close is None else args.seg_reject_close == "yes")) if v is not None}
+        if over:
+            pol = SegmentPolicy(**{**pol.as_dict(), **over})
         r = fill_part(prep, json.loads(af.read_text(encoding="utf-8")).get("anchors", []), args.unnamed_cost, args.doubles,
-                      variant=args.variant or "", progress=pg)
+                      variant=args.variant or "", progress=pg, policy=pol)
         pg.log("relleno", 1, 1)
-        dest = auto / (f"links_{args.part}_exp.json" if args.variant else f"links_{args.part}.json")
+        dest = auto / (f"links_{args.part}_exp_tramos.json" if args.variant else f"links_{args.part}.json")
         if args.out:
             dest = Path(args.out)
             if not dest.is_absolute():
                 dest = auto / dest
-        if args.variant and dest.name == f"links_{args.part}.json":
-            raise SystemExit("La variante B no puede escribir links_<parte>.json (es el de la versión A)")
+        if args.variant and dest.name in (f"links_{args.part}.json", f"links_{args.part}_exp.json"):
+            raise SystemExit("La variante B escribe links_<parte>_exp_tramos.json; no pisa links_<parte>.json ni links_<parte>_exp.json")
         _write(dest, r.out)
         sm = r.out["doubt_summary"]
         print(f"{len(r.out['identities'])} identidades, tareas {sm['tasks']} {sm['by_kind']}, autoresueltas {sm['auto_resolved']}, "

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autoFixed, ballReport, passStretches, behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passArrows, passNetwork, passesAndTurnovers, positionsAt, touches, unnamedLeftovers } from "./positions.ts";
+import { MIN_PASS_GAP_S, autoFixed, ballReport, passStretches, behindBallAtLosses, heatmap, inferOwnAttacksRight, parseFixed, passArrows, passNetwork, passesAndTurnovers, positionsAt, touches, unnamedLeftovers } from "./positions.ts";
 
 // A corrected part: 30 fps, one of every 3 frames. `at(i)` gives the positions of processed frame i.
 const fixed = ({ n = 10, people, at, ball = [] }) => ({
@@ -43,15 +43,15 @@ test("who has the ball, passes and changes of team", () => {
   const at = () => [q(1, 20, 30), q(2, 40, 30), q(3, 60, 30)];
   const ball = [
     { frame: 0, x: 20.5, y: 30, source: "manual" },
-    { frame: 3, x: 30, y: 30, source: "interpolated" }, // in flight: nobody
-    { frame: 6, x: 39.5, y: 30, source: "manual" },
-    { frame: 9, x: 59, y: 30, source: "manual" },
+    { frame: 15, x: 30, y: 30, source: "interpolated" }, // in flight: nobody
+    { frame: 30, x: 39.5, y: 30, source: "manual" },
+    { frame: 45, x: 59, y: 30, source: "manual" },
   ];
-  const f = fixed({ people, at, ball });
+  const f = fixed({ n: 20, people, at, ball });
   assert.deepEqual(touches(f).map((t) => t.id), [1, 2, 3]);
   const r = passesAndTurnovers(f);
   assert.deepEqual(r.passes.map((p) => [p.from, p.to]), [[1, 2]]);
-  assert.deepEqual(r.turnovers, [{ frame: 9, from_frame: 6, from: 2, lost: "own" }]);
+  assert.deepEqual(r.turnovers, [{ frame: 45, from_frame: 30, from: 2, lost: "own" }]);
   const net = passNetwork([{ file: f, ownRight: true }], "own");
   assert.deepEqual(net.edges, [{ a: "Ana", b: "Bea", count: 1 }]);
   assert.equal(net.passes, 1);
@@ -67,10 +67,10 @@ test("an interpolated ball is never a touch, even right next to a player (it wen
   const at = () => [q(1, 20, 30), q(2, 40, 30), q(3, 30, 30.5)];
   const ball = [
     { frame: 0, x: 20.5, y: 30, source: "manual" },
-    { frame: 3, x: 30, y: 30, source: "interpolated" },
-    { frame: 6, x: 39.5, y: 30, source: "manual" },
+    { frame: 15, x: 30, y: 30, source: "interpolated" },
+    { frame: 30, x: 39.5, y: 30, source: "manual" },
   ];
-  const f = fixed({ people, at, ball });
+  const f = fixed({ n: 20, people, at, ball });
   assert.deepEqual(touches(f).map((t) => t.id), [1, 2]);
   const r = passesAndTurnovers(f);
   assert.deepEqual(r.passes.map((p) => [p.from, p.to]), [[1, 2]]);
@@ -243,4 +243,45 @@ test("pases por tramo: completo con el equipo analizado y el balón seguidos; si
   // The second stretch has no tracking at all.
   assert.equal(rows[1].done, false);
   assert.equal(rows[1].own, 0);
+});
+
+
+// ---------------------------------------------------------------------------------------------- pass rules (W1-C)
+
+test("dos toques del mismo equipo a menos de 0.5 s no son un pase (cambio de fragmento)", () => {
+  const people = [P(1, "own", "Ana"), P(2, "own", "Bea")];
+  const at = () => [q(1, 20, 30), q(2, 40, 30)];
+  // 0.2 s apart (6 frames at 30 fps): a fragment change; 1 s apart: a pass.
+  const quick = fixed({ n: 40, people, at, ball: [M(0, 20.5, 30), M(6, 39.5, 30)] });
+  assert.equal(passesAndTurnovers(quick).passes.length, 0);
+  const slow = fixed({ n: 40, people, at, ball: [M(0, 20.5, 30), M(30, 39.5, 30)] });
+  assert.equal(passesAndTurnovers(slow).passes.length, 1);
+  assert.equal(MIN_PASS_GAP_S, 0.5);
+});
+
+test("un equipo con nombres: un pase solo cuenta con nombre en los dos extremos, y no entre dos cajas de la misma jugadora, no cuenta", () => {
+  // Ana, Bea named; id 4 is an unnamed leftover of the same team (named team: Ana and Bea are most of the positions).
+  const people = [P(1, "own", "Ana"), P(2, "own", "Bea"), P(4, "own"), P(5, "own", "Ana")];
+  const at = () => [q(1, 20, 30), q(2, 40, 30), q(4, 60, 30), q(5, 80, 30)];
+  const ball = [M(0, 20.5, 30), M(30, 40.5, 30), M(60, 60.5, 30), M(90, 80.5, 30)];
+  const f = fixed({ n: 40, people, at, ball });
+  // Ana(1) -> Bea(2) counts. The unnamed leftover (4) never takes the ball, so Bea -> Ana(5) is the next pass: both ends
+  // have a name and none is counted with her.
+  const r = passesAndTurnovers(f);
+  assert.deepEqual(r.passes.map((p) => [p.from, p.to, p.approx]), [[1, 2, false], [2, 5, false]]);
+  // Ana(1) -> Ana(5): the same player in two fragments is not a pass.
+  const g = fixed({ n: 40, people, at, ball: [M(0, 20.5, 30), M(30, 80.5, 30)] });
+  assert.equal(passesAndTurnovers(g).passes.length, 0);
+});
+
+test("un equipo sin nombres (el rival) cuenta pases a nivel de equipo, marcados como aproximados", () => {
+  const people = [P(1, "opp"), P(2, "opp"), P(3, "own", "Ana")];
+  const at = () => [q(1, 20, 30), q(2, 40, 30), q(3, 90, 30)];
+  const f = fixed({ n: 40, people, at, ball: [M(0, 20.5, 30), M(30, 40.5, 30)] });
+  const r = passesAndTurnovers(f);
+  assert.deepEqual(r.passes.map((p) => [p.team, p.approx]), [["opp", true]]);
+  const rep = ballReport([{ file: f, ownRight: true }], {}, []);
+  assert.equal(rep.passes.opp.completed, 1);
+  assert.equal(rep.passes.opp.approx, 1);
+  assert.equal(rep.passes.own.approx, 0);
 });

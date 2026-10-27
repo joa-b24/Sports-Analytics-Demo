@@ -86,6 +86,13 @@ PASS_COLUMNS = ["pass_id", "match_id", "video_id", "t_video", "period", "team", 
 PASS_TEAMS = ("own", "opp")
 PASS_OUTCOMES = ("complete", "incomplete")
 
+# Posesión derivada (2026-10-25): possession_<video_id>.csv, la escribe la app (web/lib/possession.ts) desde tracks_fixed_*.
+# Una fila por intervalo; sin solapes dentro de un video_id. `flags` es texto separado por comas.
+POSSESSION_COLUMNS = ["video_id", "segment_id", "t_start", "t_end", "team", "first_player", "last_player", "kind", "flags"]
+POSSESSION_TEAMS = ("own", "opp", "none")
+POSSESSION_KINDS = ("control", "contested", "loose", "dead", "unknown")
+_POSSESSION_EPS_S = 1e-6
+
 
 class SchemaError(ValueError):
     """El DataFrame no cumple el contrato de datos."""
@@ -153,6 +160,28 @@ def validate_passes(df: pd.DataFrame) -> pd.DataFrame:
         raise SchemaError("passes: to_id va solo en los completos (un pase incompleto no llega a nadie del equipo)")
     if (df["t_video"] < 0).any():
         raise SchemaError("passes: t_video no puede ser negativo")
+    return df
+
+
+def validate_possession(df: pd.DataFrame) -> pd.DataFrame:
+    _require(df, POSSESSION_COLUMNS, "possession")
+    for column in ("video_id", "segment_id"):
+        if df[column].isna().any() or (df[column].astype(str).str.strip() == "").any():
+            raise SchemaError(f"possession: {column} no puede ir vacío")
+    if df[["t_start", "t_end"]].isna().any().any():
+        raise SchemaError("possession: t_start y t_end no pueden ir vacíos")
+    if not df["team"].isin(POSSESSION_TEAMS).all():
+        raise SchemaError(f"possession: team inválido; permitidos {POSSESSION_TEAMS}")
+    if not df["kind"].isin(POSSESSION_KINDS).all():
+        raise SchemaError(f"possession: kind inválido; permitidos {POSSESSION_KINDS}")
+    if (df["t_start"] < 0).any():
+        raise SchemaError("possession: t_start no puede ser negativo")
+    if (df["t_end"] <= df["t_start"]).any():
+        raise SchemaError("possession: t_end debe ser mayor que t_start")
+    for video_id, g in df.groupby("video_id"):
+        g = g.sort_values("t_start")
+        if (g["t_start"].to_numpy()[1:] < g["t_end"].to_numpy()[:-1] - _POSSESSION_EPS_S).any():
+            raise SchemaError(f"possession: intervalos solapados en {video_id}")
     return df
 
 

@@ -382,3 +382,16 @@ Exportada desde la pestaña Revisión (`comparacion_v2_34220_45027.json`). A = r
 
 Medición usada en este documento: scripts `trackstats.mjs` y `trackstats2.mjs` (fuera del repo, en el directorio
 temporal de la sesión); conviene pasarlos a `src/sportsan/tracking/` como `python -m sportsan.tracking.audit` en la F1.
+
+## 11. Tramos por identidad (`segments`) y sugerencias (A1-py, 2026-10-25)
+
+`python -m sportsan.tracking.anchors fill --part <parte> --variant exp` escribe `tracking/auto/links_<parte>_exp_tramos.json` (ya no pisa `links_<parte>_exp.json`). Los campos de antes no cambian (la app antigua los lee). Nuevos:
+
+- `identities[].segments`: `[[track_id, frame_ini, frame_fin], ...]`, frames **inclusivos** y los de `tracks_<parte>.json`. Son solo los tramos que el relleno asignó a esa persona (ancla y trozos alcanzables, o cadena asignada). Un tramo no cruza un cuadro del mismo track que no sea de esa persona; tramos de identidades distintas nunca se solapan (`segments_summary.conflicts` = 0). Un track puede aparecer en varias identidades, cada una con su rango.
+- `identities[].segments_interpolated`, `segment_drops`, `segment_doubts`, `segments_summary`: las pasadas de saltos y huecos recalculadas sobre las cajas de los tramos (las de siempre, `drops`/`doubts`/`interpolated`, siguen sobre tracks completos).
+- `segment_policy`: umbrales usados.
+- `suggestions`: `[{"kind":"union_dudosa","person","track","frame_ini","frame_fin","p","cost"}]`: trozos puros que ningún tramo cubre y que una jugadora podría tener (p de la unión >= 0.8, costo <= 1.0, sin solape con lo suyo). **No se asignan**; la app los ofrece con un clic (medido ~84 % de acierto).
+
+Política por defecto (`segments.DEFAULT_POLICY`; banderas `--seg-*`): costo <= 1.0, p de entrada >= 0.8 (sin candidato: se abstiene), uniones internas >= 0.995 (un trozo unido por una unión más floja se suelta), se abstiene si otra jugadora quedó casi empatada. Las anclas siempre entran (solo se sueltan los trozos unidos con uniones flojas).
+
+**Precisión medida (3 partes, contra `labels_*.json`, que parten del relleno B)**. Ningún punto llegó a 98 % en lo que el relleno nombra solo (cajas fuera del trozo clicado): el mejor, que es el defecto, da 94.9 % (todas las cajas que no son de la persona cuentan mal, incluidas las quitadas «no» y las sin verdad), con cobertura 64.5 % (sin tramos: 80.0 %, 95.3 %). Si solo se cuentan cambios de persona (otra jugadora con nombre), el defecto da 97.1 / 99.4 / 99.5 %; ese criterio llega a 98 % con `--seg-internal-p 0.98 --seg-min-entry-p 0.8` (cobertura 73.9 %). Lo que falta: la mayor parte del error es caja duplicada o no jugadora dentro de un track correcto, no cambio de persona; hace falta limpiar dobles cajas antes de medir. Curva completa en el scratchpad de la sesión (`a1_grid_*.json`).

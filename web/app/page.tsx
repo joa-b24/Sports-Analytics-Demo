@@ -28,7 +28,7 @@ const LOAD_METRICS: [string, string][] = [
 ];
 
 // The steps a match can finish by itself, in the order of its modes (the board is not tied to one match).
-const STEP_ORDER = MODES.flatMap((m) => m.steps.map(([id, label]) => [id, label] as [StepId, string])).filter(([id]) => id !== "board");
+const STEP_ORDER = MODES.flatMap((m) => m.steps.map(([id, label]) => [id, label] as [StepId, string])).filter(([id]) => (id as string) !== "board");
 
 const fmtDate = (d: string, year = true) =>
   d ? new Date(`${d}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}) }) : "Sin fecha";
@@ -68,6 +68,7 @@ function FaceOffRow({ c, i }: { c: Comparison; i: number }) {
     </span>
   );
   return (
+    <div>
     <div className="grid grid-cols-[2.75rem_minmax(0,1fr)_5.5rem_minmax(0,1fr)_2.75rem] items-center gap-2 sm:grid-cols-[3.25rem_minmax(0,1fr)_7.5rem_minmax(0,1fr)_3.25rem] sm:gap-3">
       {value(c.own, "own")}
       <div className="flex h-2 justify-end overflow-hidden rounded-full bg-raised">
@@ -84,6 +85,8 @@ function FaceOffRow({ c, i }: { c: Comparison; i: number }) {
         />
       </div>
       {value(c.opp, "opp")}
+    </div>
+    {c.note && <p className="m-0 mt-0.5 text-center text-[11px] text-faint">{c.note}</p>}
     </div>
   );
 }

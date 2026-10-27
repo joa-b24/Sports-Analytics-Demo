@@ -186,12 +186,13 @@ export function PhysicalSection({ parts, side, team }: { parts: Oriented[]; side
         <thead>
           <tr className="text-left text-xs text-faint">
             <th className="py-1 font-normal">Jugadora</th>
-            <th className="py-1 text-right font-normal">Medido</th>
+            <th className="py-1 text-right font-normal" title="Tiempo en cuadro (medido o rellenado); el relleno va en su propia columna">Tiempo visto</th>
             <th className="py-1 text-right font-normal">Distancia</th>
             <th className="py-1 text-right font-normal">m/min</th>
-            <th className="py-1 text-right font-normal">Máx. km/h</th>
-            <th className="py-1 text-right font-normal">&gt;18 km/h</th>
+            <th className="py-1 text-right font-normal">Vel. máx. km/h</th>
+            <th className="py-1 text-right font-normal" title="Carrera de alta velocidad: distancia a más de 18 km/h">HSR</th>
             <th className="py-1 text-right font-normal">Sprints</th>
+            <th className="py-1 text-right font-normal" title="Parte del tiempo visto que viene de posiciones rellenadas (extrapoladas), no medidas">% relleno</th>
           </tr>
         </thead>
         <tbody>
@@ -209,12 +210,13 @@ export function PhysicalSection({ parts, side, team }: { parts: Oriented[]; side
               <td className="num py-1.5 text-right text-ink">{r.top_kmh ?? "—"}</td>
               <td className="num py-1.5 text-right text-ink">{r.hsr_m} m</td>
               <td className="num py-1.5 text-right text-ink">{r.sprints}</td>
+              <td className="num py-1.5 text-right text-muted">{Math.round(r.fill_time_pct)} %</td>
             </tr>
           ))}
         </tbody>
       </table>
       <p className="mt-1 text-xs text-faint">
-        Solo el tiempo en cuadro: lo que la cámara no ve no se mide. Velocidad sobre ventanas de 1 s; sprint: más de 22 km/h durante 1 s o más.
+        Solo el tiempo en cuadro: lo que la cámara no ve no se mide. Velocidad sobre ventanas de 1 s; HSR: distancia a más de 18 km/h; sprint: más de 22 km/h durante 1 s o más. % relleno: parte del tiempo visto con posición rellenada, no medida.
       </p>
     </div>
   );

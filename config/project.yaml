@@ -6,6 +6,5 @@ default_match: 2026_09_25_tec_ccm_vs_anahuac   # partido que usan los comandos s
 pitch:
   length_m: 105
   width_m: 68
-
 paths:
   mock_dir: data/mock

@@ -4,7 +4,7 @@
 // Everything here only counts what the camera saw: a player out of frame is not absent, just not seen. Positions
 // filled inside short holes ("interpolated") are left out of the counts; they are not measurements.
 import { boxTeamOf, fileTeamRefs, type TracksFile } from "./tracks.ts";
-import { viewPolygon } from "./parts.ts";
+import { ballJumpFrames, viewPolygon } from "./parts.ts";
 import type { Segment } from "./segments.ts";
 import { laneThirdOf } from "./stats.ts";
 import { PITCH, type MatchEvent } from "./types.ts";
@@ -230,15 +230,67 @@ export function touches(f: FixedFile): Touch[] {
   return ballStates(f).flatMap((s) => (s.touch ? [s.touch] : []));
 }
 
+// A person near the ball, as seen by the rule that says who has it.
+export interface HolderCand {
+  id: number;
+  team: FixedTeam;
+  d: number; // meters to the ball
+  x: number;
+  y: number;
+  // A person without a name of a team that is named in the part (unnamedLeftovers).
+  leftover: boolean;
+  // Position filled in a hole (not measured).
+  interp: boolean;
+}
+// A box this close (m) to a nearer person that cannot take the ball is taken as her duplicate box (a second box on the
+// same player), not as somebody else in the way.
+export const DUPLICATE_BOX_M = 1;
+// Rivals this much farther than the nearest one (m) make the ball contested.
+export const CONTEST_MARGIN_M = 0.5;
+
+export type HolderDecision<T extends HolderCand = HolderCand> =
+  | { kind: "touch"; cand: T }
+  // `a` is the nearest, `b` the nearest of the other team (within CONTEST_MARGIN_M of `a`).
+  | { kind: "contested"; a: T; b: T }
+  // The nearest person is a referee, someone with no team or a leftover without a name: nobody can be credited, and the
+  // ball is NOT passed on to the next-nearest player (that would hand it to whoever happens to stand a bit farther).
+  | { kind: "blocked"; cand: T }
+  | { kind: "free" };
+
+const canHold = (c: HolderCand) => (c.team === "own" || c.team === "opp") && !c.leftover;
+
+// Who has the ball among the people within `controlM`: the nearest one, unless
+//   - she cannot hold it (blocked, see above), unless a person who can stands within DUPLICATE_BOX_M of her (then she
+//     is a duplicate box of that player and is ignored);
+//   - a player of the other team is within CONTEST_MARGIN_M of the same distance (contested).
+export function decideHolder<T extends HolderCand>(cands: T[], controlM = POSSESS_M, contestM = CONTEST_MARGIN_M): HolderDecision<T> {
+  const near = cands.filter((c) => c.d <= controlM).sort((a, b) => a.d - b.d);
+  const ok = near.filter(canHold);
+  let first: T | null = null;
+  for (const c of near) {
+    if (canHold(c)) {
+      first = c;
+      break;
+    }
+    if (!ok.some((o) => Math.hypot(o.x - c.x, o.y - c.y) <= DUPLICATE_BOX_M)) return { kind: "blocked", cand: c };
+  }
+  if (!first) return { kind: "free" };
+  const rival = ok.find((c) => c.team !== first.team);
+  return rival && rival.d - first.d < contestM ? { kind: "contested", a: first, b: rival } : { kind: "touch", cand: first };
+}
+
 // What the ball is doing at each known position: held (a touch), contested (players of both teams about as near),
-// or free (nobody near enough). `followed`: a hand mark, or a position joined to one by less than BALL_FILL_S (the
-// time counted as "ball followed"); positions taken only from tagged events, far from any mark, are not.
+// blocked (the nearest person cannot hold it), or free (nobody near enough). `followed`: a hand mark, or a position
+// joined to one by less than BALL_FILL_S (the time counted as "ball followed"); positions taken only from tagged
+// events, far from any mark, are not. `jump`: a tracker position that is part of an impossible jump (never a touch).
 export interface BallState {
   frame: number;
   source: string;
   followed: boolean;
   touch: Touch | null;
   contested: boolean;
+  blocked: boolean;
+  jump: boolean;
 }
 // Same as BALL_FILL_S in parts.ts (not imported: this module stays free of the drawing code).
 const FOLLOW_S = 3;
@@ -247,6 +299,8 @@ export function ballStates(f: FixedFile): BallState[] {
   const team = new Map(f.people.map((p) => [p.id, p.team]));
   const leftover = new Set(unnamedLeftovers(f).map((l) => l.id));
   const byFrame = new Map(f.frames.map((fr) => [fr.frame, fr.positions]));
+  const [mx, my] = metersPerUnit(f);
+  const jumps = ballJumpFrames(f.ball, f.fps, mx, my);
   // Followed: a hand mark or the ball tracker (precise), and what lies close to one of them.
   const manual = f.ball.filter((b) => b.source === "manual" || b.source === "auto").map((b) => b.frame).sort((x, y) => x - y);
   const nearManual = (frame: number) => {
@@ -263,23 +317,18 @@ export function ballStates(f: FixedFile): BallState[] {
   };
   const out: BallState[] = [];
   for (const b of [...f.ball].sort((x, y) => x.frame - y.frame)) {
-    const state: BallState = { frame: b.frame, source: b.source, followed: b.source === "manual" || b.source === "auto" || nearManual(b.frame), touch: null, contested: false };
+    const state: BallState = { frame: b.frame, source: b.source, followed: b.source === "manual" || b.source === "auto" || nearManual(b.frame), touch: null, contested: false, blocked: false, jump: jumps.has(b.frame) };
     out.push(state);
-    if (b.source === "interpolated") continue;
+    if (b.source === "interpolated" || state.jump) continue;
     const ps = byFrame.get(b.frame);
     if (!ps) continue;
-    const near = ps
-      .filter((q) => q.source !== "interpolated" && !leftover.has(q.id))
-      .map((q) => ({ q, t: team.get(q.id), d: realDistance(f, q.x, q.y, b.x, b.y) }))
-      .filter((c) => (c.t === "own" || c.t === "opp") && c.d <= POSSESS_M)
-      .sort((a, c) => a.d - c.d);
-    if (near.length === 0) continue;
-    const rival = near.find((c) => c.t !== near[0].t);
-    if (rival && rival.d - near[0].d < 0.5) {
-      state.contested = true;
-      continue;
-    }
-    state.touch = { frame: b.frame, id: near[0].q.id, team: near[0].t as "own" | "opp" };
+    const cands: HolderCand[] = ps
+      .filter((q) => q.source !== "interpolated")
+      .map((q) => ({ id: q.id, team: team.get(q.id) ?? "unk", d: realDistance(f, q.x, q.y, b.x, b.y), x: q.x * mx, y: q.y * my, leftover: leftover.has(q.id), interp: false }));
+    const dec = decideHolder(cands);
+    if (dec.kind === "touch") state.touch = { frame: b.frame, id: dec.cand.id, team: dec.cand.team as "own" | "opp" };
+    else if (dec.kind === "contested") state.contested = true;
+    else if (dec.kind === "blocked") state.blocked = true;
   }
   return out;
 }
@@ -290,6 +339,9 @@ export interface Pass {
   from: number;
   to: number;
   team: "own" | "opp";
+  // The team has no names in this part: the pass is read between two boxes of the team, so a change of fragment of
+  // the same player can pass for a pass. Counted at team level only, and shown as approximate.
+  approx: boolean;
 }
 export interface Turnover {
   frame: number; // when the other team first has it
@@ -298,18 +350,47 @@ export interface Turnover {
   lost: "own" | "opp";
 }
 
+// Two touches of one team closer in time than this are not a pass: it is the same player whose track changed fragment.
+export const MIN_PASS_GAP_S = 0.5;
+
+// Which teams are named in a part (more than NAMED_TEAM_MIN of their measured positions belong to a named person).
+export function namedTeams(f: FixedFile): { own: boolean; opp: boolean } {
+  const person = new Map(f.people.map((p) => [p.id, p]));
+  const seen = { own: 0, opp: 0 };
+  const named = { own: 0, opp: 0 };
+  for (const fr of f.frames)
+    for (const q of fr.positions) {
+      const p = person.get(q.id);
+      if (!p || (p.team !== "own" && p.team !== "opp") || q.source === "interpolated") continue;
+      seen[p.team]++;
+      if (p.player_id) named[p.team]++;
+    }
+  return { own: seen.own > 0 && named.own / seen.own > NAMED_TEAM_MIN, opp: seen.opp > 0 && named.opp / seen.opp > NAMED_TEAM_MIN };
+}
+
 // Passes and changes of team from the sequence of holders. Only when the ball is followed: with no ball, nothing.
+// A pass needs at least MIN_PASS_GAP_S between its two touches. In a team with names both ends must have one (and be
+// two different players); in a team without names (the rival, usually) it is counted at team level and flagged `approx`.
 export function passesAndTurnovers(f: FixedFile): { passes: Pass[]; turnovers: Turnover[]; touches: Touch[] } {
   const ts = touches(f);
   const passes: Pass[] = [];
   const turnovers: Turnover[] = [];
   const maxGap = PASS_MAX_S * f.fps;
+  const person = new Map(f.people.map((p) => [p.id, p]));
+  const named = namedTeams(f);
   for (let i = 1; i < ts.length; i++) {
     const a = ts[i - 1];
     const b = ts[i];
     if (a.id === b.id || b.frame - a.frame > maxGap) continue;
-    if (a.team === b.team) passes.push({ frame: b.frame, from_frame: a.frame, from: a.id, to: b.id, team: a.team });
-    else turnovers.push({ frame: b.frame, from_frame: a.frame, from: a.id, lost: a.team });
+    if (a.team === b.team) {
+      if (b.frame - a.frame < MIN_PASS_GAP_S * f.fps) continue;
+      if (named[a.team]) {
+        const na = person.get(a.id)?.player_id;
+        const nb = person.get(b.id)?.player_id;
+        if (!na || !nb || na === nb) continue;
+      }
+      passes.push({ frame: b.frame, from_frame: a.frame, from: a.id, to: b.id, team: a.team, approx: !named[a.team] });
+    } else turnovers.push({ frame: b.frame, from_frame: a.frame, from: a.id, lost: a.team });
   }
   return { passes, turnovers, touches: ts };
 }
@@ -341,7 +422,7 @@ export function possessionCells(o: Oriented, play: Segment[] | null, cells: Map<
     if (st.touch) {
       holder = st.touch.team;
       since = st.frame;
-    } else if (st.contested) holder = null;
+    } else if (st.contested || st.blocked) holder = null;
     if (!st.followed) return;
     const t = st.frame / f.fps;
     if (!inStretches(play, t)) return;
@@ -358,6 +439,8 @@ export function possessionCells(o: Oriented, play: Segment[] | null, cells: Map<
 
 export interface TeamPasses {
   completed: number;
+  // Of the completed ones, those read in a part where the team has no names (approximate).
+  approx: number;
   // Passes cut: the other team had the ball within PASS_MAX_S of the last touch.
   cut: number;
   // By where the passer had the ball, seen by her team attacking right: thirds (own, middle, rival) and lanes (left
@@ -393,14 +476,16 @@ export interface BallReport {
   leftovers: { video_id: string; team: Side; t0: number; t1: number }[];
 }
 
-const emptyPasses = (): TeamPasses => ({ completed: 0, cut: 0, completed_by_third: [0, 0, 0], cut_by_third: [0, 0, 0], completed_by_lane: [0, 0, 0, 0, 0], cut_by_lane: [0, 0, 0, 0, 0] });
+const emptyPasses = (): TeamPasses => ({ completed: 0, approx: 0, cut: 0, completed_by_third: [0, 0, 0], cut_by_third: [0, 0, 0], completed_by_lane: [0, 0, 0, 0, 0], cut_by_lane: [0, 0, 0, 0, 0] });
 
 // Everything the report reads from the followed ball. `playByVideo`: the play stretches of each video; with none, all
 // the followed ball counts. `events` with their own video times.
-export function ballReport(parts: Oriented[], playByVideo: Record<string, Segment[]>, events: MatchEvent[]): BallReport {
+// `cells`: the possession already worked out (lib/possession.ts possessionCells, which joins the play stretches and
+// carries flags); without it, the touch-by-touch reading of this module (possessionCells above) is used.
+export function ballReport(parts: Oriented[], playByVideo: Record<string, Segment[]>, events: MatchEvent[], cellsIn?: Map<string, PossessionState>): BallReport {
   const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
   const playOf = (v: string) => (usePlay ? (playByVideo[v] ?? []) : null);
-  const cells = new Map<string, PossessionState>();
+  const cells = cellsIn ?? new Map<string, PossessionState>();
   const passes = { own: emptyPasses(), opp: emptyPasses() };
   const changes: ChangeRow[] = [];
   const players = new Map<string, PlayerTouches>();
@@ -409,7 +494,7 @@ export function ballReport(parts: Oriented[], playByVideo: Record<string, Segmen
   for (const o of parts) {
     const f = o.file;
     const play = playOf(f.video_id);
-    possessionCells(o, play, cells);
+    if (!cellsIn) possessionCells(o, play, cells);
     const ballAt = new Map(f.ball.map((b) => [b.frame, b]));
     const zone = (frame: number, team: Side) => {
       const b = ballAt.get(frame);
@@ -423,6 +508,7 @@ export function ballReport(parts: Oriented[], playByVideo: Record<string, Segmen
       if (!inPlay(p.from_frame)) continue;
       const tp = passes[p.team];
       tp.completed++;
+      if (p.approx) tp.approx++;
       const z = zone(p.from_frame, p.team);
       if (z) {
         tp.completed_by_third[z.third]++;
@@ -755,4 +841,23 @@ export function passStretches(parts: Oriented[], segmentsByVideo: Record<string,
     }
   }
   return out;
+}
+
+// ------------------------------------------------------------------------------------------- behind the ball: summary
+
+export interface BehindSummary {
+  n: number;
+  mean: number;
+  // Losses with at least REST_DEFENCE players behind the ball (the team was covered).
+  covered: number;
+  // Losses grouped by how many players were behind the ball, 0 up to the most seen; each one keeps its moment.
+  columns: { behind: number; items: BehindBall[] }[];
+}
+export const REST_DEFENCE = 4;
+
+export function behindSummary(rows: BehindBall[]): BehindSummary | null {
+  if (rows.length === 0) return null;
+  const top = Math.max(...rows.map((r) => r.behind));
+  const columns = Array.from({ length: top + 1 }, (_, behind) => ({ behind, items: rows.filter((r) => r.behind === behind) }));
+  return { n: rows.length, mean: rows.reduce((t, r) => t + r.behind, 0) / rows.length, covered: rows.filter((r) => r.behind >= REST_DEFENCE).length, columns };
 }

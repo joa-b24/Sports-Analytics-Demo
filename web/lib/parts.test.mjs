@@ -158,7 +158,7 @@ test("mantener el balón: la marca nueva cae en el mismo punto de la cancha aunq
 test("balón del tracker: entra donde no hay marca tuya ni lo quitaste, y una marca tuya gana", () => {
   const f = pannedFile();
   const auto = { frames: [{ frame: 0, px: 100, py: 100, p: 0.99 }, { frame: 3, px: 200, py: 100, p: 0.98 }, { frame: 6, px: 300, py: 100, p: 0.97 }], ask: [150] };
-  let e = setBall(emptyEdits("k"), 3, 250, 120);
+  let e = setBall(emptyEdits("k"), 3, 210, 120);
   e = { ...e, ballRejected: [6] };
   const pts = autoBall(f, auto, e);
   assert.deepEqual(pts.map((p) => [p.frame, p.source]), [[0, "auto"]]);

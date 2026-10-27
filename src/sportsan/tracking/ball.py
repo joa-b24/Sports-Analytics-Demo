@@ -13,6 +13,8 @@ Cómo decide, por cuadro procesado de la parte (1 de cada `stride`):
 
 Uso (desde la raíz del repo, con `pip install -e ".[detect]"`):
     python -m sportsan.tracking.ball train [--match <id> ...]          # modelo con las marcas a mano de esos partidos
+    python -m sportsan.tracking.ball train --match <id> --samples matches/<id>/tracking/ball_samples_<video>.json [--exclude-aerial] [--holdout 0.2]
+                                                                       # solo con muestras limpias del Playground; no toca weights/ball_model.pt
     python -m sportsan.tracking.ball run --match <id> [--video v1] [--part tracks_v1_<ini>_<fin>.json] [--force]
     python -m sportsan.tracking.ball eval --match <id> --part tracks_v1_<ini>_<fin>.json   # contra las marcas a mano
 """
@@ -66,6 +68,8 @@ BALL_MAX_MS = 35.0
 BALL_MIN_M = 5.0
 BALL_PAIR_MAX_S = 3.0
 DETOUR_S = 2.0
+# Marca de salto en la salida (ver flag_points).
+FLAG_JUMP_MS = 30.0
 
 
 # ------------------------------------------------------------------------------------------------- geometría
@@ -406,7 +410,7 @@ def collect(folders: list[Path], max_frames_per_part: int = 400, seed: int = 0, 
     return np.concatenate(X), np.array(y, np.float32), {"used_marks": used, "skipped_marks": skipped}
 
 
-def fit(X: np.ndarray, y: np.ndarray, epochs: int = 12, seed: int = 0):
+def fit(X: np.ndarray, y: np.ndarray, epochs: int = 12, seed: int = 0, on_epoch=None):
     import torch
     import torch.nn as nn
 
@@ -436,8 +440,10 @@ def fit(X: np.ndarray, y: np.ndarray, epochs: int = 12, seed: int = 0):
             loss = loss_fn(net(xb), yb)
             loss.backward()
             opt.step()
-            total += float(loss) * len(b)
+            total += float(loss.detach()) * len(b)
         print(f"  época {ep + 1}/{epochs}: pérdida {total / len(idx):.4f}")
+        if on_epoch:
+            on_epoch(ep + 1, epochs)
     net.eval()
     return net
 
@@ -458,6 +464,327 @@ def train(matches: list[str], out: Path | None = None, exclude: set[str] = froze
             "trained": time.strftime("%Y-%m-%d %H:%M"), "patch": PATCH, "positives_from": positives, "search": search, **info}
     torch.save({"weights": net.state_dict(), "meta": meta}, out)
     print(f"Modelo en {out} ({time.time() - t0:.0f} s)")
+    return out
+
+
+# ------------------------------------------------------------------------- entrenamiento con muestras limpias
+# Muestras marcadas a mano en la pestaña Playground (matches/<id>/tracking/ball_samples_<video>.json); formato en
+# docs/playground_balon_formato.md. Es un archivo de trabajo, fuera del contrato.
+
+SAMPLES_MIN = 100
+HOLDOUT_BLOCK_S = 2.0
+EVAL_RADIUS_PX = 15.0
+EVAL_THRESHOLDS = (0.5, ACCEPT_P)
+DEFAULT_STRIDE = 3
+
+
+def _pair(v, what: str) -> tuple[float, float]:
+    if not isinstance(v, (list, tuple)) or len(v) != 2 or not all(isinstance(c, (int, float)) and not isinstance(c, bool) and math.isfinite(c) for c in v):
+        raise ValueError(f"{what}: se esperaba [x, y] numérico, llegó {v!r}")
+    return float(v[0]), float(v[1])
+
+
+def _time(v, what: str) -> float:
+    if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0:
+        raise ValueError(f"{what} inválido: {v!r}")
+    return float(v)
+
+
+def parse_samples(doc: dict | str | Path) -> dict:
+    """Lee y valida un archivo ball_samples. Lanza ValueError con la posición del elemento malo."""
+    if not isinstance(doc, dict):
+        doc = json.loads(Path(doc).read_text(encoding="utf-8"))
+    if doc.get("kind") != "ball_samples":
+        raise ValueError(f"kind debe ser 'ball_samples', llegó {doc.get('kind')!r}")
+    if not doc.get("video_id"):
+        raise ValueError("falta video_id")
+    fps = doc.get("fps")
+    if fps is not None and (not isinstance(fps, (int, float)) or isinstance(fps, bool) or fps <= 0):
+        raise ValueError(f"fps inválido: {fps!r}")
+    samples, negatives = [], []
+    for i, s in enumerate(doc.get("samples") or []):
+        t = _time(s.get("t_video"), f"samples[{i}].t_video")
+        px = _pair(s.get("px"), f"samples[{i}].px")
+        sh = s.get("shadow_px")
+        samples.append({"t_video": t, "px": px, "aerial": bool(s.get("aerial", False)),
+                        "shadow_px": None if sh is None else _pair(sh, f"samples[{i}].shadow_px")})
+    seen = set()
+    for i, n in enumerate(doc.get("negatives") or []):
+        t = _time(n.get("t_video"), f"negatives[{i}].t_video")
+        if round(t, 4) not in seen:
+            seen.add(round(t, 4))
+            negatives.append({"t_video": t})
+    return {"video_id": doc["video_id"], "fps": float(fps) if fps else None, "samples": samples, "negatives": negatives}
+
+
+def split_holdout(ts: list[float], frac: float, seed: int = 0, block_s: float = HOLDOUT_BLOCK_S) -> tuple[list[int], list[int]]:
+    """Reparte índices en (entrenamiento, reserva) por bloques de tiempo: dos muestras a menos de `block_s` van juntas
+    (cuadros vecinos casi iguales entre los dos grupos inflarían la validación). Determinista con `seed`."""
+    n = len(ts)
+    if frac <= 0 or n < 2:
+        return list(range(n)), []
+    blocks: dict[int, list[int]] = {}
+    for i, t in enumerate(ts):
+        blocks.setdefault(int(t // block_s), []).append(i)
+    keys = sorted(blocks)
+    random.Random(seed).shuffle(keys)
+    want = max(1, round(frac * n))
+    hold: list[int] = []
+    for kb in keys:
+        if len(hold) >= want or len(hold) + len(blocks[kb]) >= n:
+            continue
+        hold += blocks[kb]
+    hs = set(hold)
+    return [i for i in range(n) if i not in hs], sorted(hold)
+
+
+class SampleFrames:
+    """Cuadros de un video por t_video exacto (frame = round(t * fps) con el fps del archivo), con H de las partes si existen."""
+
+    def __init__(self, folder: Path, video_id: str, stride: int = DEFAULT_STRIDE):
+        import cv2
+
+        self.path = video_of(folder, video_id)
+        probe = cv2.VideoCapture(str(self.path))
+        self.fps = float(probe.get(cv2.CAP_PROP_FPS) or 0.0)
+        probe.release()
+        if self.fps <= 0:
+            raise SystemExit(f"No se pudo leer el fps de {self.path}")
+        self.walker = FrameWalker(self.path)
+        self.stride = stride
+        self.k = 1.0
+        self.Hs: dict[int, list] = {}
+        self.venue: dict | None = None
+        for p in parts_of(folder, video_id):
+            tr = json.loads(p.read_text(encoding="utf-8"))
+            self.venue = self.venue or venue_of(folder, tr)
+            self.stride = tr.get("stride") or self.stride
+            self.k = tr["image_h"] / 1080
+            for fr in tr["frames"]:
+                if fr.get("H") is not None:
+                    self.Hs[fr["frame"]] = fr["H"]
+
+    def frame_of(self, t: float) -> int:
+        return int(round(t * self.fps))
+
+    def H_near(self, f: int):
+        """H del cuadro procesado más cercano (a lo más un paso); None si no hay partes que lo cubran."""
+        if f in self.Hs:
+            return self.Hs[f]
+        for d in range(1, self.stride + 1):
+            for g in (f - d, f + d):
+                if g in self.Hs:
+                    return self.Hs[g]
+        return None
+
+    def features(self, f: int):
+        """(img, H, pts, patches) del cuadro f. Candidatos de la cancha proyectada (o de todo el cuadro sin H).
+        El movimiento usa el cuadro f - stride; sin H se supone cámara quieta (identidad)."""
+        img = self.walker.read(f)
+        if img is None:
+            return None
+        H = self.H_near(f)
+        pts = candidates(img, pitch_polygon(H, self.venue) if (H is not None and self.venue) else None, cap=None)
+        prev = self.walker.read(f - self.stride) if f >= self.stride else None
+        eye = np.eye(3)
+        both = H is not None and self.H_near(f - self.stride) is not None
+        mot = motion_image(img, prev, H if both else eye, self.H_near(f - self.stride) if both else eye)
+        return img, H, pts, patches(img, mot, pts)
+
+
+def collect_samples(sf: SampleFrames, samples: list[dict], negatives: list[dict], exclude_aerial: bool, tick=None, seed: int = 0):
+    """Recortes de entrenamiento de las muestras dadas. Positivo: el candidato más cercano a `px` (a <= POS_R_PX);
+    negativos: candidatos lejos de `px`, la sombra de un balón por alto, y todo candidato de un cuadro negativo."""
+    rng = random.Random(seed)
+    X, y = [], []
+    info = {"used": 0, "skipped_no_candidate": 0, "skipped_aerial": 0, "negatives_frames": 0}
+    work = [(s["t_video"], "s", s) for s in samples] + [(n["t_video"], "n", n) for n in negatives]
+    work.sort(key=lambda w: w[0])
+    for i, (t, kind, s) in enumerate(work, 1):
+        if tick and (i % 5 == 0 or i == len(work)):
+            tick("cuadros", i, len(work))
+        if kind == "s" and exclude_aerial and s["aerial"]:
+            info["skipped_aerial"] += 1
+            continue
+        out = sf.features(sf.frame_of(t))
+        if out is None:
+            continue
+        _, _, pts, P = out
+        if len(pts) == 0:
+            if kind == "s":
+                info["skipped_no_candidate"] += 1
+            continue
+        if kind == "n":
+            idx = list(range(len(pts)))
+            if len(idx) > 2 * NEG_PER_FRAME:
+                idx = sorted(rng.sample(idx, 2 * NEG_PER_FRAME))
+            X.append(P[idx])
+            y += [0] * len(idx)
+            info["negatives_frames"] += 1
+            continue
+        d = np.hypot(pts[:, 0] - s["px"][0], pts[:, 1] - s["px"][1])
+        j = int(np.argmin(d))
+        if d[j] > POS_R_PX:
+            info["skipped_no_candidate"] += 1
+            continue
+        info["used"] += 1
+        X.append(P[j:j + 1])
+        y.append(1)
+        neg = set(np.where(d > NEG_R_PX)[0].tolist())
+        if s["shadow_px"] is not None:  # la sombra/proyección parece balón y no lo es: negativo difícil
+            ds = np.hypot(pts[:, 0] - s["shadow_px"][0], pts[:, 1] - s["shadow_px"][1])
+            neg |= set(np.where((ds <= POS_R_PX) & (d > POS_R_PX))[0].tolist())
+        neg = sorted(neg)
+        if len(neg) > NEG_PER_FRAME:
+            neg = sorted(rng.sample(neg, NEG_PER_FRAME))
+        if neg:
+            X.append(P[neg])
+            y += [0] * len(neg)
+    if sum(y) == 0:
+        raise SystemExit("Ninguna muestra cayó sobre un candidato de balón: no hay con qué entrenar (revisa px, fps y t_video).")
+    if sum(1 for v in y if v == 0) == 0:
+        raise SystemExit("No salió ningún negativo: añade muestras en cuadros con más candidatos o cuadros negativos.")
+    return np.concatenate(X), np.array(y, np.float32), info
+
+
+def _stats(rows: list[dict], thr: float) -> dict:
+    """rows: por cuadro con balón {p, err_px, err_m, hit}; se cuentan solo las predicciones con p >= thr."""
+    n = len(rows)
+    pred = [r for r in rows if r["p"] is not None and r["p"] >= thr]
+    tp = sum(1 for r in pred if r["hit"])
+    ep = [r["err_px"] for r in pred]
+    em = [r["err_m"] for r in pred if r["err_m"] is not None]
+
+    def q(v, a):
+        return round(float(np.percentile(v, a)), 2) if v else None
+
+    return {"n": n, "predicted": len(pred), "hits": tp, "precision": round(tp / len(pred), 3) if pred else None, "recall": round(tp / n, 3) if n else None,
+            "err_px_median": q(ep, 50), "err_px_p90": q(ep, 90), "err_m_median": q(em, 50), "err_m_p90": q(em, 90)}
+
+
+def evaluate_holdout(sf: SampleFrames, predict, samples: list[dict], negatives: list[dict], exclude_aerial: bool = False, tick=None) -> dict:
+    """Mide el modelo en las muestras reservadas: por cuadro toma el candidato de mayor p y lo compara con `px`.
+
+    Precisión = aciertos / predicciones (incluidas las de cuadros negativos y las que caen lejos); recall = aciertos /
+    cuadros con balón. Error en píxeles y, si hay H y sede, en metros (sobre el plano del césped: en un balón por alto
+    `px` es la proyección marcada, así que su error en metros es el de esa proyección). Separado suelo / por alto.
+    """
+    work = [(s["t_video"], s) for s in samples] + [(n["t_video"], None) for n in negatives]
+    work.sort(key=lambda w: w[0])
+    rows: dict[str, list] = {"ground": [], "aerial": []}
+    neg_pred = {thr: 0 for thr in EVAL_THRESHOLDS}
+    n_neg = 0
+    for i, (t, s) in enumerate(work, 1):
+        if tick and (i % 5 == 0 or i == len(work)):
+            tick("validación", i, len(work))
+        if s is not None and exclude_aerial and s["aerial"]:
+            continue
+        f = sf.frame_of(t)
+        out = sf.features(f)
+        if out is None:
+            continue
+        _, H, pts, P = out
+        p = predict(P) if len(pts) else np.zeros(0, np.float32)
+        if s is None:
+            n_neg += 1
+            for thr in EVAL_THRESHOLDS:
+                neg_pred[thr] += int(len(p) > 0 and p.max() >= thr)
+            continue
+        row = {"p": None, "err_px": None, "err_m": None, "hit": False}
+        if len(p):
+            j = int(np.argmax(p))
+            err = math.hypot(float(pts[j, 0]) - s["px"][0], float(pts[j, 1]) - s["px"][1])
+            row.update(p=float(p[j]), err_px=err, hit=err <= EVAL_RADIUS_PX)
+            if H is not None and sf.venue:
+                a, b = _meters(H, float(pts[j, 0]), float(pts[j, 1])), _meters(H, s["px"][0], s["px"][1])
+                if a and b:
+                    row["err_m"] = math.hypot(a[0] - b[0], a[1] - b[1])
+        rows["aerial" if s["aerial"] else "ground"].append(row)
+    res: dict = {"radius_px": EVAL_RADIUS_PX, "negative_frames": n_neg, "meters": bool(sf.Hs and sf.venue)}
+    for thr in EVAL_THRESHOLDS:
+        per = {k: _stats(v, thr) for k, v in rows.items()}
+        per["all"] = _stats(rows["ground"] + rows["aerial"], thr)
+        total_pred = per["all"]["predicted"] + neg_pred[thr]
+        per["precision"] = round(per["all"]["hits"] / total_pred, 3) if total_pred else None
+        per["false_on_negative_frames"] = neg_pred[thr]
+        per["wrong_on_positive_frames"] = per["all"]["predicted"] - per["all"]["hits"]
+        res[f"p>={thr:g}"] = per
+    return res
+
+
+def safe_model_path(out: Path | None, video: str) -> Path:
+    """Nunca el modelo vigente (weights/ball_model.pt) ni uno que ya exista."""
+    out = out or project_root() / "weights" / f"ball_model_{video}_{time.strftime('%Y%m%d_%H%M%S')}.pt"
+    if out.name == MODEL_NAME:
+        raise SystemExit(f"{out.name} es el modelo vigente: elige otro nombre con --out.")
+    if out.exists():
+        raise SystemExit(f"Ya existe {out}: no se sobrescribe; elige otro nombre con --out.")
+    return out
+
+
+def train_samples(match: str, samples_path: Path, out: Path | None = None, exclude_aerial: bool = False, holdout: float = 0.2,
+                  seed: int = 0, epochs: int = 12, stride: int | None = None) -> Path:
+    import hashlib
+
+    import torch
+
+    folder = match_dir(match)
+    doc = parse_samples(samples_path)
+    video = doc["video_id"]
+    out = safe_model_path(out, video)
+    samples, negatives = doc["samples"], doc["negatives"]
+    n_usable = sum(1 for s in samples if not (exclude_aerial and s["aerial"]))
+    if n_usable < SAMPLES_MIN:
+        print(f"AVISO: {n_usable} muestras utilizables (< {SAMPLES_MIN}); el modelo saldrá débil y la validación ruidosa. Se entrena de todos modos.")
+    if n_usable == 0:
+        raise SystemExit("No hay muestras utilizables.")
+    prog = BallProgress(folder / "tracking" / "revision" / f"progreso_train_{video}.log", echo=True)
+    tick = prog.log
+    sf = SampleFrames(folder, video, stride or DEFAULT_STRIDE)
+    if doc["fps"] and abs(doc["fps"] - sf.fps) > 0.01:
+        print(f"AVISO: el archivo dice fps {doc['fps']} y el video {sf.fps:.4f}; se usa el del video para ubicar los cuadros.")
+    items = [("s", s) for s in samples] + [("n", n) for n in negatives]
+    tr_i, ho_i = split_holdout([it[1]["t_video"] for it in items], holdout, seed)
+
+    def pick(idx, kind):
+        return [items[i][1] for i in idx if items[i][0] == kind]
+
+    tr_s, tr_n, ho_s, ho_n = pick(tr_i, "s"), pick(tr_i, "n"), pick(ho_i, "s"), pick(ho_i, "n")
+    print(f"muestras: {len(samples)} ({sum(s['aerial'] for s in samples)} por alto), negativos {len(negatives)}; "
+          f"entrenamiento {len(tr_s)}+{len(tr_n)}, reserva {len(ho_s)}+{len(ho_n)}")
+    t0 = time.time()
+    X, y, info = collect_samples(sf, tr_s, tr_n, exclude_aerial, tick, seed)
+    print(f"  {int(y.sum())} positivos, {int((1 - y).sum())} negativos; {info['skipped_no_candidate']} muestras sin candidato cerca, "
+          f"{info['skipped_aerial']} por alto excluidas")
+    net = fit(X, y, epochs=epochs, seed=seed, on_epoch=lambda e, n: tick("épocas", e, n))
+    report = None
+    if ho_s or ho_n:
+        def predict(P):
+            with torch.no_grad():
+                return torch.sigmoid(net(torch.from_numpy(P))).numpy().ravel()
+
+        report = evaluate_holdout(sf, predict, ho_s, ho_n, exclude_aerial, tick)
+        print(json.dumps(report, indent=1, ensure_ascii=False))
+    else:
+        print("Sin reserva (holdout 0 o muy pocas muestras): no hay validación.")
+    sha = hashlib.sha256(Path(samples_path).read_bytes()).hexdigest()
+    meta = {"matches": [match], "positives": int(y.sum()), "negatives": int((1 - y).sum()), "excluded": [],
+            "trained": time.strftime("%Y-%m-%d %H:%M"), "patch": PATCH, "positives_from": "samples", "search": "pitch", **info,
+            "samples": {"file": str(samples_path), "sha256": sha, "video_id": video, "n_samples": len(samples), "n_negative_frames": len(negatives),
+                        "n_aerial": sum(s["aerial"] for s in samples), "exclude_aerial": exclude_aerial, "holdout": holdout, "seed": seed,
+                        "holdout_t_video": sorted(round(it["t_video"], 3) for it in ho_s + ho_n), "validation": report}}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"weights": net.state_dict(), "meta": meta}, out)
+    out.with_suffix(".json").write_text(json.dumps(meta, indent=1, ensure_ascii=False), encoding="utf-8")
+    if report is not None:
+        v = report[f"p>={EVAL_THRESHOLDS[0]:g}"]
+        cls = lambda k: {"n": v[k]["n"], "precision": v[k]["precision"], "recall": v[k]["recall"], "error_px_median": v[k]["err_px_median"]}  # noqa: E731
+        metrics = {"kind": "ball_metrics", "video_id": video, "trained_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "model_file": str(out),
+                   "n_train": len(tr_s), "n_val": len(ho_s), "threshold": EVAL_THRESHOLDS[0], "ground": cls("ground"), "aerial": cls("aerial")}
+        mp = folder / "tracking" / f"ball_metrics_{video}.json"
+        mp.write_text(json.dumps(metrics, indent=1, ensure_ascii=False), encoding="utf-8")
+    tick("listo", 1, 1)
+    print(f"Modelo en {out} (antecedentes en {out.with_suffix('.json').name}; {time.time() - t0:.0f} s). El modelo vigente no se tocó.")
     return out
 
 
@@ -491,6 +818,45 @@ def decide(per_frame: list[tuple[int, np.ndarray, np.ndarray]], k: float = 1.0) 
         if support >= SUPPORT_MIN:
             out.append({"frame": int(f), "px": round(float(pts[j, 0]), 1), "py": round(float(pts[j, 1]), 1), "p": round(float(p[j]), 3)})
     return out
+
+
+def _meters(H, px: float, py: float) -> tuple[float, float] | None:
+    """Píxel -> metros reales de la cancha con la H del cuadro (None si no hay H o cae en el infinito)."""
+    if H is None:
+        return None
+    q = np.asarray(H, float).reshape(3, 3) @ np.array([px, py, 1.0])
+    return None if abs(q[2]) < 1e-12 else (float(q[0] / q[2]), float(q[1] / q[2]))
+
+
+def flag_points(found: list[dict], boxes_by_frame: dict, Hs: dict, fps: float, k: float = 1.0) -> list[dict]:
+    """Marca (no borra) los puntos dudosos: añade `flags` a cada uno.
+
+    - "jump": salto de más de FLAG_JUMP_MS contra TODOS sus vecinos medibles (anterior y siguiente a menos de
+      BALL_PAIR_MAX_S). Un salto que se queda (despeje) no se marca porque el siguiente punto sí es coherente.
+    - "in_player_box": dentro de la caja de una persona (jugadora, árbitro...) pero fuera de la zona de los pies:
+      un balón a los pies cae en esa zona; en el pecho o la cabeza casi siempre es un falso (o un balón por alto).
+    Sin H o sin cajas en un cuadro no se marca nada con ese criterio (la geometría no lo permite).
+    """
+    order = sorted(found, key=lambda b: b["frame"])
+    mets = [_meters(Hs.get(b["frame"]), b["px"], b["py"]) for b in order]
+    for i, b in enumerate(order):
+        flags: list[str] = []
+        speeds = []
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(order) and mets[i] is not None and mets[j] is not None:
+                dt = abs(order[j]["frame"] - b["frame"]) / fps
+                if 0 < dt <= BALL_PAIR_MAX_S:
+                    speeds.append(math.hypot(mets[j][0] - mets[i][0], mets[j][1] - mets[i][1]) / dt)
+        if speeds and all(v > FLAG_JUMP_MS for v in speeds):
+            flags.append("jump")
+        boxes = boxes_by_frame.get(b["frame"]) or []
+        if boxes:
+            pt = np.array([[b["px"], b["py"]]], np.float32)
+            inside = any(bx[1] <= b["px"] <= bx[3] and bx[2] <= b["py"] <= bx[4] for bx in boxes)
+            if inside and not at_feet(pt, feet_regions(boxes, k))[0]:
+                flags.append("in_player_box")
+        b["flags"] = flags
+    return order
 
 
 def drop_detours(found: list[dict], Hs: dict, venue: dict, fps: float) -> list[dict]:
@@ -579,8 +945,9 @@ def progress_line(phase: str, n: int, total: int, elapsed: float, total_elapsed:
 class BallProgress:
     """Registro de avance del balón en `tracking/revision/progreso_ball_<parte>.log` (la app lo lee)."""
 
-    def __init__(self, path: Path | None):
+    def __init__(self, path: Path | None, echo: bool = False):
         self.path = path
+        self.echo = echo
         self.t0 = self.p0 = time.time()
         self.phase = ""
         if path:
@@ -592,6 +959,8 @@ class BallProgress:
             self.phase, self.p0 = phase, time.time()
         now = time.time()
         line = progress_line(phase, n, total, now - self.p0, now - self.t0, time.strftime("%H:%M:%S"))
+        if self.echo:
+            print(line, flush=True)
         if self.path:
             with self.path.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
@@ -601,7 +970,7 @@ def progress_path(folder: Path, part: Path) -> Path:
     return folder / "tracking" / "revision" / ("progreso_ball_" + part.stem.removeprefix("tracks_") + ".log")
 
 
-def run_part(part: Path, model: BallModel, folder: Path, progress: BallProgress | None = None) -> dict:
+def run_part(part: Path, model: BallModel, folder: Path, progress: BallProgress | None = None, model_path: Path | None = None) -> dict:
     tr = json.loads(part.read_text(encoding="utf-8"))
     venue = venue_of(folder, tr)
     if venue is None:
@@ -620,7 +989,9 @@ def run_part(part: Path, model: BallModel, folder: Path, progress: BallProgress 
             progress.log("cuadros", i, total)
     if progress:
         progress.log("decisión", 0, 1)
-    found = drop_detours(decide(per, k), {fr["frame"]: fr.get("H") for fr in tr["frames"]}, venue, tr["fps"])
+    Hs = {fr["frame"]: fr.get("H") for fr in tr["frames"]}
+    found = drop_detours(decide(per, k), Hs, venue, tr["fps"])
+    found = flag_points(found, {fr["frame"]: fr.get("boxes") for fr in tr["frames"]}, Hs, tr["fps"], k)
     frames = [f for f, _, _ in per]
     asks = ask_frames([b["frame"] for b in found], frames, tr["fps"], play_segments(folder, tr["video_id"], tr["fps"]))
     return {
@@ -634,12 +1005,15 @@ def run_part(part: Path, model: BallModel, folder: Path, progress: BallProgress 
         "end_frame": tr["end_frame"],
         "image_w": tr["image_w"],
         "image_h": tr["image_h"],
+        "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "model_file": str(model_path) if model_path else None,
         "model": model.meta,
         "rules": {"accept_p": ACCEPT_P, "support_p": SUPPORT_P, "support_min": SUPPORT_MIN, "max_step_px": MAX_STEP_PX, "ask_every_s": ASK_EVERY_S},
         "frames": found,
         "ask": asks,
         "quality": {"processed": len(frames), "found": len(found), "found_share": round(len(found) / max(1, len(frames)), 3),
-                    "seconds": round(time.time() - t0, 1)},
+                    "flagged": sum(1 for b in found if b["flags"]), "flagged_jump": sum(1 for b in found if "jump" in b["flags"]),
+                    "flagged_in_player_box": sum(1 for b in found if "in_player_box" in b["flags"]), "seconds": round(time.time() - t0, 1)},
     }
 
 
@@ -661,14 +1035,17 @@ def run(match: str, video: str | None = None, part_name: str | None = None, forc
     model = BallModel(model_path)
     print(f"modelo: {model_path}")
     parts = [folder / "tracking" / part_name] if part_name else parts_of(folder, video)
+    for p in parts:
+        if not p.exists():
+            raise SystemExit(f"No existe la parte {p}")
     done = []
     for p in parts:
         out = p.with_name(out_name(p))
         if out.exists() and not force:
             print(f"ya existe, salto: {out.name}")
             continue
-        prog = BallProgress(progress_path(folder, p))
-        r = run_part(p, model, folder, prog)
+        prog = BallProgress(progress_path(folder, p), echo=True)
+        r = run_part(p, model, folder, prog, model_path)
         prog.log("escritura", 0, 1)
         out.write_text(json.dumps(r), encoding="utf-8")
         prog.log("listo", 1, 1)
@@ -705,6 +1082,12 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--exclude", action="append", default=[], help="parte que no se usa (para evaluarla después)")
     t.add_argument("--out", default=None)
     t.add_argument("--positives", choices=["all", "feet"], default="all", help="feet: solo marcas a los pies de una jugadora")
+    t.add_argument("--samples", default=None, help="ball_samples_<video>.json del Playground: entrena SOLO con eso (un solo --match)")
+    t.add_argument("--exclude-aerial", action="store_true", help="con --samples: no usar las muestras marcadas como balón por alto")
+    t.add_argument("--holdout", type=float, default=0.2, help="con --samples: fracción reservada para validar (por bloques de tiempo)")
+    t.add_argument("--seed", type=int, default=0)
+    t.add_argument("--epochs", type=int, default=12)
+    t.add_argument("--stride", type=int, default=None, help=f"con --samples: cuadros entre procesados, para el movimiento (por defecto el de las partes o {DEFAULT_STRIDE})")
     t.add_argument("--search", choices=["pitch", "feet"], default="pitch", help="feet: buscar solo cerca de los pies")
     r = sub.add_parser("run", help="marca el balón de las partes de un partido")
     r.add_argument("--match", required=True)
@@ -719,7 +1102,11 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--part", required=True)
     e.add_argument("--model", default=None)
     a = ap.parse_args(argv)
-    if a.cmd == "train":
+    if a.cmd == "train" and a.samples:
+        if not a.match or len(a.match) != 1:
+            ap.error("--samples necesita exactamente un --match")
+        train_samples(a.match[0], Path(a.samples), Path(a.out) if a.out else None, a.exclude_aerial, a.holdout, a.seed, a.epochs, a.stride)
+    elif a.cmd == "train":
         train(a.match or list_matches(), Path(a.out) if a.out else None, set(a.exclude), a.positives, a.search)
     elif a.cmd == "run":
         run(a.match, a.video, a.part, a.force, Path(a.model) if a.model else None, a.accept, a.support)

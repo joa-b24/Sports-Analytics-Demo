@@ -427,6 +427,38 @@ export function separateRun(edits: TrackEdits, file: TracksFile, track: number, 
   return { edits: { ...edits, splits }, identity };
 }
 
+// The stretch [a, b] of one raw track (frames inclusive) goes to `identity`; the rest of the track keeps what it was
+// (hand cuts inside the stretch are replaced, the one after it stays as it was). Null when the track has no box there.
+// One new TrackEdits: applying it is one action for the undo. Used by the one-click joins of the anchors mode.
+export function assignStretch(edits: TrackEdits, file: TracksFile, track: number, a: number, b: number, identity: number): TrackEdits | null {
+  const frames = file.frames.filter((f) => f.boxes.some((x) => x[0] === track)).map((f) => f.frame);
+  const inside = frames.filter((f) => f >= a && f <= b);
+  if (inside.length === 0) return null;
+  const fa = inside[0];
+  const nf = frames.find((f) => f > b);
+  const kept = edits.splits.filter((s) => s.track !== track || s.frame < fa || s.frame >= (nf ?? Number.POSITIVE_INFINITY));
+  const added: TrackEdits["splits"] = [];
+  if (nf !== undefined) {
+    const bx = file.frames.find((f) => f.frame === nf)?.boxes.find((x) => x[0] === track) as DetBox;
+    // Back to what the track was there before this change.
+    added.push({ track, frame: nf, identity: identityOf(bx, nf, edits) });
+  }
+  added.push({ track, frame: fa, identity });
+  return { ...edits, splits: [...kept.filter((s) => !(s.track === track && added.some((x) => x.frame === s.frame))), ...added] };
+}
+
+// Frames of [a, b] where `person` already has a live box, other than those of `exceptTrack` (a stretch given to her must
+// not collide with them).
+export function personFramesIn(file: TracksFile, edits: TrackEdits, person: number, a: number, b: number, exceptTrack?: number): number[] {
+  const drop = droppedSet(edits);
+  const out: number[] = [];
+  for (const fr of file.frames) {
+    if (fr.frame < a || fr.frame > b) continue;
+    if (fr.boxes.some((x) => x[0] !== exceptTrack && !isDropped(drop, x, fr.frame) && identityOf(x, fr.frame, edits) === person)) out.push(fr.frame);
+  }
+  return out;
+}
+
 // A hole of a person is "off camera" when she was at the edge of the image just before losing her or just after
 // finding her again: she went out of frame (or came back into it), and nothing can be fixed there. The other holes
 // happened in the middle of the image: there she was probably visible, and another piece of hers may be missing.

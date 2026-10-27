@@ -288,11 +288,16 @@ EXCURSION_S = 0.8
 A0_MS2, MAX_DECEL_MS2, ACCEL_SLACK_MS2, WINDOW_S = 7.0, 8.0, 1.0, 1.0
 
 
-def route(rows: dict[int, list], tracks: set[int], dropped: set[tuple[int, int]], conf: dict) -> list[tuple[int, float, float, int]]:
-    """(cuadro, x, y, track) por cuadro con posición: la caja de mayor confianza que queda (como `path_of`)."""
+def route(rows: dict[int, list], tracks: set[int], dropped: set[tuple[int, int]], conf: dict,
+          only: "set[tuple[int, int]] | None" = None) -> list[tuple[int, float, float, int]]:
+    """(cuadro, x, y, track) por cuadro con posición: la caja de mayor confianza que queda (como `path_of`).
+    `only`: si se da, solo cuentan esas cajas (cuadro, track) (relleno por tramos); `tracks` se ignora."""
     out = []
     for f in sorted(rows):
-        bs = [b for b in rows[f] if b.track in tracks and (f, b.track) not in dropped]
+        if only is not None:
+            bs = [b for b in rows[f] if (f, b.track) in only and (f, b.track) not in dropped]
+        else:
+            bs = [b for b in rows[f] if b.track in tracks and (f, b.track) not in dropped]
         if not bs:
             continue
         b = max(bs, key=lambda b: conf.get((f, b.track), 0.0))

@@ -139,7 +139,8 @@ export function MirrorBars({ rows, aLabel, bLabel }: { rows: { label: string; a:
 }
 
 // Shots on the pitch: filled = goal, hollow = no goal. Colour = team.
-export function ShotMap({ events, aLabel, bLabel }: { events: MatchEvent[]; aLabel: string; bLabel: string }) {
+// `onPick`: a click (or Enter) on a mark, to play that moment under the panel.
+export function ShotMap({ events, aLabel, bLabel, onPick }: { events: MatchEvent[]; aLabel: string; bLabel: string; onPick?: (e: MatchEvent) => void }) {
   // One mark per finish: a goal tagged together with its shot (and its penalty) is drawn once.
   const all = finishEvents(events);
   const shots = all.filter((e) => e.x !== null && e.y !== null);
@@ -168,8 +169,23 @@ export function ShotMap({ events, aLabel, bLabel }: { events: MatchEvent[]; aLab
               fill={e.type === "goal" ? c : "var(--color-surface)"}
               stroke={c}
               strokeWidth={0.55}
+              {...(onPick
+                ? {
+                    role: "button",
+                    tabIndex: 0,
+                    "aria-label": `Ver el video: ${EVENT_LABELS[e.type]}, ${e.team === "own" ? aLabel : bLabel}`,
+                    cursor: "pointer",
+                    onClick: () => onPick(e),
+                    onKeyDown: (k: React.KeyboardEvent) => {
+                      if (k.key === "Enter" || k.key === " ") {
+                        k.preventDefault();
+                        onPick(e);
+                      }
+                    },
+                  }
+                : {})}
             >
-              <title>{`${EVENT_LABELS[e.type]} · ${e.team === "own" ? aLabel : bLabel} · ${fmtT(e.t_video)}`}</title>
+              <title>{`${EVENT_LABELS[e.type]} · ${e.team === "own" ? aLabel : bLabel} · ${fmtT(e.t_video)}${onPick ? " · clic para ver el video" : ""}`}</title>
             </circle>
           );
         })}

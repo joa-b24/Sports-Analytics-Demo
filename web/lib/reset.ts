@@ -13,15 +13,23 @@ export function resetPart<T extends { trackEdits: TrackEdits[]; reviews?: PartRe
   part: string,
   folder: string,
   timing: { part?: string }[],
-): { state: T; timing: { part?: string }[]; prefKeys: string[]; summary: { review: boolean; doubts: number; timing: number } } {
+): { state: T; timing: { part?: string }[]; prefKeys: string[]; summary: { review: boolean; doubts: number; timing: number; segments: number } } {
   const review = (state.reviews ?? []).find((r) => r.key === key);
   const cur = state.trackEdits.find((e) => e.key === key);
   const doubts = new Set([...(cur?.anchorDoubts ?? []), ...(review?.A.edits?.anchorDoubts ?? []), ...(review?.B.edits?.anchorDoubts ?? [])]).size;
   let next: TrackEdits | undefined;
+  let segments = 0;
   if (review) next = clone(review.base);
   else if (cur) {
     next = { ...cur };
     delete next.anchorDoubts;
+    // The cuts made by a fill by stretches go too (the identities of whole tracks stay, as before).
+    if (cur.linkSplits?.length) {
+      const made = new Set(cur.linkSplits.map((s) => `${s.track}:${s.frame}`));
+      segments = next.splits.filter((s) => made.has(`${s.track}:${s.frame}`)).length;
+      next.splits = next.splits.filter((s) => !made.has(`${s.track}:${s.frame}`));
+    }
+    delete next.linkSplits;
   }
   const trackEdits = next ? [...state.trackEdits.filter((e) => e.key !== key), next] : state.trackEdits;
   const kept = timing.filter((t) => t.part !== part);
@@ -29,6 +37,6 @@ export function resetPart<T extends { trackEdits: TrackEdits[]; reviews?: PartRe
     state: { ...state, trackEdits, reviews: (state.reviews ?? []).filter((r) => r.key !== key) },
     timing: kept,
     prefKeys: [`anchors:skipped:${folder}:${part}`, `anchors:skipped:${folder}:${part}:ejemplo`],
-    summary: { review: !!review, doubts, timing: timing.length - kept.length },
+    summary: { review: !!review, doubts, timing: timing.length - kept.length, segments },
   };
 }

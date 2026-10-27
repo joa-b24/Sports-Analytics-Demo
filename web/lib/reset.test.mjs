@@ -18,10 +18,18 @@ test("resetPart restores the snapshot and forgets the part's stopwatch and compa
   assert.equal(out.state.trackEdits.find((e) => e.key === other.key), other);
   assert.deepEqual(out.state.reviews.map((x) => x.key), ["m|v1|100_200"]);
   assert.deepEqual(out.timing, [{ part: "v1_100_200" }]);
-  assert.deepEqual(out.summary, { review: true, doubts: 1, timing: 1 });
+  assert.deepEqual(out.summary, { review: true, doubts: 1, timing: 1, segments: 0 });
   assert.ok(out.prefKeys.includes("anchors:skipped:f:v1_0_87"));
   // Without a comparison: edits kept, only the resolved doubts go.
   const out2 = resetPart({ trackEdits: [live] }, KEY, "v1_0_87", "f", []);
   assert.equal(out2.state.trackEdits[0].anchorDoubts, undefined);
   assert.deepEqual(out2.state.trackEdits[0].removed, [2]);
+});
+
+test("resetPart removes the cuts made by a fill by stretches, not the hand cuts", () => {
+  const e = { ...named(), splits: [{ track: 1, frame: 3, identity: 9 }, { track: 1, frame: 6, identity: 8 }, { track: 2, frame: 6, identity: 7 }], linkSplits: [{ track: 1, frame: 3 }, { track: 2, frame: 6 }] };
+  const out = resetPart({ trackEdits: [e] }, KEY, "v1_0_87", "f", []);
+  assert.deepEqual(out.state.trackEdits[0].splits, [{ track: 1, frame: 6, identity: 8 }]);
+  assert.equal(out.state.trackEdits[0].linkSplits, undefined);
+  assert.equal(out.summary.segments, 2);
 });

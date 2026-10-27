@@ -21,6 +21,7 @@ import { SpeedControl } from "@/components/SpeedControl";
 import { downloadText, fmtT, isTyping } from "@/lib/format";
 import { viewPolygon, BALL_FILL_S, autoBall, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, metersPerUnit, pitchToPixel, pixelToPitch, type BallAuto, type Part } from "@/lib/parts";
 import { anomalyKey, ballAnomalies, playerAnomalies, type Anomaly } from "@/lib/anomalies";
+import { quitJump, tryJumpFix, trimAtJump, type JumpFix, type JumpStatus } from "@/lib/jumpFix";
 import { applyHint, applyTeamCuts, cutHints, type CutHint } from "@/lib/cuts";
 import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
 import { buildLabels, labelsName } from "@/lib/labels";
@@ -247,6 +248,10 @@ export function Correction({
   const [dropOver, setDropOver] = useState<number | null>(null);
   // The impossible jump of the selected player being reviewed (its person and first frame).
   const [anomAt, setAnomAt] = useState<{ person: number; frame: number } | null>(null);
+  // «Quitar saltos» (Q): the previous box asks for a click when the jump is between two tracks; and the warnings of jumps of the
+  // part when the first one was taken out (the count before), to show how many are left.
+  const [jumpAsk, setJumpAsk] = useState<{ person: number; frame: number; fix: JumpFix } | null>(null);
+  const [jumpBase, setJumpBase] = useState<{ key: string; n: number } | null>(null);
   // The save button tells by itself how the save went; the details of the cleaning go in its tooltip.
   const [saveAsk, saveAskDialog, resetSaveAsk] = useAsk();
   const [save, setSave] = useState<{ state: "idle" | "saving" | "saved" | "downloaded" | "error"; note: string }>({ state: "idle", note: "" });
@@ -1346,7 +1351,34 @@ export function Correction({
       setMsg("No le quedan saltos imposibles por revisar. Ctrl + Z deshace el último cambio.");
     }
   };
-  const anomDrop = (a: Anomaly) => data && a.person !== undefined && anomDone(a, dropRange(edits, data, a.person, a.frame, (a.until ?? a.frame + stride) - 1));
+  // Warnings of jumps of the whole part, now and before the first one was taken out with these tools.
+  const jumpNow = anomalies.filter((a) => a.kind === "player").length;
+  const captureJumpBase = () => setJumpBase((b) => (b && b.key === edits.key ? b : { key: edits.key, n: jumpNow }));
+  const JUMP_WHY: Record<JumpStatus, string> = { ok: "", persists: "el aviso sigue", hole: "dejaría un hueco que el guardado no rellena", none: "no hay cuadro que quitar" };
+  const jumpDone = (a: Anomaly, fix: JumpFix) => {
+    captureJumpBase();
+    setJumpAsk(null);
+    anomDone(a, fix.edits);
+    setMsg(`Quitado el cuadro ${fix.side === "next" ? "siguiente" : "previo"} al salto (${fmtT(fix.frames[0] / fps)}${fix.removed > 1 ? `, ${fix.removed} cuadros` : ""}): se rellena al guardar. Ctrl + Z lo deshace.`);
+  };
+  // Q: the box after the jump; if the warning stays, the one before (a click first when the jump is between two tracks).
+  const anomDrop = (a: Anomaly) => {
+    if (!data || a.person === undefined) return;
+    const r = quitJump(data, edits, a);
+    if (!r.fix) return setMsg(`Ningún cuadro lo resuelve (siguiente: ${JUMP_WHY[r.next]}; previo: ${JUMP_WHY[r.prev]}). Prueba «Hasta aquí» o «Ajustar pies».`);
+    if (r.fix.needsConfirm) return setJumpAsk({ person: a.person, frame: a.frame, fix: r.fix });
+    jumpDone(a, r.fix);
+  };
+  // «Quitar hasta aquí» ([ and ]): her run on the track before / after the jump, for the jumps one box does not settle.
+  const anomTrim = (a: Anomaly, dir: "before" | "after") => {
+    if (!data) return;
+    const r = trimAtJump(data, edits, a, dir);
+    if (!r) return setMsg("No hay tramo suyo que quitar ahí.");
+    captureJumpBase();
+    setJumpAsk(null);
+    anomDone(a, r.edits);
+    setMsg(`Quitado su tramo ${dir === "before" ? "anterior" : "siguiente"} del trozo ${r.track}: ${r.removed} cuadro(s), ${fmtT(r.from / fps)}–${fmtT(r.to / fps)}. Ctrl + Z lo deshace.`);
+  };
   const anomDropAll = () => {
     if (!data || selAnoms.length === 0) return;
     let next = edits;
@@ -1357,12 +1389,14 @@ export function Correction({
     setMode(null);
     setMsg(`Quitados ${n} cuadro(s) de ${selAnoms.length} salto(s): se rellenan al guardar. Ctrl + Z lo deshace.`);
   };
-  // Alt + Q: the position before the jump goes instead (its box, or her feet marked by hand there).
+  // Alt + Q: the position before the jump goes instead (its box, or her feet marked by hand there). Only if it settles the
+  // warning without a hole; a click first when the jump is between two tracks.
   const anomDropPrev = (a: Anomaly) => {
     if (!data || a.person === undefined || a.before === undefined) return;
-    const hand = edits.manual.some((m) => m.identity === a.person && m.frame === a.before);
-    anomDone(a, hand ? removeManual(edits, a.person, a.before) : dropRange(edits, data, a.person, a.before, a.before));
-    setMsg(`Quitado el cuadro anterior al salto (${fmtT((a.before ?? 0) / fps)}): se rellena al guardar. Ctrl + Z lo deshace.`);
+    const fix = tryJumpFix(data, edits, a, "prev");
+    if (fix.status !== "ok") return setMsg(`El cuadro previo no lo resuelve: ${JUMP_WHY[fix.status]}. Prueba «Hasta aquí» o «Ajustar pies».`);
+    if (fix.needsConfirm) return setJumpAsk({ person: a.person, frame: a.frame, fix });
+    jumpDone(a, fix);
   };
   const anomOk = (a: Anomaly) => anomDone(a, { ...edits, anomalyOk: [...new Set([...(edits.anomalyOk ?? []), anomalyKey(a)])] });
   // ---------------------------------------------------------------- feet on key frames (P)
@@ -1432,8 +1466,13 @@ export function Correction({
       else if (e.altKey) return;
       else if (k === "q" && anomCur) anomDrop(anomCur);
       else if (k === "enter" && anomCur && mode === null) anomOk(anomCur);
+      else if (e.key === "[" && anomCur) anomTrim(anomCur, "before");
+      else if (e.key === "]" && anomCur) anomTrim(anomCur, "after");
       else if (k === "a") anomStep(e.shiftKey ? -1 : 1);
-      else if (k === "escape" && mode === null) setAnomAt(null);
+      else if (k === "escape" && mode === null) {
+        if (jumpAsk) setJumpAsk(null);
+        else setAnomAt(null);
+      }
       else return;
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -3473,6 +3512,7 @@ export function Correction({
           onPending={setAnchorPending}
           pickRef={anchorPick}
           people={ppl}
+          selectedId={sel}
           playerOfId={(id) => personById.get(id)?.player_id || undefined}
           onMsg={setMsg}
         />
@@ -4315,11 +4355,17 @@ export function Correction({
                       <>
                         {anomCur && (
                           <>
-                            <button type="button" className={btn} onClick={() => anomDrop(anomCur)} title={`Quitar ${anomFrames(anomCur) === 1 ? "el cuadro" : `${anomFrames(anomCur)} cuadros`}: sus cajas de esos cuadros no cuentan; al guardar se rellena con una recta (Q)`}>
+                            <button type="button" className={btn} onClick={() => anomDrop(anomCur)} title={`Q: quita ${anomFrames(anomCur) === 1 ? "el cuadro siguiente" : `${anomFrames(anomCur)} cuadros`} al salto; si el aviso sigue, prueba el previo (con un clic si el salto es entre dos trozos). Solo se aplica si no deja un hueco que el guardado no rellene (2 s, 9 m/s). Al guardar se rellena con una recta`}>
                               <Eraser size={14} /> Quitar {anomFrames(anomCur)} <kbd className="kbd">Q</kbd>
                             </button>
                             <button type="button" className={btn} disabled={anomCur.before === undefined} onClick={() => anomCur.before !== undefined && anomDropPrev(anomCur)} title="Quitar el anterior: muchas veces el que está mal es el cuadro de antes del salto (Alt + Q)">
                               <Eraser size={14} /> <span className="hidden min-[1700px]:inline">Anterior</span> <kbd className="kbd">Alt+Q</kbd>
+                            </button>
+                            <button type="button" className={btn} disabled={anomCur.before === undefined} onClick={() => anomTrim(anomCur, "before")} title="Quitar hasta aquí: su tramo en el trozo de antes del salto, desde donde empieza hasta el cuadro previo ([). Para los saltos que un cuadro no resuelve: un tramo largo equivocado">
+                              <Scissors size={14} /> <span className="hidden min-[1700px]:inline">Hasta aquí</span> <kbd className="kbd">[</kbd>
+                            </button>
+                            <button type="button" className={btn} onClick={() => anomTrim(anomCur, "after")} title="Quitar desde aquí: su tramo en el trozo de después del salto, desde este cuadro hasta donde acaba (])">
+                              <Scissors size={14} /> <span className="hidden min-[1700px]:inline">Desde aquí</span> <kbd className="kbd">]</kbd>
                             </button>
                             <button type="button" className={`btn ${mode === "manual" ? "btn-primary" : ""}`} onClick={() => (mode === "manual" ? setMode(null) : anomFix(anomCur))} title="Ajustar pies (P): clic en sus pies en dos o más cuadros clave del salto; entre ellos se corrige solo el borde inferior de la caja">
                               <HandPointing size={14} /> <span className="hidden min-[1500px]:inline">Ajustar pies</span> <kbd className="kbd">P</kbd>
@@ -4332,6 +4378,11 @@ export function Correction({
                         <button type="button" className="btn btn-ghost !px-2 hover:text-danger" disabled={selAnoms.length < 2} onClick={anomDropAll} title="Quitar todos: los cuadros de todos sus saltos imposibles de una vez (se rellenan al guardar)">
                           Todos
                         </button>
+                        {jumpBase && jumpBase.key === edits.key && (
+                          <span className="tc text-xs text-faint" title={`Avisos de salto de toda la parte: ${jumpBase.n} al empezar a quitar con estas herramientas, ${jumpNow} ahora`}>
+                            {jumpBase.n}→{jumpNow}
+                          </span>
+                        )}
                         <span className="tc w-12 text-center text-xs text-faint">
                           {anomCur ? selAnoms.indexOf(anomCur) + 1 : "–"}/{selAnoms.length}
                         </span>
@@ -4356,6 +4407,24 @@ export function Correction({
                     ) : (
                       <span className="text-ok">Corregido. Siguiente con A.</span>
                     )}
+                  </Notice>
+                )}
+                {jumpAsk && anomOn && anomCur && jumpAsk.person === anomCur.person && jumpAsk.frame === anomCur.frame && (
+                  <Notice
+                    tone="warn"
+                    title={`El salto va de un trozo a otro (${jumpAsk.fix.tracks[0]} → ${jumpAsk.fix.tracks[1]}). ¿Quitar el cuadro previo (${fmtT(jumpAsk.fix.frames[0] / fps)})? El siguiente no resolvía el aviso.`}
+                    actions={
+                      <>
+                        <button type="button" className={btnPrimary} onClick={() => jumpDone(anomCur, jumpAsk.fix)}>
+                          <Check size={14} /> Sí, quitarlo
+                        </button>
+                        <button type="button" className={btn} onClick={() => setJumpAsk(null)}>
+                          No <kbd className="kbd">Esc</kbd>
+                        </button>
+                      </>
+                    }
+                  >
+                    El siguiente no resolvía el aviso; este sí, pero cambia de trozo.
                   </Notice>
                 )}
                 {peek && selected && peekOther !== null && (

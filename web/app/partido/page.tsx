@@ -13,12 +13,14 @@ import {
   GearSix,
   FastForward,
   FilmStrip,
+  Flask,
   FolderOpen,
   Pause,
   Play,
   Plus,
   Rewind,
   SkipBack,
+  SlidersHorizontal,
   SkipForward,
   YoutubeLogo,
 } from "@phosphor-icons/react";
@@ -28,6 +30,9 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { ClipEditor } from "@/components/clip/ClipEditor";
 import { AnalysisTab } from "@/components/match/AnalysisTab";
 import { PlaysTab } from "@/components/match/PlaysTab";
+import { TechPanel } from "@/components/match/TechPanel";
+import { Modal } from "@/components/Modal";
+import { techChanged } from "@/lib/tech";
 import { MODES, MatchHeader, isMode, mainOf, modeOf, type TabId } from "@/components/match/MatchHeader";
 import { BoardsWorkspace } from "@/components/board/BoardsWorkspace";
 import { ReportTab } from "@/components/match/ReportTab";
@@ -81,6 +86,8 @@ function MatchPage() {
     return MODES.flatMap((m) => m.steps.map(([s]) => s as TabId)).find((s) => s === paso) ?? null;
   });
   const setTab = (t: TabId) => setPicked(t);
+  // Configuración del partido > Detalles técnicos (a link from the evaluation tools opens it: ?detalles=tecnicos).
+  const [techOpen, setTechOpen] = useState(params.get("detalles") === "tecnicos");
   // Without a mode: a link to a moment opens its events; a match with events opens on its analysis (what the staff
   // reads) and one without, on capture.
   const fallback: TabId = linkVideo ? "tag" : isMode(modo) ? mainOf(modo) : state.events.some((e) => e.match_id === id) ? "analysis" : "tag";
@@ -356,7 +363,7 @@ function MatchPage() {
       >
         {match.is_demo && <DemoBadge />}
         <Dropdown label="Datos del partido y del video" trigger={<GearSix size={16} />} panelClass="w-[min(30rem,calc(100vw-2rem))] max-h-[85vh] overflow-y-auto">
-          {() => {
+          {(closeMenu) => {
             // One row of the panel: an icon and a short label on the left, the control on the right.
             const row = (icon: React.ReactNode, label: string, control: React.ReactNode, hint?: string) => (
               <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3" title={hint}>
@@ -586,11 +593,37 @@ function MatchPage() {
                     )}
                   </div>
                 </section>
+
+                {/* Technical settings and the evaluation tools: out of the steps of the analysis, one click from the gear. */}
+                <section className="flex flex-wrap items-center gap-2 border-t border-line p-4">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      closeMenu();
+                      setTechOpen(true);
+                    }}
+                    title="Parámetros con los que se calcula la posesión de este partido (y, con ella, el informe)"
+                  >
+                    <SlidersHorizontal size={14} />
+                    Detalles técnicos
+                    {techChanged(match).length > 0 && <span className="tag tag-accent">{techChanged(match).length} cambiados</span>}
+                  </button>
+                  <Link href={`/partido/playground?id=${encodeURIComponent(match.match_id)}`} className="btn btn-ghost text-faint" title="Comprobar el balón, la posesión, los pases y los eventos detectados">
+                    <Flask size={14} />
+                    Herramientas de evaluación
+                  </Link>
+                </section>
               </div>
             );
           }}
         </Dropdown>
       </MatchHeader>
+      {techOpen && (
+        <Modal title="Detalles técnicos" wide onClose={() => setTechOpen(false)}>
+          <TechPanel match={match} />
+        </Modal>
+      )}
       </EdgeReveal>
 
       {/* The video takes the room; the working panel keeps a fixed, narrower width (wider for the pitch animation). */}

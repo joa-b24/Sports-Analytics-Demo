@@ -1,6 +1,6 @@
 import { apply, invert, orient } from "./homography.ts";
 import { smoothTrack, type SmoothOptions, type TrackPoint } from "./smooth.ts";
-import { droppedSet, editsKey, emptyEdits, identityOf, isDropped, nearestFrame, people, type JerseyColors, type TeamCode, type TracksFile } from "./tracks.ts";
+import { boxTeamOf, droppedSet, editsKey, emptyEdits, fileTeamRefs, identityOf, isDropped, nearestFrame, people, type JerseyColors, type TeamCode, type TracksFile } from "./tracks.ts";
 import { PITCH, type MatchEvent, type TrackEdits } from "./types.ts";
 
 // From corrected parts to what is exported: the path of every person on the pitch, the ball, and several parts of
@@ -115,19 +115,91 @@ export interface BallAuto {
   ask: number[];
 }
 
+// A ball cannot move faster than this (m/s): a hard shot is about 30. Two tracker positions closer in time than
+// BALL_JUMP_LINK_S and farther than that are not the same ball.
+export const BALL_JUMP_MS = 30;
+export const BALL_JUMP_LINK_S = 1;
+// A run of tracker positions cut off from the rest by such jumps is an excursion (a painted number, a head, a ball in
+// the air projected far away) when it lasts less than this (s). A longer run is kept: it may be the real ball.
+export const BALL_JUMP_RUN_S = 1;
+
+// Frames of tracker ("auto") positions to distrust because of jumps. Hand marks are never touched, but they count as
+// neighbours: an automatic run that jumps away from a mark and back is as suspicious as one that jumps away from
+// another automatic run. `mx, my`: meters per unit of the pitch. Pure, no file access.
+export function ballJumpFrames(points: { frame: number; x: number; y: number; source: string }[], fps: number, mx = 1, my = 1, maxRunS = BALL_JUMP_RUN_S): Set<number> {
+  const pts = points.filter((p) => p.source === "manual" || p.source === "auto").sort((a, b) => a.frame - b.frame);
+  const bad = new Set<number>(); // index i: the link between pts[i] and pts[i+1] is a jump
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const dt = (pts[i + 1].frame - pts[i].frame) / fps;
+    if (dt <= 0 || dt > BALL_JUMP_LINK_S) continue;
+    if (Math.hypot((pts[i + 1].x - pts[i].x) * mx, (pts[i + 1].y - pts[i].y) * my) / dt > BALL_JUMP_MS) bad.add(i);
+  }
+  const out = new Set<number>();
+  let start = 0;
+  for (let i = 0; i < pts.length; i++) {
+    if (i + 1 < pts.length && !bad.has(i)) continue;
+    // Run pts[start..i]: bounded by a jump on the side(s) that have a neighbour.
+    const jumpBefore = start > 0 && bad.has(start - 1);
+    const jumpAfter = bad.has(i);
+    const run = pts.slice(start, i + 1);
+    const dur = (run[run.length - 1].frame - run[0].frame) / fps;
+    if ((jumpBefore || jumpAfter) && dur <= maxRunS && run.every((p) => p.source === "auto")) for (const p of run) out.add(p.frame);
+    start = i + 1;
+  }
+  return out;
+}
+
+export type BallDropReason = "jump" | "ref_box" | "unk_box";
+
 // The tracker's ball on the pitch, without the frames rejected by hand and those with a hand mark (the hand wins).
-export function autoBall(file: TracksFile, auto: BallAuto | null, edits: TrackEdits): BallPoint[] {
-  if (!auto) return [];
+// Also left out (see autoBallChecked): isolated runs that jump faster than a ball can move, and positions that fall
+// inside the box of a referee or of a person with no team (on the pitch) without any box of a team around.
+export function autoBall(file: TracksFile, auto: BallAuto | null, edits: TrackEdits, check = true): BallPoint[] {
+  return autoBallChecked(file, auto, edits, check).kept;
+}
+
+export function autoBallChecked(file: TracksFile, auto: BallAuto | null, edits: TrackEdits, check = true): { kept: BallPoint[]; dropped: { frame: number; reason: BallDropReason }[] } {
+  if (!auto) return { kept: [], dropped: [] };
   const H = new Map(file.frames.map((fr) => [fr.frame, fr.H]));
   const rejected = new Set(edits.ballRejected ?? []);
   const hand = new Set((edits.ball ?? []).map((b) => b.frame));
-  const out: BallPoint[] = [];
+  const pts: (BallPoint & { px: number; py: number })[] = [];
   for (const a of auto.frames) {
     if (rejected.has(a.frame) || hand.has(a.frame)) continue;
     const p = pixelToPitch(file, H.get(a.frame), a.px, a.py);
-    if (p) out.push({ frame: a.frame, x: p[0], y: p[1], source: "auto" });
+    if (p) pts.push({ frame: a.frame, x: p[0], y: p[1], source: "auto", px: a.px, py: a.py });
   }
-  return out;
+  const plain = (p: BallPoint): BallPoint => ({ frame: p.frame, x: p.x, y: p.y, source: p.source });
+  if (!check) return { kept: pts.map(plain), dropped: [] };
+  const [mx, my] = metersPerUnit(file);
+  // Hand marks are neighbours of the jump test even though they are not returned here.
+  const marks = manualBall(file, edits);
+  const jumps = ballJumpFrames([...marks, ...pts], file.fps, mx, my);
+  const refs = fileTeamRefs(file);
+  const boxesAt = new Map(file.frames.map((fr) => [fr.frame, fr.boxes]));
+  const kept: BallPoint[] = [];
+  const dropped: { frame: number; reason: BallDropReason }[] = [];
+  for (const pt of pts) {
+    const { px, py } = pt;
+    const b = plain(pt);
+    if (jumps.has(b.frame)) {
+      dropped.push({ frame: b.frame, reason: "jump" });
+      continue;
+    }
+    // Which boxes contain the ball: if one is a team's, the ball is at the feet of a player of a team; if only
+    // referees / people with no team do, it is not a ball (or is one that nobody can be credited with).
+    let inTeam = false;
+    let inOther: "ref" | "unk" | null = null;
+    for (const bx of boxesAt.get(b.frame) ?? []) {
+      if (!bx[11] || px < bx[1] || px > bx[3] || py < bx[2] || py > bx[4]) continue;
+      const t = boxTeamOf(bx, refs);
+      if (t === "own" || t === "opp") inTeam = true;
+      else inOther = t === "ref" ? "ref" : (inOther ?? "unk");
+    }
+    if (!inTeam && inOther) dropped.push({ frame: b.frame, reason: inOther === "ref" ? "ref_box" : "unk_box" });
+    else kept.push(b);
+  }
+  return { kept, dropped };
 }
 
 // Keeps the ball where it was last marked by hand, up to `frame` (a goal kick or a corner: the ball waits on its spot

@@ -59,7 +59,7 @@ export interface NetNode {
   x: number;
   y: number;
   // Where the position comes from: the average of her tagged events with a position, or a ring when she has none.
-  placed: "events" | "ring";
+  placed: "events" | "ring" | "tracking";
   touches: number;
 }
 export interface Net {
