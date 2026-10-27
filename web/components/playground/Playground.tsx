@@ -10,6 +10,7 @@ import { segmentsFromMarks, type Segment } from "@/lib/segments";
 import { useStore } from "@/lib/store";
 import { PARAM_FIELDS } from "@/lib/playgroundPossession";
 import { possessionParamsOf, techSummary } from "@/lib/tech";
+import { trackingParamsOf } from "@/lib/techTracking";
 import type { Match } from "@/lib/types";
 import { matchVideos, videoOf } from "@/lib/videos";
 import type { PlaygroundCtx } from "./context";
@@ -63,7 +64,7 @@ export function Playground({ match }: { match: Match }) {
     () => Object.fromEntries(videos.map((v) => [v.video_id, segmentsFromMarks(state.segments.filter((g) => g.match_id === match.match_id && videoOf(g) === v.video_id))])),
     [videos, state.segments, match.match_id],
   );
-  const result = useMemo(() => (fixed && fixed.parts.length > 0 ? possessionIntervals(fixed.parts, segmentsByVideo, params) : null), [fixed, segmentsByVideo, params]);
+  const result = useMemo(() => (fixed && fixed.parts.length > 0 ? possessionIntervals(fixed.parts, segmentsByVideo, params, undefined, trackingParamsOf(match).ballJumpMs) : null), [fixed, segmentsByVideo, params, match]);
   const notifyReview = useCallback(() => setVersion((v) => v + 1), []);
 
   if (!folder) {

@@ -670,8 +670,34 @@ export function removeManual(edits: TrackEdits, identity: number, frame: number)
 
 // Processed frame nearest to a video frame (only 1 of every `stride` frames has detections).
 // Ball marked by hand (pixels) in a frame. One per frame.
+// A visible mark replaces a «no se ve» / «fuera» mark of the same frame. `aerial` is kept when the mark is moved.
 export function setBall(edits: TrackEdits, frame: number, px: number, py: number): TrackEdits {
-  return { ...edits, ball: [...(edits.ball ?? []).filter((b) => b.frame !== frame), { frame, px, py }].sort((a, b) => a.frame - b.frame) };
+  const old = (edits.ball ?? []).find((b) => b.frame === frame);
+  const states = (edits.ballStates ?? []).filter((s) => s.frame !== frame);
+  return {
+    ...edits,
+    ball: [...(edits.ball ?? []).filter((b) => b.frame !== frame), { frame, px, py, ...(old?.aerial ? { aerial: true } : {}) }].sort((a, b) => a.frame - b.frame),
+    ...(edits.ballStates ? { ballStates: states } : {}),
+  };
+}
+
+// «No se ve» (hidden) or «fuera» (out) from `frame`: replaces the visible mark of that frame (and the lines that touched it)
+// or the other state mark there. Same state again: nothing changes.
+export function setBallState(edits: TrackEdits, frame: number, state: "hidden" | "out"): TrackEdits {
+  const base = (edits.ball ?? []).some((b) => b.frame === frame) ? removeBall(edits, frame) : edits;
+  return { ...base, ballStates: [...(base.ballStates ?? []).filter((s) => s.frame !== frame), { frame, state }].sort((a, b) => a.frame - b.frame) };
+}
+
+export function removeBallState(edits: TrackEdits, frame: number): TrackEdits {
+  return { ...edits, ballStates: (edits.ballStates ?? []).filter((s) => s.frame !== frame) };
+}
+
+// Flags (or unflags) the visible mark of `frame` as the ground projection of a ball in the air. Null without a mark there.
+export function toggleAerial(edits: TrackEdits, frame: number): TrackEdits | null {
+  const m = (edits.ball ?? []).find((b) => b.frame === frame);
+  if (!m) return null;
+  const { aerial: _a, ...rest } = m; // eslint-disable-line @typescript-eslint/no-unused-vars
+  return { ...edits, ball: (edits.ball ?? []).map((b) => (b.frame === frame ? (m.aerial ? rest : { ...rest, aerial: true }) : b)) };
 }
 
 export function removeBall(edits: TrackEdits, frame: number): TrackEdits {

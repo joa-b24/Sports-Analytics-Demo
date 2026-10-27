@@ -14,9 +14,10 @@ const CONF_CLS: Record<string, string> = { high: "text-ok", medium: "text-warn",
 
 // The detections of one type: filters, pages (no inner scroll) and one click to play the moment.
 export function EventsList({
-  title, events, total, filter, onFilter, selected, onSelect, review, sampleOnly, onSampleOnly, hasSample, onSample, onNext, onMissed, onWindows,
+  title, auto = false, events, total, filter, onFilter, selected, onSelect, review, sampleOnly, onSampleOnly, hasSample, onSample, onNext, onMissed, onWindows,
 }: {
   title: string;
+  auto?: boolean;
   events: DetectedEvent[];
   total: number;
   filter: EventFilter;
@@ -37,7 +38,7 @@ export function EventsList({
   const filtered = isEventFiltered(filter) || sampleOnly;
   const verdictOf = (e: DetectedEvent) => review.reviews.find((r) => r.id === e.id && r.rule_version === e.rule_version)?.verdict ?? null;
   return (
-    <Card title={title} note={`${events.length} de ${total}`} className="flex h-full flex-col !p-3">
+    <Card title={title} note={`${events.length} de ${total}${auto ? " · Automático" : ""}`} className="flex h-full flex-col !p-3">
       <div className="mb-2 flex flex-wrap items-end gap-x-2 gap-y-1 text-[11px] text-muted">
         <label>
           Equipo

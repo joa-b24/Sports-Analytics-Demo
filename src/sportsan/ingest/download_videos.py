@@ -4,6 +4,9 @@ Uso (desde la raíz del repo, con .venv activado):
     python -m sportsan.ingest.download_videos              # todos los que falten
     python -m sportsan.ingest.download_videos --list       # solo dice qué hay y qué falta
     python -m sportsan.ingest.download_videos --match partido_ccm_vs_up
+    python -m sportsan.ingest.download_videos --match <id> --video v2      # solo ese video del partido
+    python -m sportsan.ingest.download_videos --match <id> --video v2 --youtube-id <11 caracteres>
+        # lo que usa la app: el enlace viene del partido de la app, aunque no esté en videos.csv
 
 matches/videos.csv tiene una fila por video (un partido puede venir en varios):
     match_id     carpeta del partido en matches/ (convención aaaa_mm_dd_<local>_vs_<visitante>)
@@ -51,6 +54,23 @@ def youtube_id(url: str) -> str:
 def downloadable(url: str) -> bool:
     """Un enlace que yt-dlp puede intentar bajar: YouTube o cualquier otra página (Facebook, por ejemplo)."""
     return bool(youtube_id(url)) or bool(re.match(r"https?://", url or ""))
+
+
+def select_rows(rows: list[dict], match: str | None, video: str | None, yt_id: str | None) -> list[dict]:
+    """Filas a procesar. Con `yt_id` (enlace dado por la app) hace falta partido y video; si la fila no está en
+    videos.csv se arma una con ese enlace. `yt_id` se valida: son 11 caracteres de [A-Za-z0-9_-]."""
+    if yt_id is not None:
+        if not (match and video):
+            raise SystemExit("--youtube-id necesita --match y --video")
+        if not re.fullmatch(r"[\w-]{11}", yt_id):
+            raise SystemExit("--youtube-id no es un id de YouTube (11 caracteres)")
+        url = f"https://www.youtube.com/watch?v={yt_id}"
+        hit = [r for r in rows if r["match_id"] == match and r["video_id"] == video]
+        if hit:
+            return [{**hit[0], "url": hit[0]["url"] or url}]
+        return [{"match_id": match, "kind": "own", "date": "", "own_team": "", "other_team": "", "video_id": video,
+                 "period": "", "label": "", "url": url, "note": ""}]
+    return [r for r in rows if (not match or r["match_id"] == match) and (not video or r["video_id"] == video)]
 
 
 def read_registry(path: Path) -> list[dict]:
@@ -132,12 +152,18 @@ def ytdlp_cmd() -> list[str]:
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Baja los videos de matches/videos.csv que falten")
     ap.add_argument("--match", help="solo este partido")
+    ap.add_argument("--video", help="solo este video del partido (v1, v2...)")
+    ap.add_argument("--youtube-id", help="id de YouTube del video (lo da la app); necesita --match y --video")
     ap.add_argument("--list", action="store_true", help="solo dice qué hay y qué falta")
     args = ap.parse_args(argv)
 
     root = project_root()
     registry = root / MATCHES_DIR / "videos.csv"
-    rows = [r for r in read_registry(registry) if not args.match or r["match_id"] == args.match]
+    if args.match and not re.fullmatch(r"[\w.-]+", args.match):
+        raise SystemExit("--match no es un nombre de carpeta válido")
+    if args.video and not re.fullmatch(r"v\d+", args.video):
+        raise SystemExit("--video debe ser v1, v2...")
+    rows = select_rows(read_registry(registry) if registry.exists() else [], args.match, args.video, args.youtube_id)
     todo = []
     for r in rows:
         folder = root / MATCHES_DIR / r["match_id"]
@@ -151,6 +177,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     cmd = ytdlp_cmd()
+    failed = 0
     for n, (r, folder, target) in enumerate(todo, 1):
         print(f"\n[{n}/{len(todo)}] {r['match_id']} {r['video_id']} ({r['label']}) <- {r['url']}")
         (folder / "video").mkdir(parents=True, exist_ok=True)
@@ -158,6 +185,7 @@ def main(argv: list[str] | None = None) -> None:
         done = subprocess.run([*cmd, *YTDLP_OPTS, "-f", FORMAT, "--merge-output-format", "mp4", "-o", str(out), r["url"]])
         if done.returncode != 0 or not target.exists():
             print(f"  No se pudo bajar {r['video_id']}; sigo con los demás.")
+            failed += 1
             continue
         fps = measure_fps(target)
         yaml_path = folder / "match.yaml"

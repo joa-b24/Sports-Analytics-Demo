@@ -3,10 +3,14 @@
 import { CloudArrowDown, CloudArrowUp, Cpu, FloppyDisk, Flask, Play, Stop } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Command } from "@/components/Command";
+import { VideoMissingNotice } from "@/components/match/VideoDownload";
+import { videoFileOf } from "@/lib/downloads";
 import { fmtT } from "@/lib/format";
 import { listLocal, readLocal, writeLocal } from "@/lib/local";
+import { TRACKING_DEFAULTS } from "@/lib/techTracking";
+import { useTrackingTech } from "@/lib/useTech";
 import { JOB_COMMAND, useJobs, type JobKind, type JobView } from "@/lib/run";
-import { DETECTORS, detectorLine, readSettings, testVerdict, writeSettings, type TestSummary, type TrackingSettings } from "@/lib/trackingSettings";
+import { DEFAULT_POST, DETECTORS, POST_WINDOW, detectorLine, postLine, readPost, readSettings, testVerdict, writePost, writeSettings, type PostSettings, type TestSummary, type TrackingSettings } from "@/lib/trackingSettings";
 
 const fmtDur = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : `${Math.max(1, Math.round(s / 60))} min`);
 
@@ -71,6 +75,7 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
   const yamlPath = `matches/${folder}/match.yaml`;
   const [yaml, setYaml] = useState<string | null>(null);
   const [settings, setSettings] = useState<TrackingSettings | null>(null);
+  const [post, setPost] = useState<PostSettings>(DEFAULT_POST);
   const [saved, setSaved] = useState<string | null>(null);
   const [test, setTest] = useState<TestSummary | null>(null);
   // Processing places each person on the pitch with the calibration: without anchors or a library of this video it
@@ -87,7 +92,24 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
       live = false;
     };
   }, [folder, video]);
+  // The file of the video (not YouTube): detection reads its frames. false = missing (it may be downloading, see the
+  // notice at the top); null until known or when the folder cannot be read.
+  const [videoOk, setVideoOk] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    const look = () =>
+      void listLocal(`matches/${folder}/video`).then((files) => {
+        if (live) setVideoOk(files ? videoFileOf(files.map((f) => f.name), video) !== null : null);
+      });
+    look();
+    const id = setInterval(look, 5000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, [folder, video]);
   const { enabled, start, stop, latest } = useJobs(folder);
+  const { params: tech } = useTrackingTech(folder);
   const testJob = latest("test");
   const processJob = latest("process");
   const kaggleJob = latest("kaggle");
@@ -99,6 +121,7 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
       if (!live) return;
       setYaml(t);
       setSettings(readSettings(t));
+      setPost(readPost(t));
     });
     return () => {
       live = false;
@@ -133,7 +156,7 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
   const save = async () => {
     if (!s) return;
     if (yaml === null) return setSaved("Sin acceso a la carpeta: copia la línea en match.yaml.");
-    const next = writeSettings(yaml, s);
+    const next = writePost(writeSettings(yaml, s), post);
     const ok = await writeLocal(yamlPath, next);
     if (ok) setYaml(next);
     setSaved(ok ? "Guardado en match.yaml" : "No se pudo escribir match.yaml");
@@ -143,7 +166,7 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
 
   const action = (kind: JobKind, label: string, icon: React.ReactNode, primary = false) =>
     local ? (
-      <button type="button" className={`btn ${primary ? "btn-primary" : ""}`} onClick={() => void start(kind, video)} disabled={latest(kind)?.state === "running"}>
+      <button type="button" className={`btn ${primary ? "btn-primary" : ""}`} onClick={() => void start(kind, video, kind === "test" && tech.searchMarginM !== TRACKING_DEFAULTS.searchMarginM ? tech.searchMarginM : undefined)} disabled={latest(kind)?.state === "running" || (videoOk === false && kind !== "kaggle_pull")} title={videoOk === false && kind !== "kaggle_pull" ? "Falta el video: descárgalo primero" : undefined}>
         {icon}
         {label}
       </button>
@@ -159,6 +182,7 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
           <span className="sec-tag">Sin tracking</span>
           <h2 className="text-2xl text-ink">Hay que procesar el video {video}</h2>
         </div>
+        <VideoMissingNotice folder={folder} video={video} quiet />
         {calibrated === false && (
           <p className="mt-4 max-w-3xl rounded-lg bg-warn-900 px-4 py-3 text-sm text-warn">
             Antes falta calibrar este video: marca anclas en el paso Calibración. Sin calibración el proceso no puede ubicar a las jugadoras en la cancha.
@@ -221,6 +245,36 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
                     ))}
                   </div>
                 </div>
+                <fieldset className="space-y-2 border-t border-line pt-3">
+                  <legend className="text-xs text-muted">Posiciones (se aplican al procesar)</legend>
+                  <label className="flex items-center gap-2 text-sm text-ink-2">
+                    <input type="checkbox" className="accent-accent" checked={post.feet} onChange={(e) => (setPost((o) => ({ ...o, feet: e.target.checked })), setSaved(null))} />
+                    Pies corregidos
+                    <span className="text-[11px] text-faint">(por defecto: activado)</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-ink-2">
+                    <input type="checkbox" className="accent-accent" checked={post.smoothH} onChange={(e) => (setPost((o) => ({ ...o, smoothH: e.target.checked })), setSaved(null))} />
+                    Calibración suavizada en el tiempo
+                    <span className="text-[11px] text-faint">(por defecto: activada)</span>
+                  </label>
+                  <label className={`block ${post.smoothH ? "" : "opacity-50"}`}>
+                    <span className="flex justify-between text-xs text-muted">
+                      Fuerza del suavizado (ventana) <span className="tc text-ink">{post.smoothWindowS.toFixed(1)} s</span>
+                    </span>
+                    <input
+                      type="range"
+                      className="mt-1 w-full"
+                      disabled={!post.smoothH}
+                      min={POST_WINDOW.min}
+                      max={POST_WINDOW.max}
+                      step={POST_WINDOW.step}
+                      value={post.smoothWindowS}
+                      aria-label="Ventana del suavizado de la calibración, en segundos"
+                      onChange={(e) => (setPost((o) => ({ ...o, smoothWindowS: Number(e.target.value) })), setSaved(null))}
+                    />
+                    <span className="text-[11px] text-faint">Por defecto 0.7 s: más alto quita más temblor pero tarda en seguir un giro de cámara.</span>
+                  </label>
+                </fieldset>
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   {yaml !== null ? (
                     <button type="button" className="btn" onClick={() => void save()}>
@@ -228,7 +282,8 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
                       Guardar en match.yaml
                     </button>
                   ) : (
-                    <Command className="w-full">{detectorLine(s)}</Command>
+                    <Command className="w-full">{`${detectorLine(s)}
+${postLine(post)}`}</Command>
                   )}
                   {saved && <span className="text-xs text-faint">{saved}</span>}
                 </div>

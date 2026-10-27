@@ -104,12 +104,14 @@ type Props = {
   video?: React.ReactNode;
   // Right after the steps: whether the match is saved to its folder (components/match/SaveStatus.tsx).
   status?: React.ReactNode;
+  // Next to the score: marks of the match (for instance «Falta el video»).
+  badge?: React.ReactNode;
   // At the right end: the match data.
   children?: React.ReactNode;
 };
 
 // One bar: the score, the video, the steps of the mode (each with where it stands) and the match data.
-export function MatchHeader({ match, events, tab, onTab, steps, video, status, children }: Props) {
+export function MatchHeader({ match, events, tab, onTab, steps, video, status, badge, children }: Props) {
   const mode = modeOf(tab);
   const modeSteps = MODES.find((m) => m.id === mode)?.steps ?? [];
   const progress = (st: StepStatus) => (st.state === "done" ? 100 : st.state === "partial" ? 50 : 0);
@@ -118,6 +120,7 @@ export function MatchHeader({ match, events, tab, onTab, steps, video, status, c
       <h1 className="m-0">
         <ScoreBug match={match} events={events} />
       </h1>
+      {badge}
       {video}
       <ol className="flex min-w-0 flex-1 overflow-x-auto rounded-lg bg-surface" aria-label={`Pasos de ${MODES.find((m) => m.id === mode)?.label}`}>
         {modeSteps.map(([id, label], n) => {

@@ -524,7 +524,7 @@ def _cmd_check(args) -> None:
                 picks.append((round(lo * fps), round(hi * fps)))
                 break
             t -= b - a
-    out_dir = root / cfg["paths"]["tracking_dir"] / "revision"
+    out_dir = Path(getattr(args, "out_dir", None) or root / cfg["paths"]["tracking_dir"] / "revision")
     print(f"{cfg['match_id']} {cfg['video_id']}: {len(picks)} tramos de {args.seconds:g} s repartidos por {total / 60:.0f} min de juego")
     rows = []
     for n, (a, b) in enumerate(picks, 1):
@@ -542,6 +542,7 @@ def _cmd_check(args) -> None:
         print(f"  {fmt_t(r['start'])}-{fmt_t(r['end'])}  {r['found']:>3}/{r['wanted']:<3}  {len(r['dropped']):>6}       {nb:>18}   {rf:>10}   {miss:>7}  {'bien' if ok else 'REVISAR'}")
     print(f"\n  Archivos en {out_dir}: en la app, Calibración › Verificar › cargar cada calib_… y mirar que la rejilla calce.")
     print("  " + ("Todo dentro de lo esperado: se puede procesar." if not bad else f"{bad} tramo(s) para revisar: añade un ancla cerca de ellos y reconstruye la biblioteca."))
+    return rows
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -574,6 +575,7 @@ def main(argv: list[str] | None = None) -> None:
     chk.add_argument("--seconds", type=float, default=10.0, help="duración de cada tramo")
     chk.add_argument("--every", type=float, default=1.0, help="segundos entre anclas automáticas")
     chk.add_argument("--max-error", type=float, default=MAX_CONSISTENCY_M)
+    chk.add_argument("--out-dir", help="carpeta de los calib_ de revisión (por defecto, tracking/revision/)")
     chk.set_defaults(func=_cmd_check)
     args = ap.parse_args(argv)
     args.func(args)

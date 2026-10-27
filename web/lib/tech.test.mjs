@@ -53,3 +53,22 @@ test("diffFromDefaults y techSummary", () => {
   assert.equal(techSummary(match), "Parámetros por defecto");
   assert.match(techSummary(withTechParam(match, "controlS", 0.5)), /tiempo para controlar 0.5 s/);
 });
+
+test("parámetros de eventos y lista «automático» viven en tech sin romper la posesión", async () => {
+  const { eventParamsOf, withEventParam, resetEventTech, withAutoEvent, autoEventsOf, eventTechChanged } = await import("./tech.ts");
+  const { EVENT_DEFAULTS } = await import("./eventDetect.ts");
+  assert.deepEqual(eventParamsOf(match), EVENT_DEFAULTS);
+  let m = withTechParam(match, "controlM", 3);
+  m = withEventParam(m, "restS", 3);
+  m = withAutoEvent(m, "corner", true);
+  m = withAutoEvent(m, "throw_in", true);
+  assert.deepEqual(m.tech, { possession: { controlM: 3 }, events: { restS: 3 }, autoEvents: ["throw_in", "corner"] });
+  assert.equal(eventParamsOf(m).restS, 3);
+  assert.deepEqual(eventTechChanged(m), ["restS"]);
+  assert.deepEqual(autoEventsOf({ tech: { autoEvents: ["corner", "nada"] } }), ["corner"]);
+  // Restablecer la posesión no borra los eventos y al revés.
+  assert.deepEqual(resetTech(m).tech, { events: { restS: 3 }, autoEvents: ["throw_in", "corner"] });
+  assert.deepEqual(resetEventTech(m).tech.possession, { controlM: 3 });
+  assert.equal(eventParamsOf({ tech: { events: { restS: 999 } } }).restS, EVENT_DEFAULTS.restS);
+  assert.equal(withAutoEvent(withAutoEvent(match, "corner", true), "corner", false).tech, undefined);
+});

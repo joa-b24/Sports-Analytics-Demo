@@ -1,3 +1,4 @@
+import { videoFileOf } from "./downloads.ts";
 import { hasCorrections } from "./parts.ts";
 import type { Segment } from "./segments.ts";
 import { missingEnd, missingReview } from "./tagging.ts";
@@ -18,10 +19,14 @@ export type StepId = "calibration" | "segments" | "tracking" | "ball" | "tag" | 
 export interface FolderFiles {
   // File names in tracking/.
   tracking: string[];
+  // File names in video/ (absent: not listed, so a missing video is not reported).
+  video?: string[];
 }
 
 export interface StepInput {
   videoIds: string[];
+  // Videos registered with a link (YouTube): the ones that must have a file in video/ (lib/downloads.ts).
+  linked?: string[];
   folder?: string;
   venueId?: string;
   segmentsByVideo: Record<string, Segment[]>;
@@ -43,6 +48,9 @@ export function matchSteps(i: StepInput): Record<StepId, StepStatus> {
   const withPlay = i.videoIds.filter((v) => play(v).length > 0).length;
   const names = i.files?.tracking ?? [];
   const noFolder = !i.folder;
+  // Registered videos whose file is not in the folder: calibration and tracking need the file, YouTube is not enough.
+  const lacking = i.files?.video ? (i.linked ?? []).filter((v) => !videoFileOf(i.files?.video, v)) : [];
+  const noVideo = (st: StepStatus): StepStatus => (lacking.length ? { ...st, text: `${st.text} · falta el video${lacking.length > 1 ? ` (${lacking.join(", ")})` : ""}` } : st);
 
   // Calibration: one library per video (built from a calibrated sweep).
   const libs = i.videoIds.filter((v) => names.includes(`library_${v}.npz`)).length;
@@ -114,5 +122,5 @@ export function matchSteps(i: StepInput): Record<StepId, StepStatus> {
       : { state: "done", text: metrics ? "con forma del equipo" : "con eventos" };
   const report: StepStatus = i.events.length === 0 ? { state: "todo", text: "necesita eventos" } : { state: "done", text: "listo para imprimir" };
 
-  return { calibration, segments, tracking, ball, tag, plays, board, analysis, report };
+  return { calibration: noVideo(calibration), segments, tracking: noVideo(tracking), ball, tag, plays, board, analysis, report };
 }

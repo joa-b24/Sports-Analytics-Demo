@@ -156,6 +156,11 @@ export function EventsTable({
                     </td>
                     <td className="py-1 pr-2 whitespace-nowrap">
                       <Select label="Tipo de evento" value={e.type} options={TYPE_OPTIONS} onChange={(t) => t && update(e.event_id, retype(e, t))} />
+                      {e.auto && (
+                        <span className="tag tag-accent ml-1" title="Creado automáticamente a partir de la detección de su tipo">
+                          automático
+                        </span>
+                      )}
                       {dup && (
                         <span className="tag tag-warn ml-1" title="Hay otro igual del mismo equipo a menos de 3 s">
                           ¿doble?

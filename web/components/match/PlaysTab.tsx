@@ -4,6 +4,7 @@ import {
   PencilSimpleLine,
   Play as PlayIcon,
   Plus,
+  Repeat,
   Strategy,
   Trash,
 } from "@phosphor-icons/react";
@@ -24,18 +25,29 @@ import { newEdit } from "@/lib/clips";
 import { useFixedParts } from "@/lib/fixed";
 import { fmtT } from "@/lib/format";
 import { partFor, positionsAt } from "@/lib/positions";
+import { videoOf } from "@/lib/videos";
 import { TOKENS, defaultPositions, interpolate } from "@/lib/stats";
 import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
-import type { Keyframe, Match, Play } from "@/lib/types";
+import { LOOP_MARGIN_PREF, LOOP_PREF, parseMargin } from "@/lib/clipLoop";
+import { NO_FILTER, filterPlays, matchPlays, typesPresent, type MatchPlay, type PlayFilter } from "@/lib/matchPlays";
+import { EVENT_LABELS, type Keyframe, type Match, type MatchEvent, type MatchVideo, type Play } from "@/lib/types";
 
 type Props = {
   match: Match;
   videoId: string;
+  // The plays of the current video (the timeline bar) and of the whole match (the list), with what the list needs.
   plays: Play[];
+  allPlays: Play[];
+  videos: MatchVideo[];
+  events: MatchEvent[];
+  // Opens a play of any video: loads its video and goes to its start.
+  onGoTo: (videoId: string, t: number, playId: string) => void;
+  initialPlayId?: string | null;
   time: number;
   duration?: number;
   playerRef: RefObject<PlayerHandle | null>;
-  playClip: (t0: number, t1: number) => void;
+  // loopMargin: null plays once; a number repeats the stretch with that margin (s).
+  playClip: (t0: number, t1: number, loopMargin?: number | null) => void;
   // Under the video: the bin of plays (when the page gives the slot).
   belowSlot?: HTMLDivElement | null;
 };
@@ -47,19 +59,27 @@ export function PlaysTab({
   match,
   videoId,
   plays,
+  allPlays,
+  videos,
+  events,
+  onGoTo,
+  initialPlayId,
   time,
   duration,
   playerRef,
   playClip,
   belowSlot,
 }: Props) {
-  const [selId, setSelId] = useState<string | null>(plays[0]?.play_id ?? null);
+  const [selId, setSelId] = useState<string | null>(initialPlayId ?? plays[0]?.play_id ?? null);
+  const [filter, setFilter] = useState<PlayFilter>(NO_FILTER);
   const [selKf, setSelKf] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(
     null,
   );
   const svgRef = useRef<SVGSVGElement>(null);
+  // The chosen play, once its video is the one on screen (a play of another video shows while that video loads).
   const play = plays.find((p) => p.play_id === selId) ?? null;
+  const loading = !play && allPlays.some((p) => p.play_id === selId);
   // Measured positions (corrected parts saved from the correction table) when the play falls in one.
   const fixed = useFixedParts(match.folder, [videoId]);
   const [source, setSource] = useState<"measured" | "hand">("measured");
@@ -68,10 +88,13 @@ export function PlaysTab({
       ? partFor(fixed.parts, videoId, play.t_start, play.t_end)
       : null;
   const measuredOn = part !== null && source === "measured";
-  const measured = measuredOn && part ? positionsAt(part, time) : null;
+  const measured = measuredOn && part ? positionsAt(part, time, { withExtrapolated: true }) : null;
   // What the measured animation shows: everybody, only players with a name, or only the ball.
   const show = usePref("plays:show", "all") as "all" | "named" | "ball";
   const { roster, edits } = useStore();
+  const loopOn = usePref(LOOP_PREF, "off") === "on";
+  const loopMargin = parseMargin(usePref(LOOP_MARGIN_PREF, "0"));
+  const list = matchPlays(match, videos, allPlays, events, new Set((edits ?? []).flatMap((e) => (e.play_id ? [e.play_id] : []))));
   const router = useRouter();
   const [clipOpen, setClipOpen] = useState<string | null>(null);
   const editOf = (p: Play) => (edits ?? []).find((e) => e.play_id === p.play_id) ?? null;
@@ -208,13 +231,18 @@ export function PlaysTab({
         const bin = (
           <PlaysBin
             plays={plays}
+            list={list}
+            filter={filter}
+            onFilter={setFilter}
+            videoId={videoId}
+            multi={videos.length > 1}
             selId={selId}
             time={time}
             duration={duration}
             onPick={(p) => {
               setSelId(p.play_id);
               setSelKf(null);
-              playerRef.current?.seek(p.t_start);
+              onGoTo(videoOf(p), p.t_start, p.play_id);
             }}
             onSeek={(t) => playerRef.current?.seek(t)}
             onCreate={create}
@@ -230,12 +258,31 @@ export function PlaysTab({
             <button
               type="button"
               className={`${btnPrimary} h-9 w-9 shrink-0 !p-0`}
-              onClick={() => playClip(play.t_start, play.t_end)}
+              onClick={() => playClip(play.t_start, play.t_end, loopOn ? loopMargin : null)}
               aria-label="Reproducir el clip"
               title="Reproducir el clip"
             >
               <PlayIcon size={16} weight="fill" />
             </button>
+            <button
+              type="button"
+              className={`${btn} shrink-0 !px-2`}
+              aria-pressed={loopOn}
+              onClick={() => setPref(LOOP_PREF, loopOn ? "off" : "on")}
+              title="Repite el tramo de la jugada al reproducirla"
+            >
+              <Repeat size={14} weight={loopOn ? "bold" : "regular"} className={loopOn ? "text-accent-300" : ""} />
+              Bucle {loopOn ? "sí" : "no"}
+            </button>
+            {loopOn && (
+              <select className="shrink-0 rounded-md bg-raised px-1.5 py-1.5 text-xs text-ink-2" aria-label="Margen del bucle" value={loopMargin} onChange={(e) => setPref(LOOP_MARGIN_PREF, e.target.value)}>
+                {[0, 1, 2, 3].map((m) => (
+                  <option key={m} value={m}>
+                    {m === 0 ? "sin margen" : `± ${m} s`}
+                  </option>
+                ))}
+              </select>
+            )}
             <input
               className={`${input} min-w-0 flex-1 font-medium`}
               value={play.title}
@@ -381,8 +428,8 @@ export function PlaysTab({
                     {measured.players
                       .filter((d) => show === "all" || (show === "named" && d.label))
                       .map((d) => (
-                        <g key={d.id} transform={`translate(${d.x} ${d.y})`} opacity={d.team === "ref" || d.team === "unk" ? 0.5 : 1}>
-                          <circle r={1.6} fill={d.team === "own" ? COLORS.own : d.team === "opp" ? COLORS.opp : "var(--color-faint)"} stroke="var(--color-bg)" strokeWidth={0.4} />
+                        <g key={d.id} transform={`translate(${d.x} ${d.y})`} opacity={d.extrapolated ? 0.3 : d.team === "ref" || d.team === "unk" ? 0.5 : 1}>
+                          <circle r={1.6} fill={d.team === "own" ? COLORS.own : d.team === "opp" ? COLORS.opp : "var(--color-faint)"} stroke={d.extrapolated ? "var(--color-faint)" : "var(--color-bg)"} strokeWidth={0.4} strokeDasharray={d.extrapolated ? "0.8 0.6" : undefined} />
                           {d.label && (
                             <text y={-2.2} textAnchor="middle" fontSize={2} fill="var(--color-ink)" pointerEvents="none">
                               {d.label}
@@ -428,7 +475,7 @@ export function PlaysTab({
               <p className="m-0 text-[11px] text-pretty text-faint">
                 {measuredOn
                   ? measured
-                    ? `${part?.file.auto ? "Medidas por el tracking sin corregir (sin nombres)" : "Medidas por el tracking corregido"}, con ${match.focus_team} atacando hacia la derecha${part?.dir === "inferred" ? " (dirección deducida)" : ""}. Solo salen las jugadoras que se ven en cuadro.`
+                    ? `${part?.file.auto ? "Medidas por el tracking sin corregir (sin nombres)" : "Medidas por el tracking corregido"}, con ${match.focus_team} atacando hacia la derecha${part?.dir === "inferred" ? " (dirección deducida)" : ""}. Solo salen las jugadoras que se ven en cuadro${measured.players.some((d) => d.extrapolated) ? "; las tenues con borde punteado se mantienen quietas donde se las vio por última (o primera) vez: no es una medición ni cuenta en ninguna cifra" : ""}.`
                     : "El video está fuera de la parte corregida: pon el clip para ver las posiciones."
                   : kfs.length === 0
                     ? "Pausa el video en un momento clave y añade un keyframe: coloca a las jugadoras arrastrándolas. Con dos o más, la app interpola el movimiento."
@@ -452,18 +499,24 @@ export function PlaysTab({
         </section>
       ) : (
         <section className="grid min-h-40 flex-1 place-items-center rounded-xl bg-surface p-6 text-center text-sm text-muted">
-          {plays.length === 0 ? "Crea una jugada para verla aquí." : "Elige una jugada de la lista."}
+          {loading ? "Cargando el video de la jugada…" : allPlays.length === 0 ? "Crea una jugada para verla aquí." : "Elige una jugada de la lista."}
         </section>
       )}
     </div>
   );
 }
 
-// The plays of the video as a clip bin under it, as in a video editor: the whole video as a bar with each play where
-// it falls (and the playhead), and one row of cards that fills the width, in pages.
+// The plays of the whole match as a clip bin under the video: a bar with the plays of the video on screen (and the
+// playhead), filters by video, kind and team, and one row of cards that fills the width, in pages. A card of another
+// video loads that video when picked.
 const CARD_W = 190;
 function PlaysBin({
   plays,
+  list,
+  filter,
+  onFilter,
+  videoId,
+  multi,
   selId,
   time,
   duration,
@@ -473,6 +526,11 @@ function PlaysBin({
   edited,
 }: {
   plays: Play[];
+  list: MatchPlay[];
+  filter: PlayFilter;
+  onFilter: (f: PlayFilter) => void;
+  videoId: string;
+  multi: boolean;
   selId: string | null;
   time: number;
   duration?: number;
@@ -490,9 +548,9 @@ function PlaysBin({
     const ro = new ResizeObserver(([e]) => setPer(Math.max(1, Math.floor((e.contentRect.width + 8) / (CARD_W + 8)))));
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
-  const sorted = [...plays].sort((a, b) => a.t_start - b.t_start);
-  const selIdx = sorted.findIndex((p) => p.play_id === selId);
+  }, [list.length]);
+  const sorted = filterPlays(list, filter);
+  const selIdx = sorted.findIndex((m) => m.play.play_id === selId);
   const [seen, setSeen] = useState<[number, number]>([-1, 0]);
   if (seen[0] !== selIdx || seen[1] !== per) {
     setSeen([selIdx, per]);
@@ -500,18 +558,59 @@ function PlaysBin({
   }
   const pages = Math.max(1, Math.ceil(sorted.length / per));
   const pg = Math.min(page, pages - 1);
+  const here = [...plays].sort((a, b) => a.t_start - b.t_start);
   const end = Math.max(duration ?? 0, ...plays.map((p) => p.t_end), time, 1);
   const x = (t: number) => `${(Math.min(end, Math.max(0, t)) / end) * 100}%`;
+  const types = typesPresent(list);
+  const sel = "rounded-md bg-raised px-1.5 py-1 text-xs text-ink-2";
+  const filtered = filter.video || filter.kind || filter.team;
   return (
     <section className="mt-3 rounded-xl bg-surface p-3" aria-label="Jugadas">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="cond text-[12px] font-bold tracking-wide text-muted uppercase">Jugadas · {plays.length}</span>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="cond text-[12px] font-bold tracking-wide text-muted uppercase">
+          Jugadas del partido · {filtered ? `${sorted.length} de ${list.length}` : list.length}
+        </span>
+        {list.length > 0 && (
+          <>
+            {multi && (
+              <select className={sel} aria-label="Filtrar por video" value={filter.video} onChange={(e) => onFilter({ ...filter, video: e.target.value })}>
+                <option value="">Todos los videos</option>
+                {[...new Map(list.map((m) => [m.video_id, m.video_label])).entries()].map(([id, label]) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            )}
+            <select className={sel} aria-label="Filtrar por tipo" value={filter.kind} onChange={(e) => onFilter({ ...filter, kind: e.target.value })}>
+              <option value="">Todos los tipos</option>
+              <option value="abp">Balón parado</option>
+              <option value="edited">Con dibujos</option>
+              {types.map((t) => (
+                <option key={t} value={t}>
+                  {EVENT_LABELS[t]}
+                </option>
+              ))}
+            </select>
+            <select className={sel} aria-label="Filtrar por equipo" value={filter.team} onChange={(e) => onFilter({ ...filter, team: e.target.value })}>
+              <option value="">Ambos equipos</option>
+              <option value="own">Nuestro equipo</option>
+              <option value="opp">Rival</option>
+              <option value="none">Sin evento marcado</option>
+            </select>
+            {filtered && (
+              <button type="button" className="link text-xs" onClick={() => onFilter(NO_FILTER)}>
+                Quitar filtros
+              </button>
+            )}
+          </>
+        )}
         <button type="button" className={`${btn} ml-auto !px-2.5 !py-1 text-xs`} onClick={onCreate} title="Nueva jugada desde el momento actual del video (15 s)">
           <Plus size={13} />
           Nueva en <span className="tc">{fmtT(time)}</span>
         </button>
       </div>
-      {/* The whole video: where each play is. */}
+      {/* The video on screen: where each of its plays is. */}
       <div
         className="relative mb-2 h-5 cursor-pointer rounded-md bg-raised"
         role="slider"
@@ -525,7 +624,7 @@ function PlaysBin({
           onSeek(((e.clientX - r.left) / r.width) * end);
         }}
       >
-        {sorted.map((p) => (
+        {here.map((p) => (
           <button
             key={p.play_id}
             type="button"
@@ -538,11 +637,14 @@ function PlaysBin({
         ))}
         <span className="pointer-events-none absolute top-0 h-full w-0.5 bg-ink" style={{ left: x(time) }} />
       </div>
-      {plays.length === 0 ? (
+      {list.length === 0 ? (
         <p className="m-0 text-xs text-faint">Una jugada es un tramo del video (inicio y fin). También se crea desde un evento con «+ jugada».</p>
+      ) : sorted.length === 0 ? (
+        <p className="m-0 text-xs text-faint">Ninguna jugada cumple los filtros.</p>
       ) : (
         <div ref={rowRef} className="flex gap-2">
-          {sorted.slice(pg * per, pg * per + per).map((p) => {
+          {sorted.slice(pg * per, pg * per + per).map((m) => {
+            const p = m.play;
             const on = p.play_id === selId;
             return (
               <button
@@ -558,9 +660,16 @@ function PlaysBin({
                   {p.abp && <span className="tag !px-1.5 !py-0 text-[10px]">ABP</span>}
                   {edited(p) && <PencilSimpleLine size={13} className="shrink-0 text-faint" aria-label="Con dibujos" />}
                 </span>
-                <span className="tc text-[11px] text-faint">
-                  {fmtT(p.t_start)}–{fmtT(p.t_end)} · {Math.round(p.t_end - p.t_start)} s
+                <span className="tc truncate text-[11px] text-faint">
+                  {multi && <span className={m.video_id === videoId ? "text-muted" : "text-warn"}>{m.video_label} · </span>}
+                  {fmtT(m.t_start)}–{fmtT(m.t_end)} · {Math.round(m.t_end - m.t_start)} s
                 </span>
+                {(m.type || m.team) && (
+                  <span className="truncate text-[11px] text-faint">
+                    {m.type ? EVENT_LABELS[m.type] : ""}
+                    {m.team === "own" ? " · propio" : m.team === "opp" ? " · rival" : ""}
+                  </span>
+                )}
               </button>
             );
           })}

@@ -87,3 +87,42 @@ test("geometría: contorno convexo, curva por los puntos, punta de flecha y punt
   close(labelPoint({ kind: "arrow", points: [[0, 0], [10, 0]] }), [5, 0]);
   close(labelPoint({ kind: "zone", points: [[0, 0], [10, 0], [10, 10], [0, 10]] }), [5, 5]);
 });
+
+// ------------------------------------------------------------------------------ rótulos y resaltes del estudio
+import { project, highlightShape } from "./annotations.ts";
+test("el resalte puede ser óvalo, flecha o ninguno; el rótulo cambia de lado y se quita", () => {
+  // Orthographic camera looking at the pitch: 1 normalised m = 10 px, y down.
+  const toImage = ([x, y]) => [x * 10, y * 10];
+  const image = { w: 1920, h: 1080 };
+  const res = (style) => ({ id: "h", kind: "highlight", style: { color: "accent", ...style }, space: "pitch", points: [[50, 30]], players: [7] });
+  const labelOf = () => "10";
+  const oval = project(res({}), toImage, image, labelOf);
+  assert.equal(oval.closed, true);
+  assert.equal(oval.paths.length, 1);
+  assert.equal(oval.head, null);
+  const arrow = project(res({ shape: "arrow" }), toImage, image, labelOf);
+  assert.equal(arrow.paths.length, 0);
+  assert.equal(arrow.head.length, 3);
+  assert.ok(arrow.head[0][1] < 300, "la flecha flota sobre la cabeza (y menor que los pies)");
+  const none = project(res({ shape: "none" }), toImage, image, labelOf);
+  assert.equal(none.paths.length, 0);
+  assert.equal(none.head, null);
+  assert.equal(none.text.value, "10");
+  // «box» is no longer a shape: it reads as the oval.
+  assert.equal(highlightShape({ shape: "box" }), "oval");
+  assert.equal(project(res({ shape: "box" }), toImage, image, labelOf).closed, true);
+  // Sides and nudge.
+  const up = project(res({}), toImage, image, labelOf).text;
+  const right = project(res({ label_side: "right" }), toImage, image, labelOf).text;
+  const left = project(res({ label_side: "left" }), toImage, image, labelOf).text;
+  const down = project(res({ label_side: "down" }), toImage, image, labelOf).text;
+  assert.ok(right.at[0] > up.at[0] && right.anchor === "start");
+  assert.ok(left.at[0] < up.at[0] && left.anchor === "end");
+  assert.ok(down.at[1] > up.at[1]);
+  const moved = project(res({ label_dx: 30, label_dy: -20 }), toImage, image, labelOf).text;
+  assert.ok(Math.abs(moved.at[0] - up.at[0] - 30) < 1e-9 && Math.abs(moved.at[1] - up.at[1] + 20) < 1e-9);
+  // The clip's side applies when the drawing has none; hidden players and label_off lose the player's label.
+  assert.ok(project(res({}), toImage, image, labelOf, { side: "right" }).text.at[0] > up.at[0]);
+  assert.equal(project(res({}), toImage, image, labelOf, { hidden: new Set(["7"]) }).text, null);
+  assert.equal(project(res({ label_off: true }), toImage, image, labelOf).text, null);
+});

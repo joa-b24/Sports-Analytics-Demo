@@ -1,4 +1,4 @@
-import { DRAW_COLOR_VAR } from "@/components/board/BoardView";
+import { useDrawColor } from "@/components/studio/palette";
 import { DRAW_PX, type Projected, type Pt } from "@/lib/annotations";
 
 const pts = (ps: Pt[]) => ps.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
@@ -12,15 +12,19 @@ export function ClipDrawings({
   image,
   selected = null,
   onPick,
+  onLabelDown,
   bodies = [],
 }: {
   items: Projected[];
   image: { w: number; h: number };
   selected?: string | null;
   onPick?: (id: string) => void;
+  // The label of a drawing can be grabbed to move it (the editor, with the select tool).
+  onLabelDown?: (id: string, e: React.PointerEvent) => void;
   bodies?: [number, number, number, number][];
 }) {
   const k = image.h / 1080;
+  const dc = useDrawColor();
   return (
     <>
       <defs>
@@ -36,7 +40,7 @@ export function ClipDrawings({
       </defs>
       <g mask="url(#clip-bodies)" filter="url(#clip-shadow)">
       {items.map((d) => {
-        const color = DRAW_COLOR_VAR[d.style.color] ?? DRAW_COLOR_VAR.accent;
+        const color = dc(d.style.color);
         const width = DRAW_PX.stroke * k * (d.id === selected ? 1.6 : 1);
         const dash = d.style.dashed ? `${14 * k} ${10 * k}` : undefined;
         const hit = onPick
@@ -65,7 +69,7 @@ export function ClipDrawings({
               <text
                 x={d.text.at[0]}
                 y={d.text.at[1]}
-                textAnchor="middle"
+                textAnchor={d.text.anchor ?? "middle"}
                 fontSize={(d.kind === "text" ? DRAW_PX.text : DRAW_PX.label) * k}
                 fontWeight={700}
                 fill={color}
@@ -73,7 +77,17 @@ export function ClipDrawings({
                 strokeOpacity={0.75}
                 strokeWidth={DRAW_PX.outline * k}
                 paintOrder="stroke"
-                {...(d.kind === "text" ? hit : { pointerEvents: "none" as const })}
+                {...(d.kind === "text"
+                  ? hit
+                  : onLabelDown
+                    ? {
+                        className: "cursor-grab",
+                        onPointerDown: (e: React.PointerEvent) => {
+                          e.stopPropagation();
+                          onLabelDown(d.id, e);
+                        },
+                      }
+                    : { pointerEvents: "none" as const })}
               >
                 {d.text.value}
               </text>

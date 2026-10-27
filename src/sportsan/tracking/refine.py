@@ -222,7 +222,7 @@ def feet_marks_path(tracks: Path) -> Path:
     return tracks.with_name(tracks.stem + ".feet.json")
 
 
-def refine_tracks(data: dict, feet: bool = True, smooth_h: bool = True, progress=None) -> tuple[dict, dict]:
+def refine_tracks(data: dict, feet: bool = True, smooth_h: bool = True, progress=None, window_s: float = WINDOW_S) -> tuple[dict, dict]:
     """Devuelve (datos refinados, resumen). Pura: no lee ni escribe archivos. Si ya se hizo lo pedido, devuelve los datos
     tal cual con `summary["skipped"] = True`."""
     from .process import on_pitch
@@ -249,7 +249,7 @@ def refine_tracks(data: dict, feet: bool = True, smooth_h: bool = True, progress
     pts = image_points(feet_rows, float(data.get("image_w") or 1920), float(data.get("image_h") or 1080))
     if do_smooth:
         log("calibración", 0, 1)
-        Hs, info = smooth_homographies(Hs, np.array(frames) / fps, pts)
+        Hs, info = smooth_homographies(Hs, np.array(frames) / fps, pts, window_s)
         log("calibración", 1, 1)
     venue = data.get("venue") or {}
     L, W = float(venue.get("length_m") or PITCH_LENGTH_M), float(venue.get("width_m") or PITCH_WIDTH_M)
@@ -273,7 +273,7 @@ def refine_tracks(data: dict, feet: bool = True, smooth_h: bool = True, progress
         if i % 500 == 0:
             log("posiciones", i, n)
     log("posiciones", n, n)
-    refined = {"feet": do_feet, "smooth_h": bool(prev.get("smooth_h")) or do_smooth, "window_s": WINDOW_S, "cut_m": CUT_M,
+    refined = {"feet": do_feet, "smooth_h": bool(prev.get("smooth_h")) or do_smooth, "window_s": window_s if do_smooth else prev.get("window_s", window_s), "cut_m": CUT_M,
                "feet_fixed": n_fixed, "h_cuts": info.get("cuts", 0)}
     out = {**data, "frames": new_frames, "refined": refined}
     return out, {"skipped": False, "refined": refined, "info": info, "points_px": pts}
@@ -308,6 +308,9 @@ def main(argv: list[str] | None = None) -> None:
                     help="solo escribe tracks_<parte>.feet.json (cajas con pies corregidos) sin tocar los tracks")
     args = ap.parse_args(argv)
     cfg = load_config(match=args.match)
+    from .process import post_settings
+
+    post = post_settings(cfg)  # `postprocess` de match.yaml (lo elegido en la app); las banderas --no-* solo apagan
     dir_ = project_root() / cfg["paths"]["tracking_dir"]
     src = dir_ / f"tracks_{args.part}.json"
     pg = Progress(dir_ / "revision" / f"progreso_refine_{args.part}.log")
@@ -317,7 +320,7 @@ def main(argv: list[str] | None = None) -> None:
         pg.log("pies", 1, 1)
         print(f"Marcas de pies: {sum(len(v) for v in marks['boxes'].values())} cajas -> {feet_marks_path(src)}")
         return
-    summary = refine_file(src, Path(args.out) if args.out else None, feet=not args.no_feet, smooth_h=not args.no_smooth_h, progress=pg)
+    summary = refine_file(src, Path(args.out) if args.out else None, feet=post["feet"] and not args.no_feet, smooth_h=post["smooth_h"] and not args.no_smooth_h, progress=pg, window_s=post["window_s"])
     if summary["skipped"]:
         print(f"La parte ya estaba refinada ({summary['refined']}); no se cambia nada.")
         return
@@ -329,14 +332,14 @@ def backup_path(src: Path) -> Path:
     return src.with_name(src.stem + ".pre_refine.json")
 
 
-def refine_file(src: Path, out: Path | None = None, feet: bool = True, smooth_h: bool = True, progress=None) -> dict:
+def refine_file(src: Path, out: Path | None = None, feet: bool = True, smooth_h: bool = True, progress=None, window_s: float = WINDOW_S) -> dict:
     """Refina `src`. Con `out`, escribe ahí y no toca nada más. Sin `out`, en sitio: copia `<parte>.pre_refine.json` (solo
     la primera vez: guarda el original de verdad) y regenera `tracking_<parte>.parquet` validado."""
     log = progress.log if progress else (lambda *a: None)
     log("lectura", 0, 1)
     data = json.loads(src.read_text(encoding="utf-8"))
     log("lectura", 1, 1)
-    new, summary = refine_tracks(data, feet=feet, smooth_h=smooth_h, progress=progress)
+    new, summary = refine_tracks(data, feet=feet, smooth_h=smooth_h, progress=progress, window_s=window_s)
     if summary["skipped"]:
         log("listo", 1, 1)
         return summary

@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { downloadArgv, validateDownload } from "@/lib/downloads";
 
 // Runs the project's Python jobs from the app when it runs on this computer (npm run dev, or the desktop app): the
 // short tracking test, the full processing, sending to Kaggle and bringing its results back. Only these jobs, with a
@@ -17,12 +19,15 @@ export const dynamic = "force-dynamic";
 const ROOT = path.resolve(process.env.SPORTSAN_ROOT ?? path.join(process.cwd(), ".."));
 const enabled = () => process.env.NODE_ENV !== "production" || process.env.SPORTSAN_LOCAL === "1";
 
-type JobKind = "test" | "process" | "kaggle" | "kaggle_pull";
-const ARGS: Record<JobKind, (match: string, video: string) => string[]> = {
-  test: (m, v) => ["-m", "sportsan.tracking.process", "--match", m, "--video", v, "--test"],
-  process: (m) => ["-m", "sportsan.tracking.overnight", "--match", m],
+type JobKind = "test" | "process" | "kaggle" | "kaggle_pull" | "download";
+const ARGS: Record<JobKind, (match: string, video: string, bandMarginM?: number, youtubeId?: string) => string[]> = {
+  test: (m, v, b) => ["-m", "sportsan.tracking.process", "--match", m, "--video", v, "--test", ...(b !== undefined ? ["--band-margin", String(b)] : [])],
+  // overnight has no --band-margin: with the margin of Detalles técnicos the same steps run through the pipeline command.
+  process: (m, _v, b) => (b !== undefined ? ["-m", "sportsan.tracking.pipeline", "tracking", "--match", m, "--resume", "--band-margin", String(b)] : ["-m", "sportsan.tracking.overnight", "--match", m]),
   kaggle: (m, v) => ["-m", "sportsan.cloud.kaggle", "run", "tracking", "--match", m, "--videos", v, "--no-wait"],
   kaggle_pull: (m) => ["-m", "sportsan.cloud.kaggle", "pull", "--match", m],
+  // yt-dlp with the options of CLAUDE.md (sportsan.ingest.download_videos); the link is checked by validateDownload.
+  download: (m, v, _b, y) => downloadArgv({ match: m, video: v, youtubeId: y ?? "" }),
 };
 const MAX_LINES = 400;
 
@@ -62,6 +67,18 @@ const view = (j: Job, tail = 0) => ({
 
 const notFound = () => new Response("No disponible", { status: 404 });
 
+// The output of a download is kept next to the other logs of the match (tracking/revision/descarga_<video>.log).
+async function saveDownloadLog(j: Job) {
+  if (j.kind !== "download") return;
+  try {
+    const dir = path.join(ROOT, "matches", j.match, "tracking", "revision");
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, `descarga_${j.video}.log`), j.lines.join(String.fromCharCode(10)) + String.fromCharCode(10), "utf-8");
+  } catch {
+    // The log is a convenience: a failure to write it never changes the result of the download.
+  }
+}
+
 export async function GET(req: Request) {
   if (!enabled()) return notFound();
   const id = new URL(req.url).searchParams.get("id");
@@ -74,19 +91,27 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   if (!enabled()) return notFound();
-  const body = (await req.json().catch(() => null)) as { kind?: string; match?: string; video?: string } | null;
+  const body = (await req.json().catch(() => null)) as { kind?: string; match?: string; video?: string; bandMarginM?: unknown; youtubeId?: unknown } | null;
   const kind = body?.kind as JobKind | undefined;
   const match = body?.match ?? "";
   const video = body?.video ?? "v1";
+  // Search strip margin of the test job (Detalles técnicos): meters, 0 to 15.
+  const band = body?.bandMarginM;
+  if (band !== undefined && (!(kind === "test" || kind === "process") || typeof band !== "number" || !Number.isFinite(band) || band < 0 || band > 15)) return new Response("Margen no válido", { status: 400 });
   if (!kind || !(kind in ARGS) || !/^[\w.-]+$/.test(match) || !/^v\d+$/.test(video)) return new Response("Trabajo no válido", { status: 400 });
+  if (kind === "download") {
+    const ok = validateDownload({ match, video, youtubeId: body?.youtubeId });
+    if (!ok.ok) return new Response(ok.error, { status: 400 });
+  }
   if (!existsSync(path.join(ROOT, "matches", match))) return new Response("No existe esa carpeta de partido", { status: 404 });
   // One job of each kind per match at a time.
-  const busy = [...jobs.values()].find((j) => j.state === "running" && j.match === match && j.kind === kind);
+  // (Downloads: one per video, so the same video is never downloaded twice but two videos can come down together.)
+  const busy = [...jobs.values()].find((j) => j.state === "running" && j.match === match && j.kind === kind && (kind !== "download" || j.video === video));
   if (busy) return Response.json(view(busy));
 
   const id = `${kind}-${match}-${Date.now().toString(36)}`;
   const job: Job = { id, kind, match, video, state: "running", started: Date.now(), ended: null, code: null, lines: [], proc: null };
-  const proc = spawn(python(), ARGS[kind](match, video), {
+  const proc = spawn(python(), ARGS[kind](match, video, band as number | undefined, typeof body?.youtubeId === "string" ? body.youtubeId : undefined), {
     cwd: ROOT,
     env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", PYTHONUNBUFFERED: "1", TQDM_MININTERVAL: "2" },
     windowsHide: true,
@@ -115,6 +140,7 @@ export async function POST(req: Request) {
     job.ended = Date.now();
     if (job.state === "running") job.state = code === 0 ? "done" : "failed";
     job.proc = null;
+    void saveDownloadLog(job);
   });
   proc.on("error", (err) => {
     job.lines.push(`No se pudo ejecutar Python: ${err.message}`);

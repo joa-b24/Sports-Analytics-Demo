@@ -9,11 +9,17 @@ import {
   FloppyDisk,
   HandPalm,
   LineSegments,
+  ChartBar,
+  CaretDoubleLeft,
+  CaretDoubleRight,
+  CaretLeft,
+  CaretRight,
   Pause,
   PencilSimpleLine,
   Play,
   Polygon,
   PresentationChart,
+  Repeat,
   TextT,
   Trash,
   X,
@@ -21,16 +27,22 @@ import {
 } from "@phosphor-icons/react";
 import { Fragment, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { DRAW_COLOR_VAR } from "@/components/board/BoardView";
 import { ClipDrawings } from "@/components/clip/ClipOverlay";
 import { useClipData } from "@/components/clip/useClipData";
 import { IconButton } from "@/components/Modal";
 import { btn, btnPrimary, input } from "@/components/Shell";
+import { PaletteEditor, useDrawColor, usePalette } from "@/components/studio/palette";
+import { PlayMetricsCard, PlayMetricsPanel } from "@/components/studio/PlayMetricsPanel";
 import { ColorPick, FitAspect, PanelTitle, RailButton, SidePanel, StudioFrame, TimeField, ToolRail, useWide } from "@/components/studio/Studio";
 import { Timeline } from "@/components/studio/Timeline";
 import { VideoPlayer, type PlayerHandle } from "@/components/VideoPlayer";
 import {
   ANNOTATION_LABELS,
+  HIGHLIGHT_SHAPES,
+  HIGHLIGHT_SHAPE_LABELS,
+  highlightShape,
+  LABEL_SIDES,
+  LABEL_SIDE_LABELS,
   clipDrawingsAt,
   clipFreezes,
   isValidAnnotation,
@@ -43,15 +55,22 @@ import {
   type AnnotationKind,
   type ClipEdit,
   type Freeze,
+  type HighlightShape,
   type LabelMode,
+  type LabelSide,
   type Pt,
 } from "@/lib/annotations";
-import { addToEdit, editPath, hGap, homographyAt, labelFor, personAt, removeFromEdit, snapshotContext } from "@/lib/clips";
+import { addToEdit, editPath, hGap, homographyAt, labelFor, migrateEdit, personAt, removeFromEdit, snapshotContext } from "@/lib/clips";
+import { LOOP_MARGINS, LOOP_MARGIN_PREF, LOOP_PREF, consumedAt, loopAction, loopWindow, parseMargin } from "@/lib/clipLoop";
+import { FALLBACK_FPS, frameLabel, stepTime } from "@/lib/frameStep";
 import { fmtT, isTyping } from "@/lib/format";
 import { apply } from "@/lib/homography";
 import { writeLocal } from "@/lib/local";
-import { mutate, uid, useStore } from "@/lib/store";
+import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
 import type { Match } from "@/lib/types";
+
+// Wall clock for the frame steps, read in event handlers only.
+const nowMs = () => performance.now();
 
 type Tool = "select" | AnnotationKind;
 const TOOLS: { id: Tool; label: string; key: string; icon: Icon }[] = [
@@ -88,6 +107,7 @@ type Pending = { kind: "arrow" | "line" | "zone"; anchors: Anchor[]; cursor: Pt 
 
 export function ClipEditor({ match, edit, onClose, startPresenting = false }: { match: Match; edit: ClipEdit; onClose: () => void; startPresenting?: boolean }) {
   const { roster } = useStore();
+  const dc = useDrawColor();
   const data = useClipData(match, edit, roster ?? []);
   const video = (match.videos ?? []).find((v) => v.video_id === edit.video_id);
   const youtubeId = video?.youtube_id || (edit.video_id === "v1" ? match.youtube_id : "") || undefined;
@@ -105,6 +125,15 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
   const [msg, setMsg] = useState<string | null>(null);
   const [selectedFreeze, setSelectedFreeze] = useState<string | null>(null);
   const wide = useWide();
+  const palette = usePalette();
+  // Loop of the clip (on/off and margin in seconds) and the metrics (panel tab and card over the video).
+  const loop = usePref(LOOP_PREF, "off") === "on";
+  const margin = parseMargin(usePref(LOOP_MARGIN_PREF, "0"));
+  const loopRef = useRef({ on: loop, margin });
+  const [sideTab, setSideTab] = useState<"clip" | "metrics">("clip");
+  const metricsOver = usePref("studio:metricsOver", "off") === "on";
+  // The label being dragged, in px of a 1080-high frame from its place.
+  const [labelDrag, setLabelDrag] = useState<{ id: string; dx: number; dy: number; from: Pt; base: [number, number] } | null>(null);
 
   const save = (next: ClipEdit) => mutate((s) => ({ ...s, edits: (s.edits ?? []).map((x) => (x.edit_id === next.edit_id ? next : x)) }));
   // Start and end of the clip; its play (when it comes from one) follows, since the clip always opens with the play's.
@@ -118,23 +147,31 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
   // ------------------------------------------------------------------------------------------ playback engine
   const editRef = useRef(edit);
   const presentingRef = useRef(presenting);
-  const engine = useRef<{ playing: boolean; consumed: Set<number>; stop: Stop | null; lastT: number }>({ playing: false, consumed: new Set(), stop: null, lastT: edit.t_start });
+  const engine = useRef<{ playing: boolean; consumed: Set<number>; stop: Stop | null; lastT: number; lastLoop: number }>({ playing: false, consumed: new Set(), stop: null, lastT: edit.t_start, lastLoop: 0 });
   useEffect(() => {
     editRef.current = edit;
     presentingRef.current = presenting;
+    loopRef.current = { on: loop, margin };
   });
+  // A clip saved with the old box mark opens with the oval (the rest is kept).
+  useEffect(() => {
+    const m = migrateEdit(edit);
+    if (m !== edit) save(m);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edit.edit_id]);
 
   const startPlay = () => {
     const p = playerRef.current;
     if (!p) return;
     const e = engine.current;
     let t = p.getTime();
-    if (t < edit.t_start - 0.05 || t >= edit.t_end - 0.05) {
-      t = edit.t_start;
+    const w = loopWindow(edit, loop ? margin : 0);
+    if (t < w.start - 0.05 || t >= edit.t_end - 0.05) {
+      t = w.start;
       p.seek(t);
     }
     // Stops behind are done; the one right here, if any, is played.
-    e.consumed = new Set(clipFreezes(edit).filter((f) => f.t < t - 0.02).map((f) => f.t));
+    e.consumed = consumedAt(clipFreezes(edit).map((f) => f.t), t);
     e.stop = null;
     e.lastT = t;
     e.playing = true;
@@ -204,19 +241,33 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         }
         if (!e.stop) {
           const t = p.getTime();
-          if (e.playing) {
+          const settling = now - e.lastLoop < 400;
+          if (e.playing && !settling) {
             const f = clipFreezes(ed).find((x) => !e.consumed.has(x.t) && x.t >= e.lastT - 0.05 && x.t <= t + 0.02);
             if (f) {
               p.pause();
               p.seek(f.t);
               e.stop = { freeze: f, start: now, hold: false };
-            } else if (t >= ed.t_end) {
-              p.pause();
-              e.playing = false;
-              setPlaying(false);
+            } else {
+              const lp = loopRef.current;
+              const act = loopAction(t, ed, lp.on, lp.margin);
+              if (act === "restart") {
+                // Back to the start of the window with every pause to play again; a short guard while the seek lands.
+                if (now - e.lastLoop > 400) {
+                  const w = loopWindow(ed, lp.margin);
+                  e.lastLoop = now;
+                  e.consumed = new Set();
+                  e.lastT = w.start;
+                  p.seek(w.start);
+                }
+              } else if (act === "stop") {
+                p.pause();
+                e.playing = false;
+                setPlaying(false);
+              }
             }
           }
-          e.lastT = t;
+          if (!settling) e.lastT = t;
           if (!e.stop) setView({ t, stop: null });
         }
       }
@@ -248,8 +299,12 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
   const H = snap ? homographyAt(snap.homographies, Math.round(t * snap.fps), hGap(snap)) : null;
   const toImage = snap ? pitchToImage(H, snap.venue) : null;
   const labelOf = (id: number | string) => labelFor(id, edit.label_mode, snap);
+  // Exact frame rate of the video (the one of its tracking); without tracking the steps assume FALLBACK_FPS and say so.
+  const fps = snap?.fps ?? FALLBACK_FPS;
+  const labOpts = { side: edit.label_side, hidden: new Set((edit.hidden_labels ?? []).map(String)) };
   const drawn = clipDrawingsAt(edit, t, ctx, view.stop)
-    .map((r) => project(r, toImage, image, labelOf))
+    .map((r) => (labelDrag && r.id === labelDrag.id ? { ...r, style: { ...r.style, label_dx: labelDrag.dx, label_dy: labelDrag.dy } } : r))
+    .map((r) => project(r, toImage, image, labelOf, labOpts))
     .filter((x): x is NonNullable<typeof x> => x !== null);
   const people = snap && toImage
     ? Object.keys(snap.tracks).flatMap((id) => {
@@ -305,7 +360,7 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
       anchors,
       t_in,
       t_out: Math.min(edit.t_end, t_in + NEW_DRAWING_S),
-      style: { color, ...(dashed ? { dashed: true } : {}), ...(label ? { label } : {}) },
+      style: { color, ...(dashed ? { dashed: true } : {}), ...(label ? { label } : {}), ...(kind === "highlight" && edit.highlight_shape && edit.highlight_shape !== "oval" ? { shape: edit.highlight_shape } : {}) },
     };
     if (!isValidAnnotation(a)) return;
     save(addToEdit(edit, a, t));
@@ -335,12 +390,33 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
     if (tool === "line" || tool === "zone")
       setPending((cur) => ({ kind: tool, anchors: [...(cur?.kind === tool ? cur.anchors : []), a], cursor: px, startPx: null }));
   };
+  const startLabelDrag = (id: string, e: React.PointerEvent) => {
+    const a = edit.annotations.find((x) => x.id === id);
+    const px = pointer(e);
+    if (!a || !px || presenting || tool !== "select") return;
+    svgRef.current?.setPointerCapture?.(e.pointerId);
+    setSelected(id);
+    setSelectedFreeze(null);
+    const base: [number, number] = [a.style.label_dx ?? 0, a.style.label_dy ?? 0];
+    setLabelDrag({ id, dx: base[0], dy: base[1], from: px, base });
+  };
   const onMove = (e: RPointerEvent<SVGSVGElement>) => {
+    if (labelDrag) {
+      const px = pointer(e);
+      if (px) setLabelDrag({ ...labelDrag, dx: Math.round(labelDrag.base[0] + (px[0] - labelDrag.from[0]) / k), dy: Math.round(labelDrag.base[1] + (px[1] - labelDrag.from[1]) / k) });
+      return;
+    }
     if (!pending) return;
     const px = pointer(e);
     if (px) setPending({ ...pending, cursor: px });
   };
   const onUp = (e: RPointerEvent<SVGSVGElement>) => {
+    if (labelDrag) {
+      const a = edit.annotations.find((x) => x.id === labelDrag.id);
+      if (a) patchAnnotation(a.id, { style: { ...a.style, label_dx: labelDrag.dx || undefined, label_dy: labelDrag.dy || undefined } });
+      setLabelDrag(null);
+      return;
+    }
     if (pending?.kind !== "arrow" || !pending.startPx) return;
     const px = pointer(e);
     const far = px && Math.hypot(px[0] - pending.startPx[0], px[1] - pending.startPx[1]) > 25 * k;
@@ -364,7 +440,7 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
   };
 
   const saveFile = async () => {
-    const out: ClipEdit = { ...edit, snapshot: data.snapshot, fixed_file: data.fixedFile };
+    const out: ClipEdit = { ...edit, snapshot: data.snapshot, fixed_file: data.fixedFile, ...(Object.keys(palette).length ? { palette } : {}) };
     save(out);
     if (!match.folder) return setMsg("El partido no tiene carpeta: la edición queda guardada en este navegador.");
     const ok = await writeLocal(editPath(match.folder, edit.edit_id), JSON.stringify(out));
@@ -391,6 +467,18 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, [startPresenting]);
 
+  // Frame by frame: from the frame under the playhead (or from the last step, while the player still catches up with it).
+  const lastStep = useRef<{ t: number; at: number } | null>(null);
+  const stepFrames = (n: number) => {
+    const p = playerRef.current;
+    if (!p) return;
+    pausePlay();
+    const from = lastStep.current && nowMs() - lastStep.current.at < 500 ? lastStep.current.t : p.getTime();
+    const to = stepTime(from, fps, n, edit.t_start, edit.t_end);
+    lastStep.current = { t: to, at: nowMs() };
+    p.seek(to);
+  };
+  const stepSeconds = (sec: number) => stepFrames(Math.round(sec * fps));
   // Keys of the editor, before those of the match page (capture), which they replace while it is open.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -402,7 +490,10 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         e.stopImmediatePropagation();
       };
       if (presenting) {
-        if (e.key === " " || e.key === "ArrowRight" || e.key === "PageDown") {
+        if (e.key === "b") {
+          take();
+          setPref(LOOP_PREF, loop ? "off" : "on");
+        } else if (e.key === " " || e.key === "ArrowRight" || e.key === "PageDown") {
           take();
           advance();
         } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
@@ -449,8 +540,12 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         take();
-        const p = playerRef.current;
-        if (p) p.seek(Math.min(edit.t_end, Math.max(edit.t_start, p.getTime() + (e.shiftKey ? 1 / 30 : 1) * (e.key === "ArrowLeft" ? -1 : 1))));
+        stepFrames((e.shiftKey ? 10 : 1) * (e.key === "ArrowLeft" ? -1 : 1));
+        return;
+      }
+      if (e.key === "b") {
+        take();
+        setPref(LOOP_PREF, loop ? "off" : "on");
         return;
       }
       const tl = TOOLS.find((x) => x.key === e.key.toLowerCase());
@@ -480,6 +575,7 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
     <div className={presenting ? "fixed inset-0 z-[70] flex flex-col justify-center bg-black" : ""}>
       <div className={presenting ? "relative mx-auto w-full max-w-[calc(100vh*16/9)]" : "relative w-full"}>
         <VideoPlayer ref={playerRef} fileUrl={data.videoUrl ?? undefined} youtubeId={data.videoUrl ? undefined : youtubeId} />
+        {metricsOver && !presenting && <PlayMetricsCard match={match} videoId={edit.video_id} t0={edit.t_start} t1={edit.t_end} />}
         <svg
           ref={svgRef}
           viewBox={`0 0 ${image.w} ${image.h}`}
@@ -491,9 +587,9 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         >
           {!presenting && tool !== "select" && tool !== "text" &&
             people.map((p) => <circle key={p.id} cx={p.px[0]} cy={p.px[1]} r={6 * k} fill="var(--color-ink)" fillOpacity={0.55} stroke="#000" strokeOpacity={0.5} strokeWidth={1.5 * k} pointerEvents="none" />)}
-          <ClipDrawings items={drawn} image={image} bodies={bodies} selected={presenting ? null : selected} onPick={!presenting && tool === "select" ? setSelected : undefined} />
+          <ClipDrawings items={drawn} image={image} bodies={bodies} selected={presenting ? null : selected} onPick={!presenting && tool === "select" ? setSelected : undefined} onLabelDown={!presenting && tool === "select" ? startLabelDrag : undefined} />
           {pendingPx.length > 0 && pending?.cursor && (
-            <polyline points={[...pendingPx, pending.cursor].map((p) => p.join(",")).join(" ")} fill="none" stroke={DRAW_COLOR_VAR[color]} strokeWidth={3 * k} strokeDasharray={`${10 * k} ${8 * k}`} pointerEvents="none" />
+            <polyline points={[...pendingPx, pending.cursor].map((p) => p.join(",")).join(" ")} fill="none" stroke={dc(color)} strokeWidth={3 * k} strokeDasharray={`${10 * k} ${8 * k}`} pointerEvents="none" />
           )}
           {view.stop && !presenting && (
             <text x={24 * k} y={50 * k} fontSize={30 * k} fontWeight={700} fill="#fff" stroke="#000" strokeWidth={5 * k} paintOrder="stroke" pointerEvents="none">
@@ -503,10 +599,23 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         </svg>
       </div>
       {presenting && (
-        <div className="pointer-events-none absolute right-4 bottom-3 left-4 flex items-center justify-between text-xs text-white/60">
-          <span>{edit.title}</span>
-          <span>Espacio o → sigue · ← pausa anterior · Esc sale</span>
-        </div>
+        <>
+          <button
+            type="button"
+            aria-pressed={loop}
+            onClick={() => setPref(LOOP_PREF, loop ? "off" : "on")}
+            title="Repite el tramo (b)"
+            className={`absolute top-3 right-4 z-10 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs backdrop-blur ${loop ? "bg-accent text-white" : "bg-black/50 text-white/70 hover:text-white"}`}
+          >
+            <Repeat size={14} />
+            Bucle {loop ? "sí" : "no"}
+            {loop && margin > 0 ? ` · ±${margin} s` : ""}
+          </button>
+          <div className="pointer-events-none absolute right-4 bottom-3 left-4 flex items-center justify-between text-xs text-white/60">
+            <span>{edit.title}</span>
+            <span>Espacio o → sigue · ← pausa anterior · b bucle · Esc sale</span>
+          </div>
+        </>
       )}
     </div>
   );
@@ -562,10 +671,13 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
   const clampIn = (v: number, a: Annotation) => Math.min(a.t_out - 0.1, Math.max(edit.t_start, Math.round(v * 100) / 100));
   const clampOut = (v: number, a: Annotation) => Math.max(a.t_in + 0.1, Math.min(edit.t_end, Math.round(v * 100) / 100));
 
+  // Players that have a highlight in the clip (to remove the label of one of them).
+  const markedPlayers = [...new Set(edit.annotations.flatMap((a) => (a.kind === "highlight" && a.anchors[0]?.kind === "player" ? [a.anchors[0].identity] : [])))];
+
   const inspector = sel ? (
     <div className="space-y-4 text-xs">
       <div className="flex items-center gap-2">
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${DRAW_COLOR_VAR[sel.style.color] ?? DRAW_COLOR_VAR.accent} 35%, transparent)` }}>
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${dc(sel.style.color)} 35%, transparent)` }}>
           {(() => {
             const I = ICONS[sel.kind];
             return <I size={15} weight="bold" />;
@@ -594,6 +706,29 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         value={sel.style.label ?? ""}
         onChange={(e) => patchAnnotation(sel.id, { style: { ...sel.style, label: e.target.value || undefined } })}
       />
+      {sel.kind === "highlight" && (
+        <div className="space-y-2">
+          <PanelTitle>Resalte</PanelTitle>
+          <ShapeSeg value={highlightShape(sel.style)} onChange={(v) => patchAnnotation(sel.id, { style: { ...sel.style, shape: v === "oval" ? undefined : v } })} label="Forma del resalte" />
+        </div>
+      )}
+      {sel.kind !== "text" && (
+        <div className="space-y-2">
+          <PanelTitle right={<span className="text-faint">arrástralo en el video</span>}>Rótulo</PanelTitle>
+          <SideSeg value={sel.style.label_side ?? edit.label_side ?? "up"} onChange={(v) => patchAnnotation(sel.id, { style: { ...sel.style, label_side: v, label_dx: undefined, label_dy: undefined } })} label="Lado del rótulo" />
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted">
+            <label className="flex items-center gap-1.5">
+              <input type="checkbox" checked={!!sel.style.label_off} onChange={(e) => patchAnnotation(sel.id, { style: { ...sel.style, label_off: e.target.checked || undefined } })} />
+              Sin rótulo en este dibujo
+            </label>
+            {(sel.style.label_dx || sel.style.label_dy) && (
+              <button type="button" className="link" onClick={() => patchAnnotation(sel.id, { style: { ...sel.style, label_dx: undefined, label_dy: undefined } })}>
+                Volver a su sitio
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div className="space-y-2">
         <PanelTitle>Estilo</PanelTitle>
         <ColorPick value={sel.style.color} onChange={(c) => patchAnnotation(sel.id, { style: { ...sel.style, color: c } })} />
@@ -655,7 +790,7 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
               return (
                 <li key={id} className="flex items-center gap-2 rounded-md bg-raised px-2 py-1">
                   <span className="tc w-4 text-faint">{i + 1}</span>
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent }} />
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: dc(a.style.color) }} />
                   <button type="button" className="min-w-0 flex-1 truncate text-left text-ink-2 hover:text-ink" onClick={() => setSelected(a.id)}>
                     {a.style.label || ANNOTATION_LABELS[a.kind]}
                   </button>
@@ -699,14 +834,68 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
             </button>
           ))}
         </div>
+        <div className="mt-2 space-y-2">
+          <SideSeg value={edit.label_side ?? "up"} onChange={(v) => save({ ...edit, label_side: v })} label="Lado de los rótulos" />
+          <div className="flex flex-wrap gap-1">
+            <button
+              type="button"
+              className={`${btn} !px-2 !py-1 text-xs`}
+              disabled={edit.label_mode === "none" && edit.annotations.every((a) => a.kind === "text" || a.style.label_off)}
+              onClick={() => save({ ...edit, label_mode: "none", annotations: edit.annotations.map((a) => (a.kind === "text" ? a : { ...a, style: { ...a.style, label_off: true } })) })}
+              title="Quita el nombre o dorsal y el texto de todos los dibujos que no son texto en pantalla"
+            >
+              Quitar todos
+            </button>
+            <button
+              type="button"
+              className={`${btn} !px-2 !py-1 text-xs`}
+              disabled={!edit.annotations.some((a) => a.style.label_off) && !edit.hidden_labels?.length}
+              onClick={() => save({ ...edit, hidden_labels: undefined, annotations: edit.annotations.map((a) => (a.style.label_off ? { ...a, style: { ...a.style, label_off: undefined } } : a)) })}
+            >
+              Volver a mostrarlos
+            </button>
+          </div>
+          {markedPlayers.length > 0 && (
+            <div>
+              <p className="m-0 mb-1 text-faint">Quitar el rótulo de una jugadora:</p>
+              <div className="flex flex-wrap gap-1">
+                {markedPlayers.map((id) => {
+                  const off = (edit.hidden_labels ?? []).map(String).includes(String(id));
+                  return (
+                    <button
+                      key={String(id)}
+                      type="button"
+                      aria-pressed={off}
+                      onClick={() => save({ ...edit, hidden_labels: off ? (edit.hidden_labels ?? []).filter((x) => String(x) !== String(id)) : [...(edit.hidden_labels ?? []), id] })}
+                      className={`rounded-md px-1.5 py-0.5 text-[11px] ${off ? "bg-raised text-faint line-through" : "bg-accent-900 text-accent-300"}`}
+                    >
+                      {labelFor(id, edit.label_mode === "none" ? "number" : edit.label_mode, snap) ?? `#${id}`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
+      <div>
+        <PanelTitle>Resalte nuevo</PanelTitle>
+        <ShapeSeg value={edit.highlight_shape ?? "oval"} onChange={(v) => save({ ...edit, highlight_shape: v })} label="Forma del resalte nuevo" />
+      </div>
+      <details className="rounded-lg bg-raised px-2.5 py-2">
+        <summary className="cursor-pointer text-muted">Paleta de colores</summary>
+        <div className="mt-2">
+          <PaletteEditor />
+        </div>
+      </details>
       <div>
         <PanelTitle>Teclas</PanelTitle>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-faint">
           {(
             [
               ["Espacio", "reproducir / pausar"],
-              ["← →", "1 s (Mayús: un cuadro)"],
+              ["← →", "un cuadro (Mayús: 10 cuadros)"],
+              ["b", "bucle del tramo"],
               ["p", "pausa aquí"],
               ["m r f l z t", "herramientas"],
               ["Enter / Esc", "terminar / cancelar"],
@@ -743,9 +932,44 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
           >
             {playing ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
           </button>
+          <span className="inline-flex items-center rounded-md bg-raised" role="group" aria-label="Avance por cuadro">
+            <StepBtn icon={CaretDoubleLeft} label="Un segundo atrás (Mayús + ←: 10 cuadros)" onClick={() => stepSeconds(-1)} />
+            <StepBtn icon={CaretLeft} label="Un cuadro atrás (←)" onClick={() => stepFrames(-1)} />
+            <span className="tc min-w-24 px-1 text-center text-[11px] text-ink" title={snap ? `${fps.toFixed(3)} cuadros por segundo` : `Sin tracking no se conoce la tasa del video: se supone ${FALLBACK_FPS} cuadros por segundo`}>
+              {frameLabel(t, fps, edit.t_start)}
+              {!snap && <span className="text-faint"> · {FALLBACK_FPS} fps supuestos</span>}
+            </span>
+            <StepBtn icon={CaretRight} label="Un cuadro adelante (→)" onClick={() => stepFrames(1)} />
+            <StepBtn icon={CaretDoubleRight} label="Un segundo adelante (Mayús + →: 10 cuadros)" onClick={() => stepSeconds(1)} />
+          </span>
           <span className="tc rounded-md bg-raised px-2 py-1 text-xs text-ink">
             {fmtT(t)} <span className="text-faint">/ {Math.round(span * 10) / 10} s</span>
           </span>
+          <span className="inline-flex items-center gap-1">
+            <button
+              type="button"
+              className={`${btn} !px-2`}
+              aria-pressed={loop}
+              onClick={() => setPref(LOOP_PREF, loop ? "off" : "on")}
+              title="Repite el tramo del clip con sus dibujos y pausas (b)"
+            >
+              <Repeat size={14} weight={loop ? "bold" : "regular"} className={loop ? "text-accent-300" : ""} />
+              Bucle {loop ? "sí" : "no"}
+            </button>
+            {loop && (
+              <select className="rounded-md bg-raised px-1.5 py-1.5 text-xs text-ink-2" aria-label="Margen del bucle" value={margin} onChange={(e) => setPref(LOOP_MARGIN_PREF, e.target.value)}>
+                {LOOP_MARGINS.map((m) => (
+                  <option key={m} value={m}>
+                    {m === 0 ? "sin margen" : `± ${m} s`}
+                  </option>
+                ))}
+              </select>
+            )}
+          </span>
+          <button type="button" className={btn} aria-pressed={metricsOver} onClick={() => setPref("studio:metricsOver", metricsOver ? "off" : "on")} title="Muestra las cifras clave de la jugada sobre el video (todas en la pestaña Métricas)">
+            <ChartBar size={14} />
+            Métricas
+          </button>
           <button type="button" className={btn} onClick={addFreeze} title="Congela la imagen en este momento al reproducir (p)">
             <HandPalm size={14} />
             Pausa aquí
@@ -784,7 +1008,7 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
           id: a.id,
           start: a.t_in,
           end: a.t_out,
-          color: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent,
+          color: dc(a.style.color),
           label: a.style.label || ANNOTATION_LABELS[a.kind],
           icon: ICONS[a.kind],
           dashed: !!a.style.dashed,
@@ -831,11 +1055,16 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         }
         canvas={
           <div className="flex h-full flex-col">
-            <p className="mb-1 min-h-5 truncate px-1 text-xs text-faint" title={HINTS[tool]}>
-              {pending && pending.kind !== "arrow"
-                ? `${ANNOTATION_LABELS[pending.kind]}: ${pending.anchors.length} ${pending.anchors.length === 1 ? "punto" : "puntos"} · Enter termina, Esc cancela`
-                : HINTS[tool]}
-            </p>
+            <div className="mb-1 flex min-h-6 items-center gap-2 px-1 text-xs text-faint">
+              <p className="m-0 min-w-0 flex-1 truncate" title={HINTS[tool]}>
+                {pending && pending.kind !== "arrow"
+                  ? `${ANNOTATION_LABELS[pending.kind]}: ${pending.anchors.length} ${pending.anchors.length === 1 ? "punto" : "puntos"} · Enter termina, Esc cancela`
+                  : HINTS[tool]}
+              </p>
+              {tool === "highlight" && (
+                <ShapeSeg value={edit.highlight_shape ?? "oval"} onChange={(v) => save({ ...edit, highlight_shape: v })} label="Resalte nuevo" />
+              )}
+            </div>
             <div className="min-h-0 flex-1">
               <FitAspect aspect={image.w / image.h}>{videoBox}</FitAspect>
             </div>
@@ -843,10 +1072,53 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         }
         timeline={timelinePanel}
         side={
-          <SidePanel title={sel ? "Dibujo" : freezeSel ? "Pausa" : "Clip"}>{inspector}</SidePanel>
+          <SidePanel
+            tabs={[
+              ["clip", sel ? "Dibujo" : freezeSel ? "Pausa" : "Clip"],
+              ["metrics", "Métricas"],
+            ]}
+            value={sideTab}
+            onChange={setSideTab}
+          >
+            {sideTab === "metrics" ? <PlayMetricsPanel match={match} videoId={edit.video_id} t0={edit.t_start} t1={edit.t_end} /> : inspector}
+          </SidePanel>
         }
       />
     </div>,
     document.body,
+  );
+}
+
+// Shape of a highlight (oval, arrow, none) as a small segmented control.
+function ShapeSeg({ value, onChange, label }: { value: HighlightShape; onChange: (v: HighlightShape) => void; label: string }) {
+  return (
+    <div className="seg flex shrink-0" role="group" aria-label={label}>
+      {HIGHLIGHT_SHAPES.map((v) => (
+        <button key={v} type="button" className="seg-opt flex-1 !px-2 !py-0.5 text-center text-xs" aria-pressed={value === v} onClick={() => onChange(v)}>
+          {HIGHLIGHT_SHAPE_LABELS[v]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Side of the label of a marked player.
+function SideSeg({ value, onChange, label }: { value: LabelSide; onChange: (v: LabelSide) => void; label: string }) {
+  return (
+    <div className="seg flex" role="group" aria-label={label}>
+      {LABEL_SIDES.map((v) => (
+        <button key={v} type="button" className="seg-opt flex-1 !px-1.5 !py-0.5 text-center text-xs" aria-pressed={value === v} onClick={() => onChange(v)}>
+          {LABEL_SIDE_LABELS[v]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StepBtn({ icon: I, label, onClick }: { icon: Icon; label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="px-1.5 py-1.5 text-muted hover:text-ink" aria-label={label} title={label} onClick={onClick}>
+      <I size={13} weight="bold" />
+    </button>
   );
 }

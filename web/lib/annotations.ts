@@ -31,10 +31,31 @@ export const ANNOTATION_LABELS: Record<AnnotationKind, string> = {
 export const DRAW_COLORS = ["accent", "warn", "danger", "ok", "ink"] as const;
 export type DrawColor = (typeof DRAW_COLORS)[number];
 
+// How a highlight marks a player: an oval on the ground, an arrow over her head, or nothing (only her label). The old
+// «box» no longer exists: a clip that had it opens with the oval (lib/clips.ts migrateEdit).
+export const HIGHLIGHT_SHAPES = ["oval", "arrow", "none"] as const;
+export type HighlightShape = (typeof HIGHLIGHT_SHAPES)[number];
+export const HIGHLIGHT_SHAPE_LABELS: Record<HighlightShape, string> = { oval: "Óvalo", arrow: "Flecha", none: "Ninguno" };
+
+// Which side of the marked player her label sits on.
+export const LABEL_SIDES = ["up", "down", "left", "right"] as const;
+export type LabelSide = (typeof LABEL_SIDES)[number];
+export const LABEL_SIDE_LABELS: Record<LabelSide, string> = { up: "Arriba", down: "Abajo", left: "Izquierda", right: "Derecha" };
+
 export interface AnnotationStyle {
+  // A name of the palette (lib/palette.ts) or a free «#rrggbb».
   color: string;
   dashed?: boolean;
   label?: string;
+  // Highlights only. Absent = oval.
+  shape?: HighlightShape;
+  // Where the label sits, and a nudge from there in px of a 1080-high frame (a presentation offset: the drawing itself
+  // stays in meters or tied to the player). Absent = the clip's side, no nudge.
+  label_side?: LabelSide;
+  label_dx?: number;
+  label_dy?: number;
+  // The label of this drawing is not shown.
+  label_off?: boolean;
 }
 
 // highlight: 1 player. arrow: origin and end (+ points in between to curve it). line: 2 or more (a defensive line
@@ -85,6 +106,12 @@ export interface ClipEdit {
   annotations: Annotation[];
   // How players are labelled.
   label_mode: LabelMode;
+  // Side of the label for every drawing that does not choose its own (absent = up), the players whose label is removed
+  // (identities), the shape a new highlight takes, and the palette overrides in force when it was saved (for the render).
+  label_side?: LabelSide;
+  hidden_labels?: (number | string)[];
+  highlight_shape?: HighlightShape;
+  palette?: Record<string, string>;
   // The play it was made from, if any.
   play_id?: string;
   // tracks_fixed (or tracks, if the part was not corrected) file whose identities the `player` anchors use.
@@ -357,6 +384,9 @@ export const DRAW_PX = { stroke: 5, text: 40, label: 30, outline: 6 };
 // Sizes on the grass (normalised meters): the ring at the feet and the arrow head.
 export const DRAW_M = { ring: 1.2, head: 2 };
 
+// The shape of a highlight; anything unknown (an old «box») is read as the oval.
+export const highlightShape = (style: Pick<AnnotationStyle, "shape">): HighlightShape => (HIGHLIGHT_SHAPES as readonly string[]).includes(style.shape as string) ? (style.shape as HighlightShape) : "oval";
+
 export interface Venue {
   length_m: number;
   width_m: number;
@@ -391,7 +421,13 @@ export interface Projected {
   closed: boolean;
   head: Pt[] | null;
   // A text drawing, or the label of another drawing: where its baseline goes (centred) and what it says.
-  text: { at: Pt; value: string } | null;
+  text: { at: Pt; value: string; anchor?: "start" | "middle" | "end" } | null;
+}
+
+// What project() needs to place labels: the clip's side and the players whose label is removed.
+export interface LabelOpts {
+  side?: LabelSide;
+  hidden?: ReadonlySet<string>;
 }
 
 // A drawing over the video frame. Drawings on the grass follow the perspective point by point (a ring at the feet is an
@@ -402,6 +438,7 @@ export function project(
   toImage: ToImage | null,
   image: { w: number; h: number },
   labelOf?: (id: number | string) => string | null,
+  lab: LabelOpts = {},
 ): Projected | null {
   const k = image.h / 1080;
   const base: Projected = { id: r.id, kind: r.kind, style: r.style, paths: [], closed: false, head: null, text: null };
@@ -416,9 +453,11 @@ export function project(
     }
     return out;
   };
-  const labelAt = (p: Pt | null, who: string | null) => {
-    const value = [who, r.style.label].filter(Boolean).join(" · ");
-    return value && p ? { at: p, value } : null;
+  const labelAt = (p: Pt | null, who: string | null, anchor?: "start" | "middle" | "end") => {
+    const value = r.style.label_off ? "" : [who, r.style.label].filter(Boolean).join(" · ");
+    if (!value || !p) return null;
+    const at: Pt = [p[0] + (r.style.label_dx ?? 0) * k, p[1] + (r.style.label_dy ?? 0) * k];
+    return anchor && anchor !== "middle" ? { at, value, anchor } : { at, value };
   };
   const above = (p: Pt | null): Pt | null => (p ? [p[0], p[1] - 12 * k] : null);
   if (r.kind === "text") {
@@ -429,9 +468,37 @@ export function project(
     const [cx, cy] = r.points[0];
     const ring = proj(Array.from({ length: 32 }, (_, i): Pt => [cx + DRAW_M.ring * Math.cos((i / 32) * 2 * Math.PI), cy + DRAW_M.ring * Math.sin((i / 32) * 2 * Math.PI)]));
     if (!ring) return null;
+    const player = r.players[0];
+    const hidden = player !== null && lab.hidden?.has(String(player));
+    const who = player !== null && labelOf && !hidden ? labelOf(player) : null;
+    const shape = highlightShape(r.style);
+    const xs = ring.map((p) => p[0]);
+    const ys = ring.map((p) => p[1]);
+    const left = Math.min(...xs);
+    const right = Math.max(...xs);
     const top = ring.reduce((a, p) => (p[1] < a[1] ? p : a), ring[0]);
-    const who = r.players[0] !== null && labelOf ? labelOf(r.players[0]) : null;
-    return { ...base, paths: [ring], closed: true, text: labelAt(above(top), who) };
+    const bottom = ring.reduce((a, p) => (p[1] > a[1] ? p : a), ring[0]);
+    const mid = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const w = right - left;
+    // A person is about 1.75 m tall and the ring 2.4 m across: the arrow floats above the head at that scale.
+    const bodyH = (w / (2 * DRAW_M.ring)) * 1.75;
+    // The oval is on the ground; an arrow or nothing leaves the label at the head or the feet.
+    const headY = mid - bodyH;
+    const cxp = (left + right) / 2;
+    const side = r.style.label_side ?? lab.side ?? "up";
+    const roof = shape === "arrow" ? headY - w * 0.55 : shape === "none" ? headY : top[1];
+    const at: Record<LabelSide, [Pt, "start" | "middle" | "end"]> = {
+      up: [[shape === "oval" ? top[0] : cxp, roof - 12 * k], "middle"],
+      down: [[bottom[0], bottom[1] + 34 * k], "middle"],
+      left: [[left - 12 * k, mid + 10 * k], "end"],
+      right: [[right + 12 * k, mid + 10 * k], "start"],
+    };
+    const text = labelAt(at[side][0], who, at[side][1]);
+    if (shape === "oval") return { ...base, paths: [ring], closed: true, text };
+    if (shape === "none") return { ...base, text };
+    const tipY = headY - w * 0.12;
+    const size = w * 0.4;
+    return { ...base, head: [[cxp, tipY], [cxp - size / 2, tipY - size * 0.85], [cxp + size / 2, tipY - size * 0.85]], text };
   }
   if (r.kind === "arrow") {
     const curve = sampleCurve(r.points);

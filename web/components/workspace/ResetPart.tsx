@@ -3,8 +3,6 @@
 import { ArrowCounterClockwise, DownloadSimple, Trash } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Modal } from "@/components/Modal";
-import { TIMING_KEY } from "@/components/workspace/AnchorsPanel";
-import type { TimedAction } from "@/lib/anchors";
 import { downloadText } from "@/lib/format";
 import { resetPart } from "@/lib/reset";
 import { mutate, setPref, usePref, useStore } from "@/lib/store";
@@ -24,16 +22,7 @@ export function ResetPart({
   onMsg: (text: string) => void;
 }) {
   const [open, setOpen] = useState<null | { files: { path: string; bytes: number }[]; error?: string }>(null);
-  const timingRaw = usePref(TIMING_KEY, "[]");
   const skipped = usePref(`anchors:skipped:${folder}:${part}`, "").split(",").filter(Boolean).length;
-  const timing = (() => {
-    try {
-      return JSON.parse(timingRaw) as TimedAction[];
-    } catch {
-      return [];
-    }
-  })();
-  const mine = timing.filter((t) => t.part === part);
   const state = useStore();
   // Data of the old comparison tab (State.reviews) may still be in this browser: it goes too.
   const review = (state.reviews ?? []).find((r) => r.key === editsKey);
@@ -48,19 +37,16 @@ export function ResetPart({
     setOpen({ files: r.body.files ?? [], error: r.ok ? undefined : (r.body.error ?? "Solo funciona con la app abierta en esta computadora.") });
   };
   const exportFirst = () =>
-    downloadText(`antes_de_borrar_${part}.json`, JSON.stringify({ match_id: folder, part, exported: new Date().toISOString(), resolved_doubts: doubts, timing: mine }, null, 1), "application/json");
+    downloadText(`antes_de_borrar_${part}.json`, JSON.stringify({ match_id: folder, part, exported: new Date().toISOString(), resolved_doubts: doubts }, null, 1), "application/json");
   const run = async () => {
     const r = await call(false);
     if (!r.ok) return onMsg(r.body.error ?? "No se pudieron borrar los archivos.");
     let prefKeys: string[] = [];
-    let kept: unknown[] = timing;
     mutate((s) => {
-      const out = resetPart(s, editsKey, part, folder, timing);
+      const out = resetPart(s, editsKey, part, folder, []);
       prefKeys = out.prefKeys;
-      kept = out.timing;
       return out.state;
     });
-    setPref(TIMING_KEY, JSON.stringify(kept));
     for (const k of prefKeys) setPref(k, "");
     setOpen(null);
     const failed = r.body.failed ?? [];
@@ -95,7 +81,6 @@ export function ResetPart({
               <li>{skipped} ancla(s) saltada(s)</li>
               <li>{doubts} duda(s) resuelta(s) en la mesa (la mesa se queda como está, salvo eso)</li>
               {review && <li>Una comparación A/B guardada de antes: la mesa vuelve a como estaba al empezarla</li>}
-              <li>{mine.length} acción(es) del cronómetro de esta parte</li>
             </ul>
             <p className="text-xs text-ok">Se conservan: suggest_{part}.json, los tracks y labels, y las demás ediciones de la mesa (uniones, nombres, cajas quitadas a mano).</p>
           </div>

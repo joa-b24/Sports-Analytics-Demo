@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ANCHOR_RESERVED_KEYS, PLAYER_KEYS, linksProtection, afterResolve, dropHalfFrames, editsFromLinks, pickInDoubt, stepDoubt, filterByDensity, pendingSuggestions, runAround, setAnchor, sortDoubts, timingSummary } from "./anchors.ts";
+import { ANCHOR_RESERVED_KEYS, PLAYER_KEYS, linksProtection, afterResolve, dropHalfFrames, editsFromLinks, pickInDoubt, stepDoubt, filterByDensity, pendingSuggestions, runAround, setAnchor, sortDoubts, chainIndex, densityChoices, generatedDensity } from "./anchors.ts";
 import { emptyEdits, identityOf, people, setPerson } from "./tracks.ts";
 
 const fps = 30;
@@ -90,23 +90,29 @@ test("runAround stops at holes and at the window", () => {
   assert.deepEqual(runAround(file, 9, 4, 3, 3), []);
 });
 
-test("stopwatch summary caps pauses", () => {
-  const s = timingSummary([
-    { kind: "ancla", s: 2, at: 0 },
-    { kind: "ancla", s: 4, at: 0 },
-    { kind: "duda", s: 500, at: 0 },
-  ]);
-  assert.equal(s.total_s, 66);
-  assert.equal(s.per.ancla.median_s, 3);
-  assert.ok(Number.isNaN(s.per.saltar.median_s));
+test("generatedDensity reads the density a suggest file was written at", () => {
+  const sug = (n) => Array.from({ length: n }, (_, i) => ({ chain: i, frame: i * 100, track: i, score: 1, why: "larga" }));
+  const available = { "1": 132, "2": 248, "3": 312, "4": 330, "5": 345, hybrid: 348, zones: { near: 1 } };
+  assert.deepEqual(densityChoices({ available }).map((c) => c.density), [1, 2, 3, 4, 5]);
+  assert.equal(generatedDensity({ suggestions: sug(312), available }), 3);
+  assert.equal(generatedDensity({ suggestions: sug(348), available }), null);
+  assert.equal(generatedDensity({ suggestions: sug(5), available: undefined }), null);
+  // Ties: the largest density wins.
+  assert.equal(generatedDensity({ suggestions: sug(10), available: { "2": 10, "3": 10 } }), 3);
 });
 
-test("density counts flag levels without more places", async () => {
-  const { densityCounts } = await import("./anchors.ts");
-  const s = [0, 600, 1200].map((frame) => ({ chain: 1, frame, track: 1, score: 1, why: "larga" }));
-  const c = densityCounts(s, 30);
-  assert.deepEqual(c.map((x) => x.n), [1, 2, 3, 3, 3]);
-  assert.deepEqual(c.map((x) => x.short), [false, false, false, true, true]);
+test("a file with one suggestion per chain gives the same list at every density", () => {
+  // The case measured on the real parts: the selector of densities changed nothing.
+  const s = Array.from({ length: 40 }, (_, i) => ({ chain: i, frame: i * 90, track: i, score: 1 - i / 100, why: "larga" }));
+  for (const d of [1, 2, 3, 4, 5]) assert.equal(filterByDensity(s, d, fps).length, 40);
+});
+
+test("pendingSuggestions gives the same with a precomputed chain index", () => {
+  const chains = [{ id: 1, team: "own", t0: 0, t1: 60, n: 2, boxes: [[0, 1], [600, 1]] }];
+  const s = [{ chain: 1, frame: 600, track: 1, score: 1, why: "larga" }, { chain: 2, frame: 0, track: 2, score: 1, why: "larga" }];
+  const anchors = [{ frame: 0, track: 1, player: "Ana" }];
+  assert.deepEqual(pendingSuggestions(s, anchors, [], chains, 2, fps, chainIndex(chains)), pendingSuggestions(s, anchors, [], chains, 2, fps));
+  assert.deepEqual(pendingSuggestions(s, anchors, [], chains, 2, fps).map((x) => x.chain), [2]);
 });
 
 test("dudas: Tab avanza y retrocede dando la vuelta; al resolver se abre la que seguía", () => {

@@ -44,7 +44,8 @@ export const holeKey = (h: Pick<QuickHole, "a" | "b">) => `${h.a}:${h.b}`;
 
 type Pt = { frame: number; x: number; y: number; track: number };
 
-export function quickHoles(file: TracksFile, edits: TrackEdits, ppl: Person[], personId: number): QuickHole[] {
+// `green`: seconds [min, max] of a hole out of the camera that needs nothing (Detalles técnicos; default 2 to 7).
+export function quickHoles(file: TracksFile, edits: TrackEdits, ppl: Person[], personId: number, green: [number, number] = [GREEN_MIN_S, GREEN_MAX_S]): QuickHole[] {
   const P = ppl.find((p) => p.id === personId);
   if (!P) return [];
   const sx = (file.venue?.length_m ?? PITCH.length) / PITCH.length;
@@ -107,7 +108,7 @@ export function quickHoles(file: TracksFile, edits: TrackEdits, ppl: Person[], p
       }
       candidates.sort((x, y) => x.cost - y.cost || y.seconds - x.seconds);
     }
-    out.push({ a, b, seconds, offCamera: off, green: off && seconds >= GREEN_MIN_S && seconds <= GREEN_MAX_S, candidates: candidates.slice(0, MAX_CANDIDATES) });
+    out.push({ a, b, seconds, offCamera: off, green: off && seconds >= green[0] && seconds <= green[1], candidates: candidates.slice(0, MAX_CANDIDATES) });
   }
   return out;
 }

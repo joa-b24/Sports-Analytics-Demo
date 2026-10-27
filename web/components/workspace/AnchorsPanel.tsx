@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowBendUpRight, ArrowsSplit, CircleDashed, LinkBreak, Question, UserCircleDashed, type Icon } from "@phosphor-icons/react";
-import { ArrowClockwise, ArrowCounterClockwise, Check, DownloadSimple, FastForward, Flask, Lightning, LinkSimple, MagicWand, Scissors, Timer, UserSwitch, Warning, X } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, CaretDown, Check, FastForward, Keyboard, Lightning, LinkSimple, MagicWand, Scissors, UserSwitch, Warning, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconButton, Modal } from "@/components/Modal";
 import { DoubtCard, boxLabel } from "@/components/workspace/DoubtCard";
@@ -9,9 +9,10 @@ import { ResetPart } from "@/components/workspace/ResetPart";
 import { answerDoubt, doubtBoxes, DOUBT_TYPES, NOT_PLAYER, staleTwoPlaces, stepFrames, type Answer, type RichDoubt } from "@/lib/doubts";
 import {
   DEFAULT_DENSITY,
+  densityChoices,
+  generatedDensity,
   dropsByReason,
   reasonsText,
-  densityCounts,
   DOUBT_LABELS,
   anchorPaths,
   acceptTramo,
@@ -39,7 +40,6 @@ import {
   sortDoubts,
   suggestionFocus,
   suggestionKey,
-  timingSummary,
   type Anchor,
   type AnchorFocus,
   type AnchorSuggestion,
@@ -48,11 +48,12 @@ import {
   type TramoSuggestion,
   type LinksFile,
   type SuggestFile,
-  type TimedAction,
 } from "@/lib/anchors";
-import { downloadText, fmtT, isTyping } from "@/lib/format";
+import { fmtT, isTyping } from "@/lib/format";
 import { readLocal, writeLocal } from "@/lib/local";
 import { setPref, usePref } from "@/lib/store";
+import { fillRequestOf } from "@/lib/techTracking";
+import { useTrackingTech } from "@/lib/useTech";
 import { phaseName, type RunStatus, type RunTask } from "@/lib/runTask";
 import { applyQuickJoin, holeKey, quickHoles, quickProgress, type QuickCandidate, type QuickHole } from "@/lib/quickJoin";
 import type { FeetFile } from "@/lib/feetFix";
@@ -60,14 +61,11 @@ import { dropBoxes, editsKey, merge, separateRun, setPerson, type Person, type T
 import type { RosterPlayer, TrackEdits } from "@/lib/types";
 
 // Anchors mode of the correction table: name suggested moments (anchors), have Python fill the rest (links), then go
-// through its short list of doubts. The stopwatch keeps how long each action takes, to know the analyst's real time.
+// through its short list of doubts. (The stopwatch of the session was removed on 2026-10-27.)
 
 const DOUBTS_PER_PAGE = 4;
-export const TIMING_KEY = "anchors:timing";
-// Clock of the stopwatch, read only in handlers and effects.
-function now() {
-  return Date.now();
-}
+// Preference the stopwatch used to keep; cleared once so it does not stay in the browser.
+const OLD_TIMING_KEY = "anchors:timing";
 
 // One icon per kind of doubt, in the list.
 const DOUBT_ICONS: Record<string, Icon> = { dos_sitios: ArrowsSplit, salto: ArrowBendUpRight, union_dudosa: LinkBreak, hueco_largo: CircleDashed, sin_nombre: UserCircleDashed };
@@ -81,6 +79,57 @@ const DOUBT_HELP: Record<string, string> = {
   sin_nombre: `Clic en la caja si es la jugadora de la duda. D: elegir quién es. Enter: dejar sin nombre. ${CUT}`,
   default: `Clic en la caja que es ella. Enter: está bien. D: es otra. ${CUT}`,
 };
+
+// Keys of each tab, for the legend and the line under the panel. Keys of the table while a doubt is open (Q, Alt+Q, [ ])
+// are listed in "Mesa".
+const SHORTCUTS: { tab: string; title: string; keys: [string, string][] }[] = [
+  {
+    tab: "anchors",
+    title: "Anclas",
+    keys: [
+      ["1 2 3 …", "elige jugadora"],
+      ["Shift", "ninguna"],
+      ["Enter", "anclar"],
+      ["x", "no es jugadora"],
+      ["n", "saltar (solo la oculta)"],
+      ["Ctrl Z", "deshacer"],
+    ],
+  },
+  {
+    tab: "doubts",
+    title: "Dudas",
+    keys: [
+      ["1 A", "caja 1"],
+      ["2 B", "caja 2"],
+      ["0", "ninguna"],
+      ["Enter", "está bien"],
+      ["D", "es otra"],
+      ["S", "cortar"],
+      ["← →", "cuadros"],
+      ["Tab", "siguiente"],
+      ["Enter X N", "uniones sugeridas: acepta, rechaza, siguiente"],
+    ],
+  },
+  {
+    tab: "quick",
+    title: "Unión rápida",
+    keys: [
+      ["1 2 3 4", "une esa pieza"],
+      ["Enter", "une la 1"],
+      ["N", "salta"],
+      ["B", "vuelve"],
+    ],
+  },
+  {
+    tab: "table",
+    title: "Mesa",
+    keys: [
+      ["Q", "quita el cuadro siguiente del salto"],
+      ["Alt Q", "quita el previo"],
+      ["[ ]", "quitan su tramo anterior / siguiente"],
+    ],
+  },
+];
 
 // The links of the part: the file by stretches (links_<part>_exp_tramos.json) and, when it does not exist yet, the one
 // Python used to write (links_<part>_exp.json).
@@ -143,17 +192,21 @@ export function AnchorsPanel({
   onMsg: (text: string) => void;
 }) {
   const fps = data.fps;
+  // Detalles técnicos of the match of this folder (green gaps, doubtful-join floor, fill thresholds).
+  const { match: techMatch, params: tech } = useTrackingTech(folder);
   const [tab, setTab] = useState<"anchors" | "doubts" | "quick">("anchors");
-  const [example, setExample] = useState(false);
   // The fill is B (links_<part>_exp.json, fewer jumps): the recommended mode.
   const variant = "exp" as const;
-  const paths = anchorPaths(folder, part, example, example ? undefined : variant);
+  const paths = anchorPaths(folder, part, false, variant);
   const [suggest, setSuggest] = useState<SuggestFile | null>(null);
   const [loaded, setLoaded] = useState<string | null>(null);
   const [anchors, setAnchors] = useState<Anchor[]>([]);
-  const skippedKey = `anchors:skipped:${folder}:${part}${example ? ":ejemplo" : ""}`;
-  const skipped = usePref(skippedKey, "").split(",").filter(Boolean);
-  const density = Number(usePref("anchors:density", String(DEFAULT_DENSITY))) || DEFAULT_DENSITY;
+  const skippedKey = `anchors:skipped:${folder}:${part}`;
+  const skippedRaw = usePref(skippedKey, "");
+  // Same array while the preference text is the same: the queue below depends on it (a new array each render recomputed it on every render).
+  const skipped = useMemo(() => skippedRaw.split(",").filter(Boolean), [skippedRaw]);
+  // Density asked of Python the next time it generates suggestions (the one of the file is read from the file).
+  const askDensity = Number(usePref("anchors:density", String(DEFAULT_DENSITY))) || DEFAULT_DENSITY;
   const [chosen, setChosen] = useState<string | null>(null);
   const [links, setLinks] = useState<LinksFile | null>(null);
   const [linksState, setLinksState] = useState<"idle" | "missing" | "applied">("idle");
@@ -170,17 +223,7 @@ export function AnchorsPanel({
   const [quickCursor, setQuickCursor] = useState(0);
   const [quickSkipped, setQuickSkipped] = useState<string[]>([]);
   const [quickBase, setQuickBase] = useState<{ player: string; totalS: number; n: number } | null>(null);
-  // Stopwatch: kept in this browser only (preferences, outside the backup); nothing is sent anywhere.
-  const timingRaw = usePref(TIMING_KEY, "[]");
-  const timing = useMemo(() => {
-    try {
-      return JSON.parse(timingRaw) as TimedAction[];
-    } catch {
-      return [];
-    }
-  }, [timingRaw]);
-
-  // The files of the part (or of the example).
+  // The files of the part.
   const loadKey = `${paths.dir}|${part}|${paths.links}`;
   useEffect(() => {
     let live = true;
@@ -215,20 +258,19 @@ export function AnchorsPanel({
   const roster10 = useMemo(() => [...roster].sort((a, b) => (a.number ?? 999) - (b.number ?? 999)), [roster]);
   const chainIdx = useMemo(() => (suggest ? chainIndex(suggest.chains) : new Map<string, number | string>()), [suggest]);
   const chainLook = useMemo(() => (suggest ? chainLookup(suggest.chains) : new Map()), [suggest]);
-  const counts = useMemo(() => (suggest ? densityCounts(suggest.suggestions, fps) : []), [suggest, fps]);
-  const curCount = counts.find((c) => c.density === density);
+  // The density is a choice made when Python generates the suggestions; the one of this file is read from the file.
+  const density = suggest ? (generatedDensity(suggest) ?? DEFAULT_DENSITY) : DEFAULT_DENSITY;
+  const choices = useMemo(() => (suggest ? densityChoices(suggest) : []), [suggest]);
   const list = useMemo(() => (suggest ? filterByDensity(suggest.suggestions, density, fps) : []), [suggest, density, fps]);
-  const queue = useMemo(() => (suggest ? pendingSuggestions(list, anchors, skipped, suggest.chains, density, fps) : []), [list, anchors, skipped, suggest, density, fps]);
+  const queue = useMemo(() => (suggest ? pendingSuggestions(list, anchors, skipped, suggest.chains, density, fps, chainIdx) : []), [list, anchors, skipped, suggest, density, fps, chainIdx]);
   const cur: AnchorSuggestion | null = queue[0] ?? null;
   const done = list.length - queue.length;
   // A-3, before confirming: does the chain of this moment overlap with another one already anchored to the chosen player?
   const liveOverlap = useMemo(() => (cur && chosen ? chainOverlaps(chainLook, chainIdx, anchors, { frame: cur.frame, track: cur.track, player: chosen }) : []), [cur, chosen, chainLook, chainIdx, anchors]);
 
-  // When the current moment changes, the video goes there and the stopwatch starts.
-  const shownAt = useRef(0);
+  // When the current moment changes, the video goes there.
   const curKey = tab === "anchors" && cur ? suggestionKey(cur) : null;
   useEffect(() => {
-    shownAt.current = now();
     if (!cur || tab !== "anchors") return;
     onSeek(cur.frame);
     onFocus(suggestionFocus(cur));
@@ -241,12 +283,11 @@ export function AnchorsPanel({
     setChosen(null);
   }
 
-  const record = (kind: TimedAction["kind"]) => {
-    const s = (now() - shownAt.current) / 1000;
-    shownAt.current = now();
-    const next = [...timing, { kind, s: Math.round(s * 10) / 10, at: now(), part }];
-    setPref(TIMING_KEY, JSON.stringify(next.slice(-5000)));
-  };
+  // The stopwatch's old record in this browser goes once.
+  const oldTiming = usePref(OLD_TIMING_KEY, "");
+  useEffect(() => {
+    if (oldTiming) setPref(OLD_TIMING_KEY, "");
+  }, [oldTiming]);
 
   const saveAnchors = (next: Anchor[]) => {
     setAnchors(next);
@@ -258,7 +299,6 @@ export function AnchorsPanel({
     if (!cur) return;
     if (!player) return onMsg("Elige la jugadora (su tecla o la lista) o pulsa «No sé».");
     setStack((s) => [...s.slice(-199), { kind: "anchors", anchors, skipped }]);
-    record("ancla");
     // A-3: the anchor is saved anyway (nothing is blocked); the warning stays until it is answered.
     const ov = chainOverlaps(chainLook, chainIdx, anchors, { frame: cur.frame, track: cur.track, player });
     setOverlapWarn(ov.length ? { player, items: ov } : null);
@@ -278,7 +318,6 @@ export function AnchorsPanel({
   const skip = () => {
     if (!cur) return;
     setStack((s) => [...s.slice(-199), { kind: "anchors", anchors, skipped }]);
-    record("saltar");
     setPref(skippedKey, [...skipped, suggestionKey(cur)].join(","));
   };
   const editsChange = (next: TrackEdits) => {
@@ -325,9 +364,6 @@ export function AnchorsPanel({
   };
   // What a new run of Python rewrites, said before it runs (null: nothing to lose).
   const keptAnchors = anchors.length ? ` Las ${anchors.length} anclas hechas se conservan (anchors_${part}.json no se toca).` : "";
-  // Always asked: it changes the positions of the whole part (a copy stays as tracks_<part>.pre_refine.json).
-  const warnRefine = () =>
-    `Cambia las posiciones en la cancha de toda la parte (pies corregidos y calibración suavizada en el tiempo). Antes se guarda una copia, tracks_${part}.pre_refine.json, y si la parte ya estaba refinada no cambia nada. Hazlo ANTES de generar sugerencias: las sugerencias, anclas y rellenos hechos con las posiciones anteriores pueden dejar de cuadrar.`;
   const warnSuggest = () =>
     suggest || anchors.length ? `${suggest ? `Se reescribe suggest_${part}.json (${suggest.suggestions.length} sugerencias).` : ""}${keptAnchors}` : null;
   const warnFill = () =>
@@ -342,10 +378,11 @@ export function AnchorsPanel({
   const pages = Math.max(1, Math.ceil(doubts.pending.length / DOUBTS_PER_PAGE));
   const page = Math.min(doubtPage, pages - 1);
   // A doubt's time runs from the previous action (looking at it is part of the work).
-  const [ask, setAsk] = useState<null | { kind: "links"; l: LinksFile; prot: ReturnType<typeof linksProtection> } | { kind: "timer" }>(null);
+  const [ask, setAsk] = useState<null | { kind: "links"; l: LinksFile; prot: ReturnType<typeof linksProtection> } >(null);
   const [openDoubt, setOpenDoubt] = useState<string | null>(null);
   const [viewFrame, setViewFrame] = useState(0);
   const [legend, setLegend] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // Only the boxes of the doubt, each by its own track (A/B or 1/2): the ones not in the frame shown are said so.
   const focusOf = (d: Doubt, frame: number) => {
     const { boxes } = doubtBoxes(d as RichDoubt, data, edits);
@@ -392,7 +429,6 @@ export function AnchorsPanel({
     }
   };
   const resolve = (d: Doubt, next: TrackEdits) => {
-    record("duda");
     editsChange({ ...next, anchorDoubts: [...(next.anchorDoubts ?? []), doubtKey(d)] });
   };
   const doubtOk = (d: Doubt) => (resolve(d, edits), advance(d));
@@ -424,7 +460,7 @@ export function AnchorsPanel({
   };
 
   // A-2: free pure pieces that Python found likely (union_dudosa with p >= 0.8): accept / reject, one click, best p first.
-  const tramos = useMemo(() => pendingTramos(links, resolved), [links, resolved]);
+  const tramos = useMemo(() => pendingTramos(links, resolved, { p: tech.doubtMinP, maxCost: tech.doubtMaxCost }), [links, resolved, tech]);
   const tramoSecs = (t: TramoSuggestion) => ((t.frame_fin - t.frame_ini) / fps + data.stride / fps).toFixed(1);
   const showTramo = (t: TramoSuggestion) => {
     setSugOpen(tramoKey(t));
@@ -449,13 +485,11 @@ export function AnchorsPanel({
     const r = acceptTramo(edits, data, t, named);
     if (r.status === "empty") return onMsg("Ese trozo ya no tiene cajas en el tramo.");
     if (r.status === "overlap") return onMsg(`No se asignó: ${t.person} ya tiene ${r.overlap} cuadro(s) con otra caja en ese tramo. Rechaza la unión o arréglalo en la mesa.`);
-    record("duda");
     editsChange({ ...r.edits, anchorDoubts: [...(r.edits.anchorDoubts ?? []), tramoKey(t)] });
     onMsg(r.status === "same" ? `${t.person}: ese tramo ya era suyo.` : `${t.person}: +${tramoSecs(t)} s del trozo ${t.track}. Ctrl + Z lo deshace.`);
     nextTramo(t);
   };
   const tramoReject = (t: TramoSuggestion) => {
-    record("duda");
     editsChange({ ...edits, anchorDoubts: [...(edits.anchorDoubts ?? []), tramoKey(t)] });
     nextTramo(t);
   };
@@ -468,7 +502,7 @@ export function AnchorsPanel({
   }, [people, roster]);
   const qName = quickPlayer ?? people.find((p) => p.id === selectedId)?.player_id ?? "";
   const qPerson = qName ? people.find((p) => p.player_id === qName) : undefined;
-  const qHoles = useMemo(() => (tab === "quick" && qPerson ? quickHoles(data, edits, people, qPerson.id) : []), [tab, data, edits, people, qPerson]);
+  const qHoles = useMemo(() => (tab === "quick" && qPerson ? quickHoles(data, edits, people, qPerson.id, [tech.greenMinS, tech.greenMaxS]) : []), [tab, data, edits, people, qPerson, tech]);
   const qSkip = useMemo(() => new Set(quickSkipped), [quickSkipped]);
   const qNav = qHoles.filter((h) => !h.green);
   const qTodo = qNav.filter((h) => !qSkip.has(holeKey(h)));
@@ -493,7 +527,6 @@ export function AnchorsPanel({
     if (!qPerson) return;
     const r = applyQuickJoin(data, edits, people, qPerson.id, c);
     if (!r) return onMsg("No se unió: ella ya tiene otra caja en esos cuadros.");
-    record("duda");
     editsChange(r.edits);
     onMsg(`${qName}: +${c.seconds.toFixed(1)} s${c.name ? ` de ${c.name}${r.cut ? " (ella conserva el resto)" : ""}` : ""}. Ctrl + Z lo deshace.`);
   };
@@ -603,13 +636,6 @@ export function AnchorsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const mine = timing.filter((t) => t.part === part);
-  const sum = timingSummary(timing);
-  const fmtS = (s: number) => (Number.isFinite(s) ? `${s.toFixed(1)} s` : "—");
-  const fmtTotal = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : `${Math.round(s / 60)} min`);
-  const exportTiming = () =>
-    downloadText(`cronometro_anclas_${matchId}.json`, JSON.stringify({ match_id: matchId, exported: new Date().toISOString(), summary: sum, actions: timing }, null, 1), "application/json");
-
   const shownName = (id: string) => {
     if (id === NOT_PLAYER) return "No es jugadora";
     const r = roster.find((p) => p.player_id === id);
@@ -617,35 +643,28 @@ export function AnchorsPanel({
   };
 
   const header = (
-    <div className="mb-2 flex items-center gap-2">
-      <div className="seg flex-1" role="group" aria-label="Paso del modo anclas">
-        <button type="button" className="seg-opt flex-1" aria-pressed={tab === "anchors"} onClick={() => setTab("anchors")}>
+    <div className="mb-3 flex items-center gap-1.5">
+      <div className="seg min-w-0 flex-1" role="group" aria-label="Paso del modo anclas">
+        <button type="button" className="seg-opt flex-1 !px-2" aria-pressed={tab === "anchors"} onClick={() => setTab("anchors")}>
           Anclas
+          {suggest && queue.length > 0 && <span className="tc ml-1 text-faint">{queue.length}</span>}
         </button>
-        <button type="button" className="seg-opt flex-1" aria-pressed={tab === "doubts"} onClick={() => setTab("doubts")}>
-          Dudas {links ? <span className="tc ml-1 text-faint">{doubts.pending.length}</span> : null}
+        <button type="button" className="seg-opt flex-1 !px-2" aria-pressed={tab === "doubts"} onClick={() => setTab("doubts")}>
+          Dudas
+          {links ? <span className="tc ml-1 text-faint">{doubts.pending.length}</span> : null}
           {tramos.length > 0 && <span className="tc ml-1 text-accent-100" title={`${tramos.length} unión(es) sugerida(s) por aceptar`}>+{tramos.length}</span>}
         </button>
-        <button type="button" className="seg-opt flex-1" aria-pressed={tab === "quick"} title="Unión rápida: recorre los huecos de una jugadora y une la pieza que cabe, con una tecla" onClick={() => setTab("quick")}>
-          Unión rápida
+        <button type="button" className="seg-opt flex-1 !px-2" aria-pressed={tab === "quick"} title="Unión rápida: recorre los huecos de una jugadora y une la pieza que cabe, con una tecla" onClick={() => setTab("quick")}>
+          Unión
         </button>
       </div>
-      <IconButton label="Tipos de duda: qué es cada una y qué hacer" onClick={() => setLegend(true)}>
+      <IconButton label="Tipos de duda y atajos de teclado" onClick={() => setLegend(true)}>
         <Question size={15} />
-      </IconButton>
-      <IconButton label={example ? "Volver a los archivos reales" : "Ver con datos de ejemplo (tracking/auto/ejemplo/)"} tone={example ? "accent" : "default"} onClick={() => setExample((x) => !x)}>
-        <Flask size={15} />
       </IconButton>
       <IconButton label="Deshacer (Ctrl + Z)" onClick={undo}>
         <ArrowCounterClockwise size={15} />
       </IconButton>
     </div>
-  );
-
-  const exampleTag = example && (
-    <p className="mb-2 rounded-lg bg-warn-900/60 px-2.5 py-1.5 text-[11px] text-warn">
-      Datos de ejemplo: sugerencias, relleno y dudas inventados a partir de esta parte, no del modelo. Las anclas se guardan aparte (auto/ejemplo/).
-    </p>
   );
 
   // A-5: the quick join of one player.
@@ -728,7 +747,7 @@ export function AnchorsPanel({
               </div>
             </div>
           ) : (
-            <p className="text-ok">Sin huecos por revisar para {qName}. Los verdes (de 2 a 7 s fuera de la cámara) no hace falta rellenarlos.</p>
+            <p className="text-ok">Sin huecos por revisar para {qName}. Los verdes (de {tech.greenMinS} a {tech.greenMaxS} s fuera de la cámara) no hace falta rellenarlos.</p>
           )}
           <p className="text-[10px] text-faint">
             Aquí no se pregunta «está en dos sitios»: la pieza se corta de quien la tiene (ella conserva lo anterior y lo posterior) y pasa a {qName}. Nada se une solo; cada unión se deshace con Ctrl + Z.
@@ -739,86 +758,50 @@ export function AnchorsPanel({
     </div>
   );
 
+  // Density chooser for the next generation (counts shown when the current file says how many each would give).
+  const askDensityControl = (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-ink-2">Anclas por minuto</span>
+      <div className="seg" role="group" aria-label="Anclas por minuto al generar">
+        {[1, 2, 3, 4, 5].map((d) => {
+          const n = choices.find((c) => c.density === d)?.n;
+          return (
+            <button key={d} type="button" className="seg-opt !px-1.5" aria-pressed={askDensity === d} title={n != null ? `${n} sugerencias a ${d} por minuto` : `${d} por minuto`} onClick={() => setPref("anchors:density", String(d))}>
+              {d}
+              {n != null && <span className="tc ml-0.5 text-[10px] opacity-70">{n}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   let body: React.ReactNode;
   if (loaded !== loadKey) body = <p className="text-xs text-faint">Leyendo la carpeta…</p>;
   else if (tab === "anchors" && !suggest)
     body = (
-      <div className="space-y-2 text-xs text-ink-2">
+      <div className="space-y-3 text-xs text-ink-2">
         <p>
-          No hay sugerencias de anclas para esta parte. Elige cuántas anclas por minuto quieres y genera las sugerencias (tarda unos
-          segundos o minutos).
+          No hay sugerencias de anclas para esta parte. Elige cuántas anclas por minuto quieres y genera las sugerencias (tarda unos segundos o
+          minutos).
         </p>
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-ink-2">Anclas por minuto</span>
-          <div className="seg" role="group" aria-label="Anclas por minuto">
-            {[1, 2, 3, 4, 5].map((d) => (
-              <button key={d} type="button" className="seg-opt !px-1.5" aria-pressed={density === d} onClick={() => setPref("anchors:density", String(d))}>
-                {d}
-              </button>
-            ))}
-          </div>
-        </div>
-        {!example && (
-          <div className="space-y-1 border-b border-line pb-2.5">
-            <p className="text-[11px] text-faint">Antes de generar sugerencias: pies corregidos y calibración sin temblor en las posiciones de esta parte.</p>
-            <RunControl
-              match={matchId}
-              part={part}
-              task="refine"
-              label="Aplicar pies y calibración suavizada a esta parte"
-              icon={<MagicWand size={14} />}
-              warn={warnRefine}
-              onDone={() => onMsg("Posiciones de la parte actualizadas: recarga la página para verlas en la mesa.")}
-            />
-          </div>
-        )}
-        {example ? (
-          <p className="text-faint">Con datos de ejemplo no se ejecuta Python.</p>
-        ) : (
-          <RunControl match={matchId} part={part} task="suggest" perMin={density} label="Generar sugerencias" icon={<MagicWand size={14} />} warn={warnSuggest} onDone={reloadSuggest} />
-        )}
-        {!example && (
-          <button type="button" className="btn btn-ghost" onClick={() => setExample(true)}>
-            <Flask size={14} />
-            Probar con datos de ejemplo
-          </button>
-        )}
+        {askDensityControl}
+        <RunControl match={matchId} part={part} task="suggest" perMin={askDensity} label="Generar sugerencias" icon={<MagicWand size={14} />} warn={warnSuggest} onDone={reloadSuggest} />
       </div>
     );
   else if (tab === "anchors")
     body = (
-      <div className="space-y-2.5">
-        <div className="flex items-center justify-between gap-2 text-xs">
-          <span className="tc text-ink-2">
-            {done} hechas · {queue.length} por hacer
-          </span>
-          <div className="seg" role="group" aria-label="Anclas por minuto">
-            {counts.map((c) => (
-              <button
-                key={c.density}
-                type="button"
-                className={`seg-opt !px-1.5 ${c.short ? "text-warn" : ""}`}
-                aria-pressed={density === c.density}
-                title={`${c.density} ancla(s) por minuto de cada trozo: ${c.n} sugerencias${c.short ? ". No hay más sitios sugeridos que en el nivel anterior: hay que pedir más a Python (--per-min)" : ""}`}
-                onClick={() => setPref("anchors:density", String(c.density))}
-              >
-                {c.density}
-                <span className="tc ml-0.5 text-[10px] opacity-70">{c.n}</span>
-              </button>
-            ))}
+      <div className="space-y-3">
+        <section aria-label="Anclas por nombrar" className="space-y-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="text-[13px] font-bold text-ink">Nombrar anclas</h3>
+            <span className="tc text-xs text-ink-2" title={`Sugerencias generadas a ${density} por minuto`}>
+              <span className="text-ink">{done}</span> de {list.length} · {queue.length} por hacer
+            </span>
           </div>
-        </div>
-        {curCount?.short && (
-          <p className="text-[11px] text-warn">
-            A {density}/min faltan sitios: hay {curCount.n} sugerencias, las mismas que en el nivel anterior. Genera más a {density}/min:
-          </p>
-        )}
-        {curCount?.short && !example && (
-          <RunControl match={matchId} part={part} task="suggest" perMin={density} label="Generar sugerencias" icon={<MagicWand size={14} />} warn={warnSuggest} onDone={reloadSuggest} />
-        )}
-        <div className="h-1 overflow-hidden rounded-full bg-raised">
-          <div className="h-full bg-accent transition-[width] duration-300" style={{ width: `${list.length ? (100 * done) / list.length : 0}%` }} />
-        </div>
+          <div className="h-1 overflow-hidden rounded-full bg-raised" role="progressbar" aria-valuemin={0} aria-valuemax={list.length} aria-valuenow={done} aria-label="Anclas hechas">
+            <div className="h-full bg-ok transition-[width] duration-300" style={{ width: `${list.length ? (100 * done) / list.length : 0}%` }} />
+          </div>
         {overlapWarn && overlapWarn.items.length > 0 && (
           <div className="space-y-1.5 rounded-lg bg-warn-900/60 p-2 text-[11px] text-warn" role="alert">
             {overlapWarn.items.map((o) => (
@@ -852,62 +835,76 @@ export function AnchorsPanel({
             <p className="text-faint">«Descartar» es definitivo para el relleno; «Partir» se puede reemplazar si vuelves a rellenar por tramos. Ctrl + Z deshace cualquiera.</p>
           </div>
         )}
-        {cur ? (
-          <>
-            <p className="text-xs text-ink-2">
-              <span className="tc text-ink">{fmtT(cur.frame / fps)}</span> · trozo {String(cur.chain)} · {cur.why} · {Math.round(cur.score * 100)} %. ¿Quién es la caja
-              amarilla (con «?»)?
-            </p>
-            {focusMissing && <p className="text-[11px] text-warn">{focusMissing}</p>}
-            <div className="grid grid-cols-4 gap-0.5">
-              {roster10.map((p, i) => (
-                <button
-                  key={p.player_id}
-                  type="button"
-                  className={`btn !justify-start !gap-1 !px-1.5 !py-0.5 text-[11px] ${chosen === p.player_id ? "btn-primary" : "btn-ghost"}`}
-                  aria-pressed={chosen === p.player_id}
-                  onClick={() => setChosen(p.player_id)}
-                  onDoubleClick={() => confirm(p.player_id)}
-                >
-                  {PLAYER_KEYS[i] && <kbd className="tc w-2.5 shrink-0 text-faint uppercase">{PLAYER_KEYS[i]}</kbd>}
-                  <span className="truncate">{shownName(p.player_id)}</span>
-                </button>
-              ))}
-            </div>
-            {roster10.length === 0 && <p className="text-xs text-warn">Sin plantilla: añádela en Configuración para nombrar anclas.</p>}
-            {chosen && liveOverlap.length > 0 && (
-              <p className="flex items-start gap-1.5 text-[11px] text-warn" role="status">
-                <Warning size={13} className="mt-px shrink-0" />
-                <span>
-                  Ojo: esta cadena se solapa con otra de {chosen} ({liveOverlap.map((o) => `${fmtT(o.from / fps)}–${fmtT(o.to / fps)}`).join(", ")}). Puedes anclar igual: después se ofrece partir o descartar el solape.
-                </span>
+          {cur ? (
+            <div className="space-y-2 rounded-xl bg-raised/50 p-2.5">
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2">
+                <span className="tc text-base text-ink">{fmtT(cur.frame / fps)}</span>
+                <span className="tag">trozo {String(cur.chain)}</span>
+                <span className={`tag ${cur.why === "incierta" ? "tag-warn" : ""}`}>{cur.why}</span>
+                <span className="tc ml-auto text-faint" title="Puntaje de la sugerencia: más alto = trozo más largo y aislado, más fácil de nombrar">puntaje {cur.score.toFixed(2)}</span>
               </p>
-            )}
-            <div className="flex gap-2">
-              <button type="button" className="btn btn-primary flex-1" disabled={!chosen} onClick={() => confirm()}>
-                <Check size={14} />
-                Anclar <kbd className="tc opacity-70">Enter</kbd>
-              </button>
-              <button type="button" className="btn" title="Árbitra, banca, cuerpo técnico: se guarda como ancla «no es jugadora» y Python la deja fuera" onClick={() => confirm(NOT_PLAYER)}>
-                No es jugadora <kbd className="tc text-faint">x</kbd>
-              </button>
-              <button type="button" className="btn" title="Solo oculta esta sugerencia aquí; no cambia el relleno" onClick={skip}>
-                Saltar <kbd className="tc text-faint">n</kbd>
-              </button>
+              <p className="text-xs text-ink">¿Quién es la caja amarilla (con «?»)?</p>
+              {focusMissing && <p className="text-[11px] text-warn">{focusMissing}</p>}
+              <div className="grid grid-cols-4 gap-0.5">
+                {roster10.map((p, i) => (
+                  <button
+                    key={p.player_id}
+                    type="button"
+                    className={`btn !justify-start !gap-1 !px-1.5 !py-0.5 text-[11px] ${chosen === p.player_id ? "btn-primary" : "btn-ghost"}`}
+                    aria-pressed={chosen === p.player_id}
+                    onClick={() => setChosen(p.player_id)}
+                    onDoubleClick={() => confirm(p.player_id)}
+                  >
+                    {PLAYER_KEYS[i] && <kbd className="tc w-2.5 shrink-0 text-faint uppercase">{PLAYER_KEYS[i]}</kbd>}
+                    <span className="truncate">{shownName(p.player_id)}</span>
+                  </button>
+                ))}
+              </div>
+              {roster10.length === 0 && <p className="text-xs text-warn">Sin plantilla: añádela en Configuración para nombrar anclas.</p>}
+              {chosen && liveOverlap.length > 0 && (
+                <p className="flex items-start gap-1.5 text-[11px] text-warn" role="status">
+                  <Warning size={13} className="mt-px shrink-0" />
+                  <span>
+                    Ojo: esta cadena se solapa con otra de {chosen} ({liveOverlap.map((o) => `${fmtT(o.from / fps)}–${fmtT(o.to / fps)}`).join(", ")}). Puedes anclar igual: después se ofrece partir o descartar el solape.
+                  </span>
+                </p>
+              )}
+              <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-1">
+                <button type="button" className="btn btn-primary justify-center !px-1.5 text-xs" disabled={!chosen} onClick={() => confirm()}>
+                  <Check size={14} />
+                  Anclar <kbd className="tc opacity-70">Enter</kbd>
+                </button>
+                <button type="button" className="btn !px-1.5 text-xs" title="Árbitra, banca, cuerpo técnico: se guarda como ancla «no es jugadora» y Python la deja fuera" onClick={() => confirm(NOT_PLAYER)}>
+                  No es jugadora <kbd className="tc text-faint">x</kbd>
+                </button>
+                <button type="button" className="btn !px-1.5 text-xs" title="Solo oculta esta sugerencia aquí; no cambia el relleno" onClick={skip}>
+                  Saltar <kbd className="tc text-faint">n</kbd>
+                </button>
+              </div>
             </div>
-            <p className="text-[10px] text-faint">«Saltar» solo oculta la sugerencia en esta pantalla: no influye en el relleno. «No es jugadora» sí: Python deja ese trozo fuera de las jugadoras.</p>
-          </>
-        ) : (
-          <p className="text-xs text-ok">Sin anclas pendientes a {density}/min. Sube la densidad o pasa a «Rellenar».</p>
-        )}
-        <div className="border-t border-line pt-2.5">
-          <p className="mb-1.5 text-xs text-ink-2">Con las anclas puestas, Python rellena el resto de la parte y deja una lista de dudas.</p>
-          {example ? (
-            <p className="text-[11px] text-faint">Con datos de ejemplo no se ejecuta Python: carga el relleno de ejemplo.</p>
           ) : (
-            <RunControl match={matchId} part={part} task="fill" variant={variant} label="Rellenar" icon={<Lightning size={14} />} warn={warnFill} onDone={reloadLinks} />
+            <p className="flex items-center gap-1.5 rounded-xl bg-raised/50 p-2.5 text-xs text-ok">
+              <Check size={14} weight="bold" aria-hidden /> Sin anclas pendientes. Pasa a «Rellenar».
+            </p>
           )}
-          <div className="mt-2 flex items-center gap-2">
+          <details className="group text-[11px] text-faint">
+            <summary className="flex cursor-pointer list-none items-center gap-1 hover:text-ink-2">
+              <CaretDown size={11} className="transition-transform group-open:rotate-180" aria-hidden /> Pedir más o menos sugerencias
+            </summary>
+            <div className="mt-1.5 space-y-1.5">
+              <p>
+                Este archivo trae {suggest?.suggestions.length} sugerencias{suggest && generatedDensity(suggest) ? `, generadas a ${density} por minuto` : ""}. El número se decide al generar, no aquí: Python escribe otro archivo.
+              </p>
+              {askDensityControl}
+              <RunControl match={matchId} part={part} task="suggest" perMin={askDensity} label="Generar sugerencias" icon={<MagicWand size={14} />} warn={warnSuggest} onDone={reloadSuggest} />
+            </div>
+          </details>
+        </section>
+        <section aria-label="Relleno" className="space-y-1.5 border-t border-line pt-3">
+          <h3 className="text-[13px] font-bold text-ink">Relleno</h3>
+          <p className="text-[11px] text-ink-2">Con las anclas puestas, Python rellena el resto de la parte y deja una lista de dudas.</p>
+          <RunControl match={matchId} part={part} task="fill" variant={variant} label="Rellenar" icon={<Lightning size={14} />} warn={warnFill} extra={{ ...fillRequestOf(techMatch) }} onDone={reloadLinks} />
+          <div className="flex items-center gap-2">
             <button type="button" className="btn btn-ghost !px-2 text-xs" title="Volver a leer links_ de la carpeta y aplicarlo a la mesa" onClick={() => void reloadLinks()}>
               <ArrowClockwise size={13} />
               Volver a cargar el relleno
@@ -916,7 +913,7 @@ export function AnchorsPanel({
               {linksState === "missing" ? "Aún no existe " + paths.links.split("/").pop() : linksState === "applied" ? "Aplicado a la mesa (Ctrl + Z lo deshace)" : ""}
             </span>
           </div>
-        </div>
+        </section>
       </div>
     );
   else if (tab === "quick") body = quickBody;
@@ -1170,26 +1167,8 @@ export function AnchorsPanel({
           <p className="mt-2 text-right text-[11px] text-faint">«Aplicar solo a las demás» deja intactas las verificadas y las que ya tienen nombre. Ctrl + Z deshace cualquiera.</p>
         </Modal>
       )}
-      {ask?.kind === "timer" && (
-        <Modal title="¿Reiniciar el cronómetro?" onClose={() => setAsk(null)}>
-          <p className="text-sm text-ink-2">
-            Se borran las {timing.length} acciones medidas ({fmtTotal(sum.total_s)}) de todas las partes. No se puede deshacer: si las quieres, expórtalas antes.
-          </p>
-          <div className="mt-5 flex justify-end gap-2">
-            <button type="button" className="btn" onClick={exportTiming}>
-              <DownloadSimple size={14} /> Exportar
-            </button>
-            <button type="button" className="btn btn-primary" autoFocus onClick={() => setAsk(null)}>
-              Cancelar
-            </button>
-            <button type="button" className="btn text-danger" onClick={() => (setPref(TIMING_KEY, "[]"), setAsk(null))}>
-              Reiniciar
-            </button>
-          </div>
-        </Modal>
-      )}
       {legend && (
-        <Modal title="Tipos de duda" onClose={() => setLegend(false)}>
+        <Modal title="Tipos de duda y atajos" onClose={() => setLegend(false)}>
           <ul className="space-y-2 text-sm">
             {DOUBT_TYPES.map((t) => (
               <li key={t.kind}>
@@ -1199,31 +1178,50 @@ export function AnchorsPanel({
               </li>
             ))}
           </ul>
-          <p className="mt-3 text-xs text-faint">
-            Teclas en una duda: <kbd className="kbd">1</kbd>/<kbd className="kbd">A</kbd> y <kbd className="kbd">2</kbd>/<kbd className="kbd">B</kbd> eligen caja, <kbd className="kbd">0</kbd> ninguna,{" "}
-            <kbd className="kbd">Enter</kbd> está bien, <kbd className="kbd">D</kbd> es otra, <kbd className="kbd">S</kbd> cortar, <kbd className="kbd">←</kbd>/<kbd className="kbd">→</kbd> cuadros, <kbd className="kbd">Tab</kbd> siguiente. En anclas: <kbd className="kbd">x</kbd> no es jugadora, <kbd className="kbd">n</kbd> saltar (solo la oculta aquí, no influye en el relleno). Uniones sugeridas: <kbd className="kbd">Enter</kbd> acepta, <kbd className="kbd">X</kbd> rechaza, <kbd className="kbd">N</kbd> siguiente. Unión rápida: <kbd className="kbd">1</kbd>–<kbd className="kbd">4</kbd> o <kbd className="kbd">Enter</kbd> une, <kbd className="kbd">N</kbd> salta, <kbd className="kbd">B</kbd> vuelve. En la mesa, ante un salto: <kbd className="kbd">Q</kbd> quita el cuadro siguiente (si el aviso sigue, el previo), <kbd className="kbd">Alt</kbd>+<kbd className="kbd">Q</kbd> el previo, <kbd className="kbd">[</kbd> / <kbd className="kbd">]</kbd> quitan su tramo anterior / siguiente.
-          </p>
+          <h3 className="mt-4 text-sm font-bold text-ink">Atajos de teclado</h3>
+          <dl className="mt-1 space-y-1.5 text-xs text-ink-2">
+            {SHORTCUTS.map((g) => (
+              <div key={g.title} className="grid grid-cols-[6.5rem_1fr] gap-2">
+                <dt className="font-bold text-ink">{g.title}</dt>
+                <dd className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {g.keys.map(([k, what]) => (
+                    <span key={what} className="inline-flex items-center gap-1">
+                      {k.split(" ").map((x) => (
+                        <kbd key={x} className="kbd">
+                          {x}
+                        </kbd>
+                      ))}
+                      {what}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            ))}
+          </dl>
         </Modal>
       )}
       {header}
-      {exampleTag}
       {body}
-      {!example && (
-        <div className="mt-2">
-          <ResetPart folder={folder} part={part} editsKey={editsKey(data)} onMsg={onMsg} />
-        </div>
-      )}
-      <div className="mt-3 flex items-center gap-2 border-t border-line pt-2 text-[11px] text-faint">
-        <Timer size={13} />
-        <span className="tc flex-1" title={`Todas las partes: ${sum.n} acciones. Una pausa de más de ${sum.cap_s} s cuenta como ${sum.cap_s} s.`}>
-          {mine.length} acc. aquí · total {fmtTotal(sum.total_s)} · ancla {fmtS(sum.per.ancla.median_s)} · duda {fmtS(sum.per.duda.median_s)}
-        </span>
-        <IconButton label="Exportar el cronómetro a JSON" onClick={exportTiming}>
-          <DownloadSimple size={13} />
-        </IconButton>
-        <IconButton label="Reiniciar el cronómetro" onClick={() => setAsk({ kind: "timer" })}>
-          <X size={13} />
-        </IconButton>
+      <details className="group mt-3 border-t border-line pt-2 text-[11px] text-faint" open={shortcutsOpen} onToggle={(e) => setShortcutsOpen(e.currentTarget.open)}>
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 hover:text-ink-2">
+          <Keyboard size={13} aria-hidden /> Atajos de {SHORTCUTS.find((g) => g.tab === tab)?.title.toLowerCase()}
+          <CaretDown size={11} className="ml-auto transition-transform group-open:rotate-180" aria-hidden />
+        </summary>
+        <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          {(SHORTCUTS.find((g) => g.tab === tab)?.keys ?? []).map(([k, what]) => (
+            <span key={what} className="inline-flex items-center gap-1">
+              {k.split(" ").map((x) => (
+                <kbd key={x} className="kbd">
+                  {x}
+                </kbd>
+              ))}
+              {what}
+            </span>
+          ))}
+        </p>
+      </details>
+      <div className="mt-2">
+        <ResetPart folder={folder} part={part} editsKey={editsKey(data)} onMsg={onMsg} />
       </div>
     </section>
   );

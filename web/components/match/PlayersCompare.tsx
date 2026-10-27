@@ -10,7 +10,7 @@ import { heatmap, type Oriented } from "@/lib/positions";
 import type { Segment } from "@/lib/segments";
 import { setPref, usePref, useStore } from "@/lib/store";
 import { PITCH, type Match, type MatchEvent } from "@/lib/types";
-import { matchVideos } from "@/lib/videos";
+import { fullWindows, matchVideos, type HalfWindows } from "@/lib/videos";
 
 type Side = "own" | "opp";
 // Each compared player keeps her colour while she stays picked (identity, never rank); the team is the small bar.
@@ -38,7 +38,15 @@ export function PlayersCompare({
   const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
   // Which half each video is (a half can come in several videos); absent = first video 1, others 2.
   const videoPeriods = useMemo(() => matchVideos(match).map((v, i) => ({ video_id: v.video_id, period: v.period ?? (i === 0 ? 1 : 2) })), [match]);
-  const rows = useMemo(() => playerRows({ events, parts, playByVideo: segmentsByVideo, videoPeriods }), [events, parts, segmentsByVideo, videoPeriods]);
+  const videoHalves = useMemo(() => {
+    const out: Record<string, HalfWindows> = {};
+    for (const v of matchVideos(match)) {
+      const w = fullWindows(v);
+      if (w) out[v.video_id] = w;
+    }
+    return out;
+  }, [match]);
+  const rows = useMemo(() => playerRows({ events, parts, playByVideo: segmentsByVideo, videoPeriods, videoHalves }), [events, parts, segmentsByVideo, videoPeriods, videoHalves]);
   const prefKey = `players:${match.match_id}`;
   const saved = usePref(prefKey, "");
   const per10 = usePref("players:per10", "0") === "1";

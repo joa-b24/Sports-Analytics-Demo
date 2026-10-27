@@ -15,6 +15,7 @@ import {
   FilmStrip,
   Flask,
   FolderOpen,
+  ListChecks,
   Pause,
   Play,
   Plus,
@@ -30,7 +31,9 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { ClipEditor } from "@/components/clip/ClipEditor";
 import { AnalysisTab } from "@/components/match/AnalysisTab";
 import { PlaysTab } from "@/components/match/PlaysTab";
+import { ProcessesPanel } from "@/components/match/ProcessesPanel";
 import { TechPanel } from "@/components/match/TechPanel";
+import { MissingTag, VideoFilesBar } from "@/components/match/VideoDownload";
 import { Modal } from "@/components/Modal";
 import { techChanged } from "@/lib/tech";
 import { MODES, MatchHeader, isMode, mainOf, modeOf, type TabId } from "@/components/match/MatchHeader";
@@ -49,11 +52,13 @@ import { VideoPlayer, type PlayerHandle } from "@/components/VideoPlayer";
 import { fmtT, isTyping, parseYouTubeId } from "@/lib/format";
 import { FOLDER_RULE, isFolderName, localVideo, readFolderFiles } from "@/lib/local";
 import { matchSteps, type FolderFiles } from "@/lib/steps";
+import { useVideoDownloads } from "@/lib/useVideoDownloads";
 import { segmentsFromMarks, skipTarget, type Segment } from "@/lib/segments";
 import { mutate, setPref, useHydrated, usePref, useStore } from "@/lib/store";
 import { allVenues } from "@/lib/venue";
 import type { Match, MatchVideo } from "@/lib/types";
-import { matchTimeline, matchVideos, nextVideo, videoOf } from "@/lib/videos";
+import { matchTimeline, matchVideos, nextVideo, periodAt, videoOf } from "@/lib/videos";
+import { FullVideoMarks } from "@/components/match/FullVideoMarks";
 
 // Width of the side panel in Tramos (px): it is dragged from its left edge.
 const SEG_SIDE_MIN = 300;
@@ -88,6 +93,7 @@ function MatchPage() {
   const setTab = (t: TabId) => setPicked(t);
   // Configuración del partido > Detalles técnicos (a link from the evaluation tools opens it: ?detalles=tecnicos).
   const [techOpen, setTechOpen] = useState(params.get("detalles") === "tecnicos");
+  const [procOpen, setProcOpen] = useState(params.get("procesos") === "1");
   // Without a mode: a link to a moment opens its events; a match with events opens on its analysis (what the staff
   // reads) and one without, on capture.
   const fallback: TabId = linkVideo ? "tag" : isMode(modo) ? mainOf(modo) : state.events.some((e) => e.match_id === id) ? "analysis" : "tag";
@@ -118,8 +124,12 @@ function MatchPage() {
   const skipPauses = usePref("skipPauses", "on") === "on";
   // What is in the folder of the match, for the state of each step; read again when the tab changes.
   const [folderFiles, setFolderFiles] = useState<FolderFiles | null>(null);
+  // Bumped when the folder was created or a video finished downloading: its files are read again.
+  const [fileTick, setFileTick] = useState(0);
   const playerRef = useRef<PlayerHandle>(null);
   const stopAt = useRef<number | null>(null);
+  const loopSpan = useRef<[number, number] | null>(null);
+  const [focusPlay, setFocusPlay] = useState<string | null>(null);
   // Tramos fits the window (no page scroll): the video as large as fits above its controls and timeline, the side
   // panel as wide as dragged and only the list of marks scrolling inside it.
   const fitOn = tab === "segments" || tab === "tag" || tab === "plays";
@@ -188,7 +198,7 @@ function MatchPage() {
     return () => {
       live = false;
     };
-  }, [folderForSteps, tab]);
+  }, [folderForSteps, tab, fileTick]);
   // With a folder, the video of each part of the match is opened from it (any speed, frame by frame).
   const folder = match?.folder;
   const videoNow = match ? (matchVideos(match).find((v) => v.video_id === videoSel) ?? matchVideos(match)[0]).video_id : "";
@@ -203,7 +213,7 @@ function MatchPage() {
     return () => {
       live = false;
     };
-  }, [folder, id, videoNow]);
+  }, [folder, id, videoNow, fileTick]);
   // Video keys in the tabs with the video: Space plays or pauses, ← → jump 5 s, with Shift 1 s (as the buttons).
   // Not while writing, nor over a drop-down or a slider (their arrows are theirs). Over the YouTube frame the keys go
   // to YouTube, which does the same.
@@ -231,6 +241,9 @@ function MatchPage() {
   }, [videoTab]);
   // The match data written into match.yaml by themselves (components/match/FolderSync.tsx).
   const yamlSync = useYamlSync(match, match?.venue_id ? allVenues(state.venues).find((v) => v.venue_id === match.venue_id) : undefined);
+  // The folder of the match is created when it is missing, and the videos with a link but no file are downloaded by
+  // themselves (unless the switch of Detalles técnicos is off). Only when the app runs on this computer.
+  const videoDl = useVideoDownloads(match, { create: true, auto: true, onCreated: () => setFileTick((n) => n + 1), onReady: () => setFileTick((n) => n + 1) });
 
   if (!hydrated) return null;
   if (!match) {
@@ -265,6 +278,7 @@ function MatchPage() {
   const timeline = matchTimeline(videos, allEvents, segmentsByVideo);
   const steps = matchSteps({
     videoIds: videos.map((v) => v.video_id),
+    linked: videos.filter((v) => !!v.youtube_id).map((v) => v.video_id),
     folder: match.folder,
     venueId: match.venue_id,
     segmentsByVideo,
@@ -307,6 +321,8 @@ function MatchPage() {
       return;
     }
     if (stopAt.current !== null && t >= stopAt.current) {
+      // Looping a play: back to the start of its stretch instead of stopping.
+      if (loopSpan.current) return playerRef.current?.seek(loopSpan.current[0], true);
       stopAt.current = null;
       playerRef.current?.pause();
     }
@@ -318,9 +334,18 @@ function MatchPage() {
     const d = playerRef.current?.getDuration() || undefined;
     setDuration((prev) => (prev === d ? prev : d));
   };
-  const playClip = (t0: number, t1: number) => {
-    stopAt.current = t1;
-    playerRef.current?.seek(t0, true);
+  const playClip = (t0: number, t1: number, loopMargin: number | null = null) => {
+    stopAt.current = t1 + (loopMargin ?? 0);
+    loopSpan.current = loopMargin === null ? null : [Math.max(0, t0 - loopMargin), t1 + loopMargin];
+    playerRef.current?.seek(loopSpan.current?.[0] ?? t0, true);
+  };
+  // Opens a play of any video of the match: its video loads (if it is another) and goes to its start.
+  const goToPlay = (vid: string, t: number, playId: string) => {
+    setFocusPlay(playId);
+    loopSpan.current = null;
+    if (vid === video.video_id) return void playerRef.current?.seek(t);
+    pickVideo(vid);
+    pendingSeek.current = t;
   };
 
   const presentEdit = linkEdit ? (state.edits ?? []).find((e) => e.edit_id === linkEdit && e.match_id === match.match_id) : undefined;
@@ -338,6 +363,7 @@ function MatchPage() {
         onTab={setTab}
         steps={steps}
         status={<SaveStatus match={match} />}
+        badge={videoDl.items.some((i) => i.hasLink && i.state !== "ready" && i.state !== "unknown") ? <MissingTag /> : undefined}
         video={
           videos.length > 1 ? (
             <Select
@@ -347,8 +373,8 @@ function MatchPage() {
               onChange={(v) => v && pickVideo(v)}
               options={videos.map((v, i) => {
                 // Grouped by half: a title where the half changes (as in the match data, the first video is the 1st).
-                const half = (j: number) => videos[j].period ?? (j === 0 ? 1 : 2);
-                return { value: v.video_id, label: v.label || v.video_id, hint: v.video_id, group: i === 0 || half(i) !== half(i - 1) ? (half(i) === 1 ? "1.er tiempo" : "2.º tiempo") : undefined };
+                const half = (j: number) => (videos[j].full ? 0 : (videos[j].period ?? (j === 0 ? 1 : 2)));
+                return { value: v.video_id, label: v.label || v.video_id, hint: v.video_id, group: i === 0 || half(i) !== half(i - 1) ? (half(i) === 0 ? "Partido completo" : half(i) === 1 ? "1.er tiempo" : "2.º tiempo") : undefined };
               })}
               display={
                 <span className="inline-flex items-center gap-2">
@@ -531,6 +557,7 @@ function MatchPage() {
                         </span>
                       </span>,
                     )}
+                    {row(<FilmStrip size={14} />, "Tiempos", <FullVideoMarks video={video} now={time} onChange={(v) => patchVideo(v)} />)}
                     {row(
                       <YoutubeLogo size={14} />,
                       "YouTube",
@@ -609,6 +636,18 @@ function MatchPage() {
                     Detalles técnicos
                     {techChanged(match).length > 0 && <span className="tag tag-accent">{techChanged(match).length} cambiados</span>}
                   </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      closeMenu();
+                      setProcOpen(true);
+                    }}
+                    title="Todo el tracking, relleno y balón automático, y detección de eventos: lanzarlos y ver en qué van"
+                  >
+                    <ListChecks size={14} />
+                    Procesos
+                  </button>
                   <Link href={`/partido/playground?id=${encodeURIComponent(match.match_id)}`} className="btn btn-ghost text-faint" title="Comprobar el balón, la posesión, los pases y los eventos detectados">
                     <Flask size={14} />
                     Herramientas de evaluación
@@ -619,6 +658,12 @@ function MatchPage() {
           }}
         </Dropdown>
       </MatchHeader>
+      <VideoFilesBar match={match} dl={videoDl} />
+      {procOpen && (
+        <Modal title="Procesos del partido" wide onClose={() => setProcOpen(false)}>
+          <ProcessesPanel match={match} />
+        </Modal>
+      )}
       {techOpen && (
         <Modal title="Detalles técnicos" wide onClose={() => setTechOpen(false)}>
           <TechPanel match={match} />
@@ -719,6 +764,7 @@ function MatchPage() {
               match={match}
               videoId={video.video_id}
               defaultPeriod={video.period ?? (videoIndex === 0 ? 1 : 2)}
+              periodAt={(t) => periodAt(video, videoIndex, t)}
               events={events}
               segments={segments}
               time={time}
@@ -748,6 +794,11 @@ function MatchPage() {
               match={match}
               videoId={video.video_id}
               plays={plays}
+              allPlays={allPlays}
+              videos={videos}
+              events={allEvents}
+              onGoTo={goToPlay}
+              initialPlayId={focusPlay}
               time={time}
               duration={duration}
               playerRef={playerRef}

@@ -16,6 +16,7 @@ import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
 import { ACTIVE_S, NO_FILTER, activeAt, duplicatesOf, eventsFor, knownPlayers, missingEnd, missingReview, type EventFilter, type Pass } from "@/lib/tagging";
 import { DETAIL_KEYS, DETAIL_TITLES, EVENT_KEYS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, OUTCOME_KEYS, type EventType, type Match, type MatchEvent } from "@/lib/types";
 import { useScreenBoxes } from "@/lib/videoPeople";
+import { EventSuggestions } from "./EventSuggestions";
 import { EventsCompact, EventsTable } from "./EventsTable";
 import { teamColor } from "./eventOptions";
 import type { PlayerChoice } from "./PlayerPicker";
@@ -28,6 +29,8 @@ type Props = {
   videoId: string;
   // The half of this video (from the match data): every event tagged here gets it.
   defaultPeriod: 1 | 2;
+  // Half of a time of this video (a full video holds both): without it, defaultPeriod.
+  periodAt?: (t: number) => 1 | 2;
   events: MatchEvent[];
   segments: Segment[];
   time: number;
@@ -56,7 +59,7 @@ const NEAR_MAX_M = 15;
 const TRAIL_S = 2;
 const TRAIL_STEP_S = 0.2;
 
-export function TagTab({ match, videoId, defaultPeriod, events, segments, time, duration, playerRef, playClip, overlaySlot, belowSlot }: Props) {
+export function TagTab({ match, videoId, defaultPeriod, periodAt, events, segments, time, duration, playerRef, playClip, overlaySlot, belowSlot }: Props) {
   // Pass 4 (passes by hand) was removed: a browser that was on it opens pass 1. Passes are read from the tracking.
   const pass = Math.min(3, Math.max(1, Number(usePref("tagPass", "1")) || 1)) as Pass;
   const setPass = (p: Pass) => setPref("tagPass", String(p));
@@ -89,7 +92,7 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
       match_id: match.match_id,
       video_id: videoId,
       t_video: Math.round(now() * 10) / 10,
-      period: defaultPeriod,
+      period: periodAt ? periodAt(now()) : defaultPeriod,
       type,
       team,
       player_id: null,
@@ -492,6 +495,8 @@ export function TagTab({ match, videoId, defaultPeriod, events, segments, time, 
           />
         </div>
       )}
+
+      {pass === 2 && <EventSuggestions match={match} videoId={videoId} events={events} defaultPeriod={defaultPeriod} periodAt={periodAt} playClip={playClip} />}
 
       <EventsCompact
         events={shown}

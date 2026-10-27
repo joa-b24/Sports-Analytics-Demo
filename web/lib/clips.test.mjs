@@ -167,3 +167,18 @@ test("los dibujos completos (círculo, flecha curva, zona y línea con jugadoras
     if (p.text) close(p.text.at, expected.text[0], `${annotation.id} texto`);
   }
 });
+
+test("un clip con resalte «caja» se abre con óvalo y conserva el resto", async () => {
+  const { migrateEdit } = await import("./clips.ts");
+  const a = (id, shape) => ({ id, kind: "highlight", anchors: [{ kind: "player", identity: 1 }], t_in: 100, t_out: 104, style: { color: "warn", label: "x", dashed: true, ...(shape ? { shape } : {}) } });
+  const e = edit({ annotations: [a("a1", "box"), a("a2", "arrow"), a("a3")], highlight_shape: "box", title: "Mi clip" });
+  assert.equal(e.annotations[0].style.shape, "oval");
+  assert.equal(e.annotations[0].style.label, "x");
+  assert.equal(e.annotations[0].style.dashed, true);
+  assert.equal(e.annotations[1].style.shape, "arrow");
+  assert.equal(e.annotations[2].style.shape, undefined);
+  assert.equal(e.highlight_shape, "oval");
+  assert.equal(e.title, "Mi clip");
+  const again = migrateEdit(e);
+  assert.equal(again, e, "sin nada que migrar devuelve el mismo objeto");
+});

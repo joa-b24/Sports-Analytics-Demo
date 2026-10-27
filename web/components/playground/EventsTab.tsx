@@ -6,7 +6,7 @@ import { Modal } from "@/components/Modal";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
 import { Card } from "@/components/Shell";
 import { Locked } from "@/components/Locked";
-import { EVENT_DEFAULTS, detectEvents, type DetectedEvent, type DetectedType, type EventParams } from "@/lib/eventDetect";
+import { detectEvents, type DetectedEvent, type DetectedType, type EventParams } from "@/lib/eventDetect";
 import {
   NO_EVENT_FILTER, TYPE_LABEL, allTypeStats, ballCoverage, emptyEventReview, eventMoment, eventSample, eventsAutoFile, eventsAutoPath, eventReviewPath, filterEvents, isReviewed, parseEventReview,
   sceneOfEvent, setEventVerdict, type EventFilter, type EventVerdict,
@@ -15,7 +15,8 @@ import { useFixedParts } from "@/lib/fixed";
 import { readLocal, writeLocal, writeLocalInfo } from "@/lib/local";
 import { parseReview, reviewPath, reviewStats } from "@/lib/playgroundPossession";
 import { possessionIntervals } from "@/lib/possession";
-import { possessionParamsOf } from "@/lib/tech";
+import { autoEventsOf, eventParamsOf, possessionParamsOf } from "@/lib/tech";
+import { trackingParamsOf } from "@/lib/techTracking";
 import { segmentsFromMarks, type Segment } from "@/lib/segments";
 import { useStore } from "@/lib/store";
 import type { Match } from "@/lib/types";
@@ -39,7 +40,8 @@ export function EventsTab({ match, folder }: { match: Match; folder: string | un
   const [videoId, setVideoId] = useState(videos[0].video_id);
   const video = videos.find((v) => v.video_id === videoId) ?? videos[0];
   const fixed = useFixedParts(folder, videoIds);
-  const [params, setParams] = useState<EventParams>(EVENT_DEFAULTS);
+  // The rules are the match's (lib/tech.ts, Detalles técnicos): read only here.
+  const params = useMemo<EventParams>(() => eventParamsOf(match), [match]);
   const deferred = useDeferredValue(params);
   const [type, setType] = useState<DetectedType>("throw_in");
   const segmentsByVideo = useMemo<Record<string, Segment[]>>(
@@ -47,7 +49,7 @@ export function EventsTab({ match, folder }: { match: Match; folder: string | un
     [videos, state.segments, match.match_id],
   );
   const parts = useMemo(() => (fixed ? fixed.parts.filter((p) => p.file.video_id === video.video_id) : []), [fixed, video.video_id]);
-  const possession = useMemo(() => (parts.length > 0 ? possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match)) : null), [parts, segmentsByVideo, match]);
+  const possession = useMemo(() => (parts.length > 0 ? possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match), undefined, trackingParamsOf(match).ballJumpMs) : null), [parts, segmentsByVideo, match]);
   const dets = useMemo(() => (possession ? detectEvents(parts, segmentsByVideo, possession.rows, deferred) : []), [possession, parts, segmentsByVideo, deferred]);
   const cover = useMemo(() => ballCoverage(parts, segmentsByVideo), [parts, segmentsByVideo]);
 
@@ -167,11 +169,12 @@ export function EventsTab({ match, folder }: { match: Match; folder: string | un
     );
   }
   const stats = allTypeStats(dets, review);
+  const autoEvents = autoEventsOf(match);
   const busy = deferred !== params;
   const inferred = parts.filter((p) => p.dir === "inferred").length;
   const atT = ev?.t_video ?? null;
   return (
-    <div className="flex flex-col gap-2" style={{ height: "calc(100dvh - 12.5rem)", minHeight: 520 }}>
+    <div className="flex flex-col gap-2" style={{ height: "max(46rem, calc(100dvh - 5rem))" }}>
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
         {videos.length > 1 && (
           <label className="flex items-center gap-2 text-xs text-muted">
@@ -220,13 +223,14 @@ export function EventsTab({ match, folder }: { match: Match; folder: string | un
         {[
           <Split key="a" dir="col" prefKey={SPLIT_KEYS[1]} fallback={[0.56, 0.44]} className="h-full">
             {[
-              <EventsStatsCard key="s" stats={stats} active={type} onPick={pickType} minReviews={review.min_reviews} />,
-              <EventsParamsCard key="p" type={type} params={params} onChange={setParams} busy={busy} />,
+              <EventsStatsCard key="s" stats={stats} active={type} onPick={pickType} minReviews={review.min_reviews} auto={autoEvents} />,
+              <EventsParamsCard key="p" type={type} params={params} matchId={match.match_id} busy={busy} />,
             ]}
           </Split>,
           <EventsList
             key="l"
             title={TYPE_LABEL[type]}
+            auto={autoEvents.includes(type)}
             events={shown}
             total={mine.length}
             filter={filter}

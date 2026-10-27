@@ -18,11 +18,12 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode } from "react";
-import { BoardView, DRAW_COLOR_VAR } from "@/components/board/BoardView";
+import { BoardView } from "@/components/board/BoardView";
 import { IconButton } from "@/components/Modal";
 import { toMeters } from "@/components/Pitch";
 import { btn, btnPrimary, input } from "@/components/Shell";
 import { Timeline } from "@/components/studio/Timeline";
+import { useDrawColor } from "@/components/studio/palette";
 import { ColorPick, FitAspect, PanelTitle, SidePanel, StudioFrame, ToolRail, type FrameLayout } from "@/components/studio/Studio";
 import {
   ANNOTATION_LABELS,
@@ -79,6 +80,7 @@ type Props = {
 };
 
 export function BoardEditor({ board, save, header, boardPanel, listPanel, layout }: Props) {
+  const dc = useDrawColor();
   const [step, setStep] = useState(0);
   const [panel, setPanel] = useState<Panel>("step");
   const [tool, setTool] = useState<Tool>("move");
@@ -345,14 +347,14 @@ export function BoardEditor({ board, save, header, boardPanel, listPanel, layout
                   <polyline
                     points={pendingPts.map((p) => p.join(",")).join(" ")}
                     fill="none"
-                    stroke={DRAW_COLOR_VAR[color]}
+                    stroke={dc(color)}
                     strokeWidth={0.4}
                     strokeDasharray="0.8 0.8"
                     pointerEvents="none"
                   />
                 )}
                 {pendingPts.slice(0, pending?.anchors.length ?? 0).map((p, i) => (
-                  <circle key={i} cx={p[0]} cy={p[1]} r={0.7} fill={DRAW_COLOR_VAR[color]} pointerEvents="none" />
+                  <circle key={i} cx={p[0]} cy={p[1]} r={0.7} fill={dc(color)} pointerEvents="none" />
                 ))}
                 {handles.map((h) => (
                   <circle
@@ -445,7 +447,7 @@ export function BoardEditor({ board, save, header, boardPanel, listPanel, layout
               id: a.id,
               start: a.t_in,
               end: a.t_out,
-              color: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent,
+              color: dc(a.style.color),
               label: a.style.label || ANNOTATION_LABELS[a.kind],
               icon: KIND_ICON[a.kind],
               dashed: !!a.style.dashed,
@@ -498,7 +500,7 @@ export function BoardEditor({ board, save, header, boardPanel, listPanel, layout
                               onClick={() => setSelected(a.id)}
                               className="flex w-full items-center gap-2 rounded-lg bg-raised px-2.5 py-1.5 text-left text-xs text-ink-2 transition-colors hover:text-ink"
                             >
-                              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent }} />
+                              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: dc(a.style.color) }} />
                               <I size={13} aria-hidden />
                               <span className="min-w-0 flex-1 truncate">{a.style.label || ANNOTATION_LABELS[a.kind]}</span>
                               <span className="tc text-faint">{st.length > 1 ? `pasos ${st[0] + 1}–${st[st.length - 1] + 1}` : `paso ${st[0] + 1}`}</span>
@@ -555,6 +557,7 @@ export function BoardEditor({ board, save, header, boardPanel, listPanel, layout
 
 // The drawing chosen, in the inspector: as in the clip editor, plus the steps it covers.
 function DrawingInspector({ a, board, onPatch, onRemove, onClose }: { a: Annotation; board: Board; onPatch: (p: Partial<Annotation>) => void; onRemove: () => void; onClose: () => void }) {
+  const dc = useDrawColor();
   const steps = stepsOf(board, a);
   const from = steps[0] ?? 0;
   const to = steps[steps.length - 1] ?? from;
@@ -576,7 +579,7 @@ function DrawingInspector({ a, board, onPatch, onRemove, onClose }: { a: Annotat
   return (
     <div className="space-y-4 text-xs">
       <div className="flex items-center gap-2">
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${DRAW_COLOR_VAR[a.style.color] ?? DRAW_COLOR_VAR.accent} 35%, transparent)` }}>
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${dc(a.style.color)} 35%, transparent)` }}>
           <I size={15} weight="bold" />
         </span>
         <span className="min-w-0">

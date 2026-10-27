@@ -27,6 +27,10 @@
 //     (the analyst holds the ball with «quieto» while a restart is prepared).
 //   - A contested ball keeps the previous holder for contestedHoldS (2 s). A blocked frame, a ball out of the pitch or at
 //     rest (dead) ends it. Contested samples with both boxes and the ball measured are listed as doubts (possessionDoubts).
+//   - Ball states marked by hand (parts.ts ballStateRanges, `ball_states` of tracks_fixed): «fuera» = dead, no team, no credit, until
+//     the next visible mark (the samples inside hold the last position and say «out»); «no se ve» = the ball is taken as
+//     interpolated there, so no measured contact; a mark flagged `aerial` (shadow of a ball in the air) is never touched.
+//   - Players at `extrapolated` positions (held still outside what was seen) are no candidates and no blockers.
 //   - Tracker positions that jump faster than a ball can move (ballJumpFrames) are never a touch.
 //   - Play stretches are JOINED: the video between two of them was skipped, but the ball is followed through the cut when
 //     it is within joinCutMaxM of where it was (flag joined_cut). Farther, the state restarts (flag cut_reset). Never
@@ -34,8 +38,9 @@
 //   - kind says how solid an interval is: control (a sustained touch with a measured ball), contested, loose (nobody
 //     has it), dead (out / at rest) or unknown (blocked, tracker jump, or a touch seen only on an interpolated ball: the
 //     team is credited but there is no measured touch behind it: flag no_measured_touch).
-import { ballJumpFrames } from "./parts.ts";
-import { COVER_STEP_S, CONTEST_MARGIN_M, POSSESS_M, decideHolder, metersPerUnit, unnamedLeftovers, type FixedTeam, type HolderCand, type Oriented, type PossessionState } from "./positions.ts";
+import { isExtrapolated, isMeasuredSource } from "./smooth.ts";
+import { ballJumpFrames, ballStateAtFrame } from "./parts.ts";
+import { COVER_STEP_S, CONTEST_MARGIN_M, POSSESS_M, decideHolder, metersPerUnit, unnamedLeftovers, type FixedFile, type FixedTeam, type HolderCand, type Oriented, type PossessionState } from "./positions.ts";
 import type { Segment } from "./segments.ts";
 import { colorDistance, MAX_COLOR_DISTANCE } from "./tracks.ts";
 import { PITCH } from "./types.ts";
@@ -190,7 +195,8 @@ const closedPlay = (segs: Segment[] | undefined) =>
   (segs ?? []).filter((g) => g.tipo === "juego" && g.end !== null).sort((a, b) => a.start - b.start);
 
 // Ball positions of all the parts of each video, in play stretches, one per frame, with the people near each.
-export function preparePossession(parts: Oriented[], segmentsByVideo: Record<string, Segment[]>, p: PossessionParams = POSSESSION_DEFAULTS): PreparedPossession {
+// `jumpMs`: Detalles técnicos > salto máximo del balón (default BALL_JUMP_MS of parts.ts).
+export function preparePossession(parts: Oriented[], segmentsByVideo: Record<string, Segment[]>, p: PossessionParams = POSSESSION_DEFAULTS, jumpMs?: number): PreparedPossession {
   const playUsed = Object.keys(segmentsByVideo).some((v) => closedPlay(segmentsByVideo[v]).length > 0);
   const out: PSample[] = [];
   const names: PreparedPossession["names"] = new Map();
@@ -211,7 +217,7 @@ export function preparePossession(parts: Oriented[], segmentsByVideo: Record<str
       const leftover = new Set(unnamedLeftovers(f).map((l) => l.id));
       const person = new Map(f.people.map((q) => [q.id, q]));
       const posAt = new Map(f.frames.map((fr) => [fr.frame, fr.positions]));
-      const jumps = ballJumpFrames(f.ball, f.fps, mx, my);
+      const jumps = ballJumpFrames(f.ball, f.fps, mx, my, undefined, jumpMs);
       const marks = f.ball.filter((b) => b.source === "manual" || b.source === "auto").map((b) => b.frame).sort((a, b) => a - b);
       const followedAt = (frame: number) => {
         let lo = 0;
@@ -224,18 +230,32 @@ export function preparePossession(parts: Oriented[], segmentsByVideo: Record<str
         }
         return Math.min(Math.abs(marks[lo] - frame), lo > 0 ? Math.abs(marks[lo - 1] - frame) : Infinity) / f.fps <= 3;
       };
-      for (const b of f.ball) {
+      // «Fuera» (marked by hand): the game is stopped, the ball is dead where it left (its last position) until the next
+      // visible mark. These samples carry no players and no credit: they only say "dead" (note «out»).
+      const ballPts: (FixedFile["ball"][number] & { _out?: boolean })[] = [...f.ball];
+      for (const r of (f.ball_states ?? []).filter((q) => q.state === "out")) {
+        const before = f.ball.filter((b) => b.frame < r.from).sort((a, b) => b.frame - a.frame)[0];
+        if (!before) continue;
+        for (const fr of f.frames) {
+          if (fr.frame < r.from || (r.to !== null && fr.frame >= r.to)) continue;
+          ballPts.push({ frame: fr.frame, x: before.x, y: before.y, source: "interpolated", _out: true });
+        }
+      }
+      for (const b of ballPts) {
+        const isOut = b._out === true;
+        const hidden = !isOut && ballStateAtFrame(f.ball_states, b.frame) === "hidden";
         const t = b.frame / f.fps;
         const seg = segs.findIndex((g) => t >= g.start && t < (g.end as number));
         if (seg < 0) continue;
         const prev = byFrame.get(b.frame);
         if (prev && (SRC_RANK[prev.source] ?? 0) >= (SRC_RANK[b.source] ?? 0)) continue;
-        const ps = posAt.get(b.frame);
+        const ps = isOut ? undefined : posAt.get(b.frame);
         const bx = b.x * mx;
         const by = b.y * my;
-        const cands: PCand[] = (ps ?? []).flatMap((q) => {
+        // A ball in the air (its ground projection) or one marked «no se ve» is touched by nobody: no candidates.
+        const cands: PCand[] = (b.aerial || hidden ? [] : (ps ?? [])).flatMap((q) => {
           const pe = person.get(q.id);
-          if (!pe) return [];
+          if (!pe || isExtrapolated(q.source)) return []; // held still outside what was seen: never a candidate or a blocker
           const key = personKey(video, f.start_frame, q.id);
           if (!names.has(key)) names.set(key, { name: pe.player_id, team: pe.team, video_id: video, part: f.start_frame, id: q.id });
           return [{ id: q.id, key, name: pe.player_id, team: pe.team, d: Math.hypot(q.x * mx - bx, q.y * my - by), x: q.x * mx, y: q.y * my, leftover: leftover.has(q.id), interp: q.source === "interpolated" }];
@@ -253,11 +273,11 @@ export function preparePossession(parts: Oriented[], segmentsByVideo: Record<str
           pt: t - segs[seg].start + offsets[seg],
           mx: bx,
           my: by,
-          source: b.source,
-          src: srcOf(b.source),
+          source: hidden ? "interpolated" : b.source,
+          src: srcOf(hidden ? "interpolated" : b.source),
           jump: b.source === "auto" && jumps.has(b.frame),
           followed: b.source === "manual" || b.source === "auto" || followedAt(b.frame),
-          out: b.source !== "interpolated" && (bx < -p.outMarginM || bx > lenM + p.outMarginM || by < -p.outMarginM || by > widM + p.outMarginM),
+          out: isOut || (b.source !== "interpolated" && (bx < -p.outMarginM || bx > lenM + p.outMarginM || by < -p.outMarginM || by > widM + p.outMarginM)),
           noPlayers: !ps,
           speed: null,
           restGap: false,
@@ -297,7 +317,7 @@ export function preparePossession(parts: Oriented[], segmentsByVideo: Record<str
       if (!chain) continue;
       const gap = list[i].pt - list[a].pt;
       if (gap <= p.restGapS) continue;
-      if (Math.hypot(list[i].mx - list[a].mx, list[i].my - list[a].my) / gap < p.restFlightMinMs) for (let k = a + 1; k < i; k++) list[k].restGap = true;
+      if (Math.hypot(list[i].mx - list[a].mx, list[i].my - list[a].my) / gap < p.restFlightMinMs) for (let k = a + 1; k < i; k++) if (!list[k].out) list[k].restGap = true; // a «fuera» mark already says why it is dead
     }
     out.push(...list);
   }
@@ -600,9 +620,9 @@ export function labelPossession(prep: PreparedPossession, p: PossessionParams = 
   return { rows, samples, params: p };
 }
 
-export function possessionIntervals(parts: Oriented[], segmentsByVideo: Record<string, Segment[]>, params: Partial<PossessionParams> = {}, overrides: Overrides = new Map()): PossessionResult {
+export function possessionIntervals(parts: Oriented[], segmentsByVideo: Record<string, Segment[]>, params: Partial<PossessionParams> = {}, overrides: Overrides = new Map(), jumpMs?: number): PossessionResult {
   const p = { ...POSSESSION_DEFAULTS, ...params };
-  return labelPossession(preparePossession(parts, segmentsByVideo, p), p, overrides);
+  return labelPossession(preparePossession(parts, segmentsByVideo, p, jumpMs), p, overrides);
 }
 
 // ------------------------------------------------------------------------------------------------- summary
@@ -894,7 +914,7 @@ export function suspectBoxes(parts: Oriented[], segmentsByVideo: Record<string, 
     for (const fr of f.frames)
       for (const pos of fr.positions) {
         const key = personKey(f.video_id, f.start_frame, pos.id);
-        if (!by.has(key) || pos.source === "interpolated") continue;
+        if (!by.has(key) || !isMeasuredSource(pos.source)) continue;
         const e = stats.get(key) ?? { n: 0, line: 0, minX: Infinity, maxX: -Infinity };
         e.n++;
         const y = pos.y * my;

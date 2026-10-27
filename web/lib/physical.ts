@@ -1,3 +1,4 @@
+import { isExtrapolated, isMeasuredSource } from "./smooth.ts";
 import { PITCH } from "./types.ts";
 import { metersPerUnit, orient, type Oriented } from "./positions.ts";
 
@@ -5,8 +6,8 @@ import { metersPerUnit, orient, type Oriented } from "./positions.ts";
 //
 // Filled positions (`source: "interpolated"`) are an acceptable approximation (decision of the analyst, 2026-10-25): they
 // count in distance, speed and sprints, however long the fill is, and the row says how much of the time and distance
-// comes from them (`fill_time_pct`, `fill_dist_pct`). Extrapolated positions (holding a player still outside what was
-// observed) would be invented data: the pipeline does not produce them. What has no position at all (a gap of more than
+// comes from them (`fill_time_pct`, `fill_dist_pct`). Extrapolated positions (`source: "extrapolated"`: a player held still before her first and after her last
+// appearance, only so she does not vanish when drawn) are invented data: they count in nothing here. What has no position at all (a gap of more than
 // MAX_GAP_S between two samples) is not measured: it breaks the series and counts neither distance nor speed.
 
 export const MAX_GAP_S = 1;
@@ -58,6 +59,7 @@ function series(parts: Oriented[], team: "own" | "opp"): Map<string, Sample[][]>
         const n = name.get(q.id);
         if (!n) continue;
         const list = byName.get(n) ?? [];
+        if (isExtrapolated(q.source)) continue; // held still outside what was seen: no distance, no speed
         const s = { t: fr.frame / f.fps, x: q.x * mx, y: q.y * my, fill: q.source === "interpolated" };
         // Two boxes with the same name in one frame: keep the first (a measured one before a filled one).
         if (list.length && list[list.length - 1].t === s.t) {
@@ -183,7 +185,7 @@ export function teamBlock(parts: Oriented[], team: "own" | "opp"): TeamBlock {
     for (const fr of f.frames)
       for (const q of fr.positions) {
         const n = name.get(q.id);
-        if (!n || q.source === "interpolated") continue;
+        if (!n || !isMeasuredSource(q.source)) continue;
         let [x, y] = orient(o, q.x, q.y);
         if (team === "opp") [x, y] = [PITCH.length - x, PITCH.width - y];
         const a = acc.get(n) ?? { x: 0, y: 0, s: 0 };

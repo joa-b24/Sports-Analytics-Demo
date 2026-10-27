@@ -73,6 +73,8 @@ export interface PartInput {
   events: MatchEvent[];
   attack: string;
   ballAuto: BallAuto | null;
+  // Salto máximo del balón (Detalles técnicos); absent: the default.
+  ballJumpMs?: number;
 }
 export interface PartResult {
   state: "saved" | "skipped" | "cancelled" | "error";
@@ -90,7 +92,7 @@ export async function savePart(p: PartInput, ask: Ask, listings = new Map<string
   const choice = await check([fixedPath, labelsPath], listings, readLog(p.folder)[id], ask);
   if (choice !== "overwrite") return { state: choice === "skip" ? "skipped" : "cancelled", note: "No se guardó: el archivo de la carpeta es más nuevo." };
   const edits = p.edits ?? emptyEdits(key);
-  const { out, note } = buildFixed(p.file, edits, { colors: p.colors, smooth: p.smooth, showRefs: p.showRefs, events: p.events, attackRight: p.attack ? p.attack === "right" : null, ballAuto: p.ballAuto });
+  const { out, note } = buildFixed(p.file, edits, { colors: p.colors, smooth: p.smooth, showRefs: p.showRefs, events: p.events, attackRight: p.attack ? p.attack === "right" : null, ballAuto: p.ballAuto, ballJumpMs: p.ballJumpMs });
   const a = await writeLocalInfo(fixedPath, JSON.stringify(out));
   if (!a.ok) return { state: "error", note: `No se pudo escribir ${fixedName(p.file)}: ${a.error}` };
   const b = await writeLocalInfo(labelsPath, JSON.stringify(buildLabels(p.file, edits, p.colors ?? NO_COLORS)));

@@ -1,6 +1,7 @@
 // Passes of a team from the two sources the app has: the ones tagged by hand (PassRow, lib/passes.ts, kept so old
 // data still shows) and the ones read from the tracking (ball + players, lib/positions.ts). Both are offered side by
 // side: they are never added together (the same pass could be in both). Pure functions.
+import { isMeasuredSource } from "./smooth.ts";
 import { passesAndTurnovers, inStretches, orient, type Oriented, type Pass } from "./positions.ts";
 import type { PlayerPasses } from "./passes.ts";
 import type { Net, NetNode } from "./passes.ts";
@@ -85,7 +86,7 @@ export function trackedNet(parts: Oriented[], team: "own" | "opp", playByVideo: 
     for (const fr of o.file.frames)
       for (const q of fr.positions) {
         const n = name.get(q.id);
-        if (!n || teamOf.get(q.id) !== team || q.source === "interpolated") continue;
+        if (!n || teamOf.get(q.id) !== team || !isMeasuredSource(q.source)) continue;
         const [x, y] = orient(o, q.x, q.y);
         const s = pos.get(n) ?? { x: 0, y: 0, n: 0 };
         pos.set(n, { x: s.x + x, y: s.y + y, n: s.n + 1 });

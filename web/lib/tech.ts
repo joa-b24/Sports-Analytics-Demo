@@ -2,6 +2,8 @@
 // in Match.tech (only what the analyst changed; the rest are the defaults, so a better default reaches every match that
 // did not touch it). Everything that reads possession (report, summary, analysis, Playground) takes its parameters from
 // here, so changing one changes the report. Pure functions, no file access.
+import { DETECTED_TYPES, EVENT_DEFAULTS, type DetectedType, type EventParams } from "./eventDetect.ts";
+import { EVENT_PARAM_FIELDS } from "./eventReview.ts";
 import { PARAM_FIELDS, type ParamField } from "./playgroundPossession.ts";
 import { POSSESSION_DEFAULTS, type PossessionParams } from "./possession.ts";
 import type { Match } from "./types.ts";
@@ -64,8 +66,51 @@ export function withTechParam(m: Match, key: keyof PossessionParams, value: numb
 }
 export const resetTech = (m: Match): Match => withPossessionTech(m, {});
 function withPossessionTech(m: Match, possession: Partial<Record<string, number | boolean>>): Match {
-  const { tech: _old, ...rest } = m; // eslint-disable-line @typescript-eslint/no-unused-vars
-  return Object.keys(possession).length === 0 ? rest : { ...rest, tech: { possession } };
+  return withTech(m, { possession: Object.keys(possession).length ? possession : undefined });
+}
+// The match with some parts of `tech` replaced (undefined removes that part); with nothing left, `tech` goes away.
+export function withTech(m: Match, patch: Partial<NonNullable<Match["tech"]>>): Match {
+  const { tech: old, ...rest } = m;
+  const next: NonNullable<Match["tech"]> = { ...old, ...patch };
+  for (const k of Object.keys(next) as (keyof typeof next)[]) if (next[k] === undefined) delete next[k];
+  return Object.keys(next).length === 0 ? rest : { ...rest, tech: next };
+}
+
+// ------------------------------------------------------------------------------------------------- detected events
+// Parameters of the event detectors (lib/eventDetect.ts), grouped «Eventos» in the panel; same rules as the possession's.
+export const EVENT_TECH_GROUP = { id: "events", title: "Eventos", help: "Reglas con las que se detectan saques, faltas, pérdidas, entradas y centros desde las posiciones." } as const;
+export function eventParamsOf(m: TechHolder): EventParams {
+  const set = m?.tech?.events;
+  const out: EventParams = { ...EVENT_DEFAULTS };
+  if (!set) return out;
+  for (const f of EVENT_PARAM_FIELDS) {
+    const v = set[f.key];
+    if (typeof v === "number" && Number.isFinite(v) && v >= f.min && v <= f.max) Object.assign(out, { [f.key]: v });
+  }
+  if (typeof set.crossInteriorOutsideBox === "boolean") out.crossInteriorOutsideBox = set.crossInteriorOutsideBox;
+  return out;
+}
+export function eventDiff(p: EventParams): Partial<Record<string, number | boolean>> {
+  const out: Partial<Record<string, number | boolean>> = {};
+  for (const k of Object.keys(EVENT_DEFAULTS) as (keyof EventParams)[]) if (p[k] !== EVENT_DEFAULTS[k]) out[k] = p[k];
+  return out;
+}
+export function withEventParam(m: Match, key: keyof EventParams, value: number | boolean): Match {
+  const d = eventDiff({ ...eventParamsOf(m), [key]: value });
+  return withTech(m, { events: Object.keys(d).length ? d : undefined });
+}
+export const resetEventTech = (m: Match): Match => withTech(m, { events: undefined });
+export const eventTechChanged = (m: TechHolder): string[] => Object.keys(eventDiff(eventParamsOf(m)));
+
+// Types of event whose detection the analyst accepted: from then on the detections of that type are created by themselves
+// as accepted suggestions, labelled «automático». Only the list and the field live here.
+export const AUTO_EVENT_LABEL = "Automático";
+export const autoEventsOf = (m: TechHolder): DetectedType[] => (m?.tech?.autoEvents ?? []).filter((t): t is DetectedType => DETECTED_TYPES.includes(t as DetectedType));
+export const isAutoEvent = (m: TechHolder, type: DetectedType) => autoEventsOf(m).includes(type);
+export function withAutoEvent(m: Match, type: DetectedType, on: boolean): Match {
+  const cur = autoEventsOf(m).filter((t) => t !== type);
+  const next = on ? [...cur, type] : cur;
+  return withTech(m, { autoEvents: next.length ? DETECTED_TYPES.filter((t) => next.includes(t)) : undefined });
 }
 
 export const techChanged = (m: TechHolder): string[] => Object.keys(diffFromDefaults(possessionParamsOf(m)));

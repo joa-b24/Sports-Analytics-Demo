@@ -8,7 +8,14 @@
 //      not seen, and where she went is not known.
 //   3. Jitter: a small centred weighted average over each unbroken stretch. Hand-marked positions weigh more.
 
-export type PointSource = "auto" | "manual" | "interpolated";
+//   4. Ends (extrapolateEnds, optional): before a person's first and after her last position in the part she is held
+//      still, only so she does not vanish when drawn. That is INVENTED data, marked "extrapolated", and no measurement
+//      (distance, speed, possession, touches, passes, heat maps, players behind the ball, block) may read it.
+export type PointSource = "auto" | "manual" | "interpolated" | "extrapolated";
+
+export const isExtrapolated = (source: string | undefined): boolean => source === "extrapolated";
+// A position that was seen (or marked by hand): neither filled in a hole nor held still outside what was observed.
+export const isMeasuredSource = (source: string | undefined): boolean => source !== "interpolated" && source !== "extrapolated";
 
 export interface TrackPoint {
   frame: number;
@@ -179,4 +186,15 @@ export function smoothTrack(points: TrackPoint[], o: SmoothOptions): { points: T
   const jumps = dropJumps(dedupe(points), o);
   const gaps = fillGaps(jumps.points, o);
   return { points: smoothRuns(gaps.points, o), report: { outliers: jumps.removed, filled: gaps.filled, openGaps: gaps.open } };
+}
+
+// Step 4. The person is held at her first position until she appears and at her last one after she disappears, on the
+// processed frames of the part (`frames`, ascending). Nobody with no position at all is invented. Marked "extrapolated".
+export function extrapolateEnds(points: TrackPoint[], frames: number[]): { points: TrackPoint[]; added: number } {
+  if (points.length === 0 || frames.length === 0) return { points, added: 0 };
+  const first = points[0];
+  const last = points[points.length - 1];
+  const before = frames.filter((f) => f < first.frame).map((frame): TrackPoint => ({ frame, x: first.x, y: first.y, source: "extrapolated" }));
+  const after = frames.filter((f) => f > last.frame).map((frame): TrackPoint => ({ frame, x: last.x, y: last.y, source: "extrapolated" }));
+  return { points: [...before, ...points, ...after], added: before.length + after.length };
 }

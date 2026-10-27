@@ -48,10 +48,22 @@ export async function listLocal(rel: string): Promise<LocalEntry[] | null> {
 
 // What the steps of a match read from its folder: the files in tracking/ ([] when the folder exists without it); null
 // when the folder cannot be reached.
-export async function readFolderFiles(folder: string): Promise<{ tracking: string[] } | null> {
-  const files = await listLocal(`matches/${folder}/tracking`);
-  if (files) return { tracking: files.map((f) => f.name) };
-  return (await listLocal(`matches/${folder}`)) ? { tracking: [] } : null;
+export async function readFolderFiles(folder: string): Promise<{ tracking: string[]; video: string[] } | null> {
+  const [tracking, video] = await Promise.all([listLocal(`matches/${folder}/tracking`), listLocal(`matches/${folder}/video`)]);
+  const names = (l: LocalEntry[] | null) => (l ?? []).map((f) => f.name);
+  if (tracking || video) return { tracking: names(tracking), video: names(video) };
+  return (await listLocal(`matches/${folder}`)) ? { tracking: [], video: [] } : null;
+}
+
+// Creates matches/<folder>/ with video/, tracking/ and a minimal match.yaml, without touching anything already there
+// (app/api/local, ?create=folder). false when the app does not run on this computer or the name breaks the convention.
+export async function createMatchFolder(folder: string, meta: { kind?: string; date?: string; own_team_name?: string; other_team_name?: string }): Promise<boolean> {
+  try {
+    const r = await fetch(`${localUrl(`matches/${folder}`)}?create=folder`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(meta) });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function readLocal(rel: string): Promise<string | null> {
@@ -107,6 +119,16 @@ export async function deleteLocal(rel: string): Promise<boolean> {
 export async function localVideo(folder: string, videoId: string): Promise<string | null> {
   const files = await listLocal(`matches/${folder}/video`);
   const hit = files?.find((f) => !f.dir && f.name.startsWith(`${videoId}.`) && /\.(mp4|webm|mkv|mov)$/i.test(f.name));
+  return hit ? localUrl(`matches/${folder}/video/${hit.name}`) : null;
+}
+
+// URL of the light copy of a video (video/<videoId>_proxy.mp4), or null when the folder has none. Made by
+// `node scripts/make-proxy.mjs <carpeta> <video>`: 720p, a keyframe every 15 frames, same frames and times as the original.
+// Seeking the original decodes up to one GOP (a keyframe every ~5.8 s in the real videos = 174 frames of 1080p) from the
+// keyframe before each jump; the copy decodes at most 14.
+export async function localVideoProxy(folder: string, videoId: string): Promise<string | null> {
+  const files = await listLocal(`matches/${folder}/video`);
+  const hit = files?.find((f) => !f.dir && f.name === `${videoId}_proxy.mp4`);
   return hit ? localUrl(`matches/${folder}/video/${hit.name}`) : null;
 }
 

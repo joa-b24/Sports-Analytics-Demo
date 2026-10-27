@@ -3,6 +3,8 @@ import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { folderMetaOf } from "@/lib/matchFolder";
+import { createMatchFolderOnDisk } from "@/lib/matchFolderDisk";
 import { uploadTarget } from "@/lib/uploads";
 
 // Files of the repository, read and written by the app while it runs on this computer (npm run dev): the video of a
@@ -13,6 +15,9 @@ import { uploadTarget } from "@/lib/uploads";
 //   GET  /api/local/<carpeta>?list  the files of a folder
 //   PUT  /api/local/<ruta>          writes the body (only the files listed in WRITABLE); answers its mtime
 //   DELETE /api/local/<ruta>        only an old backup of a match (respaldo/respaldo_*.json)
+//   POST /api/local/matches/<carpeta>?create=folder   creates the folder of a match (video/, tracking/, minimal match.yaml)
+//                                   when it is missing; only a name following aaaa_mm_dd_<local>_vs_<visitante>, and
+//                                   nothing that already exists is overwritten
 //   POST /api/local/<ruta>          uploads a file of a match folder from Datos (lib/uploads.ts says which), streamed
 //                                   to disk (a video of several GB never sits in memory); 409 if it exists, unless
 //                                   ?overwrite=1
@@ -21,7 +26,8 @@ export const dynamic = "force-dynamic";
 
 const ROOT = path.resolve(process.env.SPORTSAN_ROOT ?? path.join(process.cwd(), ".."));
 // Only these parts of the repository are reachable.
-const READABLE = [/^matches$/, /^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.json$/, /^data\/strava(\/.*)?$/, /^data\/boards(\/.*)?$/];
+// `weights` only to list it (the ball models present); the files inside are not reachable.
+const READABLE = [/^matches$/, /^weights$/, /^matches\/[\w.-]+(\/.*)?$/, /^config\/roster\.json$/, /^data\/strava(\/.*)?$/, /^data\/boards(\/.*)?$/];
 // Backups of one match (lib/saveAll.ts backupName): the only files the app may delete (to keep the 5 newest).
 const BACKUP = /^matches\/[\w.-]+\/respaldo\/respaldo_\d{4}-\d{2}-\d{2}_\d{4}\.json$/;
 const WRITABLE = [
@@ -36,6 +42,8 @@ const WRITABLE = [
   // Event detections of a video and the analyst's verdicts on them (Playground > Eventos, lib/eventDetect.ts, lib/eventReview.ts).
   /^matches\/[\w.-]+\/events_auto_v\d+\.json$/,
   /^matches\/[\w.-]+\/events_review_v\d+\.json$/,
+  // Suggested events of a video waiting for the analyst's answer in the review pass (lib/processes.ts, «Procesos del partido» > Eventos).
+  /^matches\/[\w.-]+\/events_suggest_v\d+\.json$/,
   /^matches\/[\w.-]+\/(match\.yaml|segments\.csv)$/,
   // Anchors named in the anchors mode of the table (lib/anchors.ts); suggest_ and links_ are written by Python.
   /^matches\/[\w.-]+\/tracking\/auto\/(ejemplo\/)?anchors_[\w.-]+\.json$/,
@@ -139,6 +147,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ path: string[]
   if (!enabled()) return notFound();
   const { path: parts } = await ctx.params;
   const rel = parts.map((p) => decodeURIComponent(p)).join("/");
+  if (new URL(req.url).searchParams.get("create") === "folder") {
+    const done = await createMatchFolderOnDisk(ROOT, rel, folderMetaOf(await req.json().catch(() => null)));
+    return done.ok ? Response.json({ ok: true, path: rel, created: done.created, yaml: done.yaml }) : Response.json({ error: done.error }, { status: done.status });
+  }
   const target = uploadTarget(rel) ? resolve(parts, [/^matches\/[^/]+\/.+$/]) : null;
   if (!target) return Response.json({ error: "Ese archivo no se puede subir a la carpeta de un partido" }, { status: 403 });
   if (!req.body) return Response.json({ error: "Archivo vacío" }, { status: 400 });

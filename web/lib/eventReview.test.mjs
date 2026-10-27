@@ -69,7 +69,7 @@ test("recall solo dentro de las ventanas revisadas completas: encontradas / (enc
 });
 
 test("muestra repartida por tipo: completa lo que falta para el mínimo, sin revisadas, determinista", () => {
-  const dets = [...many(40), ...many(4, { type: "loss", id: undefined }).map((e, i) => ({ ...e, type: "loss", id: `loss|v1|${e.t_video}.00|own` }))];
+  const dets = [...many(40), ...many(4, { type: "loss", id: undefined }).map((e) => ({ ...e, type: "loss", id: `loss|v1|${e.t_video}.00|own` }))];
   let f = emptyEventReview("v1");
   f = setEventVerdict(f, dets[0], "correct", "", "t");
   const s = eventSample(dets, f);

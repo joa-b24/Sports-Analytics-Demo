@@ -2,8 +2,7 @@
 
 import type { Icon } from "@phosphor-icons/react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { DRAW_COLOR_LABELS, DRAW_COLOR_VAR } from "@/components/board/BoardView";
-import { DRAW_COLORS } from "@/lib/annotations";
+import { PaletteDots } from "@/components/studio/palette";
 
 // The common frame of the two editors of Estudio (drawings over a clip and the board), laid out as a video editor: a
 // bar on top (title and what applies to the whole piece), a vertical tool rail, the canvas with the inspector beside it
@@ -144,20 +143,8 @@ export function ToolRail<T extends string>({
         <RailButton key={t.id} label={t.key ? `${t.label} (${t.key})` : t.label} icon={t.icon} active={value === t.id} onClick={() => onChange(t.id)} />
       ))}
       <span className="mx-1 h-6 w-px bg-line xl:mx-0 xl:my-1 xl:h-px xl:w-6" aria-hidden />
-      <div role="radiogroup" aria-label="Color del dibujo" className="flex flex-row items-center gap-1.5 px-1 xl:flex-col xl:py-1">
-        {DRAW_COLORS.map((c) => (
-          <button
-            key={c}
-            type="button"
-            role="radio"
-            aria-checked={color === c}
-            aria-label={DRAW_COLOR_LABELS[c]}
-            title={DRAW_COLOR_LABELS[c]}
-            onClick={() => onColor(c)}
-            className={`h-5 w-5 rounded-full transition-transform duration-150 ${color === c ? "scale-110 ring-2 ring-ink ring-offset-2 ring-offset-surface" : "hover:scale-110"}`}
-            style={{ background: DRAW_COLOR_VAR[c] }}
-          />
-        ))}
+      <div className="px-0.5 xl:w-11 xl:py-1">
+        <PaletteDots value={color} onChange={onColor} size={18} name="Color del dibujo" />
       </div>
       <RailButton label={dashed ? "Línea discontinua (activa)" : "Línea discontinua"} icon={dashedIcon} active={dashed} onClick={() => onDashed(!dashed)} />
       {children && <div className="flex flex-row items-center gap-1 xl:mt-auto xl:flex-col">{children}</div>}
@@ -200,28 +187,9 @@ export function SidePanel<T extends string>({
   );
 }
 
-// The colour of a drawing, as dots (the same colours as the rail).
+// The colour of a drawing, as dots (the same palette as the rail, with the free picker).
 export function ColorPick({ value, onChange, small = false }: { value: string; onChange: (c: string) => void; small?: boolean }) {
-  return (
-    <div className="flex items-center gap-1.5" role="radiogroup" aria-label="Color">
-      {DRAW_COLORS.map((c) => (
-        <button
-          key={c}
-          type="button"
-          role="radio"
-          aria-checked={value === c}
-          aria-label={DRAW_COLOR_LABELS[c]}
-          title={DRAW_COLOR_LABELS[c]}
-          onClick={(e) => {
-            e.stopPropagation();
-            onChange(c);
-          }}
-          className={`rounded-full transition-transform ${small ? "h-4 w-4" : "h-5 w-5"} ${value === c ? "scale-110 ring-2 ring-ink ring-offset-2 ring-offset-surface" : "hover:scale-110"}`}
-          style={{ background: DRAW_COLOR_VAR[c] }}
-        />
-      ))}
-    </div>
-  );
+  return <PaletteDots value={value} onChange={onChange} size={small ? 16 : 20} />;
 }
 
 // A time in the inspector: its value, one step back or forward, and "to the playhead".

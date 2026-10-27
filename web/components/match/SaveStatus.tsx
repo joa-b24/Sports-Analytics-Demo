@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle, FloppyDisk, WarningCircle } from "@phosphor-icons/react";
+import { CheckCircle, WarningCircle } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "@/components/Modal";
 import { matchItems, statusText } from "@/lib/saveAll";
@@ -56,7 +56,7 @@ export function useAsk(): [Ask, React.ReactNode, () => void] {
   return [ask, dialog, reset];
 }
 
-// In the match header: whether everything is on disk, «Guardar todo» (Ctrl+S) and the optional autosave.
+// In the match header: whether everything is on disk (no button: each part shows its own state), Ctrl+S saves what changed and the optional autosave.
 export function SaveStatus({ match }: { match: Match }) {
   const state = useStore();
   const folder = match.folder;
@@ -114,7 +114,7 @@ export function SaveStatus({ match }: { match: Match }) {
   }, [autosave, folder]);
 
   if (!folder) return null;
-  const title = [status.text, ...status.detail, "", "Ctrl+S guarda todo lo que cambió."].join("\n");
+  const title = [status.text, ...status.detail, "", "Ctrl+S guarda todas las partes con cambios, el balón, los eventos y un respaldo del partido."].join("\n");
   return (
     <div className="flex items-center gap-2">
       <span title={title} className={`flex items-center gap-1.5 text-xs whitespace-nowrap ${dirtyNow ? "text-warn" : "text-faint"}`} aria-live="polite" data-save-status>
@@ -126,16 +126,6 @@ export function SaveStatus({ match }: { match: Match }) {
           <span className="block h-full bg-own transition-[width]" style={{ width: `${(100 * progress.done) / Math.max(1, progress.total)}%` }} />
         </span>
       )}
-      <button
-        type="button"
-        className={`btn h-8 !px-2.5 text-xs ${dirtyNow ? "btn-primary" : ""}`}
-        disabled={!!progress}
-        onClick={() => void run()}
-        title="Guarda en la carpeta todas las partes con cambios, el balón, los eventos y un respaldo del partido (Ctrl+S)"
-      >
-        <FloppyDisk size={14} aria-hidden />
-        Guardar todo
-      </button>
       <label className="flex items-center gap-1 text-[11px] whitespace-nowrap text-faint" title="Cada 5 minutos, si hay cambios (sin preguntar: un archivo más nuevo en la carpeta se salta)">
         <input type="checkbox" className="accent-accent" checked={autosave} onChange={(e) => setPref(AUTOSAVE_PREF, e.target.checked ? "1" : "")} />
         Auto

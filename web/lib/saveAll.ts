@@ -116,6 +116,17 @@ export function matchItems(state: Pick<State, "trackEdits" | "events">, match: P
 // Items whose state is not the one last saved (never saved counts as changed).
 export const dirtyItems = (items: SaveItem[], log: SaveLog) => items.filter((i) => log[i.id]?.hash !== i.hash);
 
+// Keys of the parts of a folder whose corrections are not the ones last saved (a part nobody touched has no
+// corrections and is not listed: there is nothing to lose). Used to flag them in the part picker.
+export function dirtyPartKeys(trackEdits: TrackEdits[], folder: string, events: MatchEvent[], attackOf: (video: string) => string, log: SaveLog): Set<string> {
+  const out = new Set<string>();
+  for (const e of trackEdits) {
+    const k = e.key.startsWith(`${folder}|`) ? parseKey(e.key) : null;
+    if (k && log[partId(e.key)]?.hash !== partHash(e, events, attackOf(k.video_id))) out.add(e.key);
+  }
+  return out;
+}
+
 const hhmm = (ms: number) => {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;

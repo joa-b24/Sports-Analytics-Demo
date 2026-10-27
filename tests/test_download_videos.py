@@ -43,3 +43,19 @@ def test_enlaces_que_se_pueden_bajar():
     assert not downloadable("")
     assert not downloadable("pendiente")
 
+
+
+def test_select_rows_por_video_y_por_enlace_de_la_app():
+    import pytest
+    from sportsan.ingest.download_videos import select_rows
+
+    other = {**ROW, "video_id": "v1"}
+    assert select_rows([ROW, other], ROW["match_id"], "v2", None) == [ROW]
+    assert select_rows([ROW, other], None, None, None) == [ROW, other]
+    # sin fila en videos.csv: se arma con el enlace de la app
+    (r,) = select_rows([], "2026_10_11_a_vs_b", "v3", "OIvhk-vNs5c")
+    assert r["video_id"] == "v3" and r["url"] == "https://www.youtube.com/watch?v=OIvhk-vNs5c"
+    with pytest.raises(SystemExit):
+        select_rows([], "m", "v1", "corto")
+    with pytest.raises(SystemExit):
+        select_rows([], None, "v1", "OIvhk-vNs5c")

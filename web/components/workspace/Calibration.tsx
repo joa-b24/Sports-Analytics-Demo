@@ -10,6 +10,7 @@ import type { JerseyKey } from "@/lib/tracks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { FilePicker, partLabel } from "@/components/LocalPick";
+import { VideoMissingNotice } from "@/components/match/VideoDownload";
 import { Card, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
 import { localVideo, readLocal, writeLocal } from "@/lib/local";
 import { readVideoMask, writeVideoMask } from "@/lib/matchYaml";
@@ -1224,9 +1225,15 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
           <Card>
             {!fileUrl ? (
               <div className="flex flex-wrap items-center gap-3">
-                <p className="flex-1 text-sm text-muted">
-                  No encontré <code>matches/{matchId}/video/{videoId}.mp4</code>. Aquí hace falta el archivo y no YouTube, para avanzar cuadro por cuadro.
-                </p>
+                {embedded && folder ? (
+                  <div className="min-w-0 flex-1">
+                    <VideoMissingNotice folder={folder} video={videoId} />
+                  </div>
+                ) : (
+                  <p className="flex-1 text-sm text-muted">
+                    No encontré <code>matches/{matchId}/video/{videoId}.mp4</code>. Aquí hace falta el archivo y no YouTube, para avanzar cuadro por cuadro.
+                  </p>
+                )}
                 <label className={`${btnPrimary} cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`}>
                   <FolderOpen size={15} />
                   Abrir video

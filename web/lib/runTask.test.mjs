@@ -132,3 +132,38 @@ test("train: entrena con las muestras del video (Playground)", () => {
   assert.equal(validateRunArgs({ task: "train", match: "a", part: "v2;rm" }).ok, false);
   assert.match(errorMessage("error: unrecognized arguments: --samples x", 2), /--samples/);
 });
+
+test("relleno B: umbrales de Detalles técnicos pasan como --seg-* y --unnamed-cost, validados", () => {
+  const req = { task: "fill", match: "a", part: "b", variant: "exp", unnamedCost: 3, seg: { maxCost: 1.5, minEntryP: 0.9, internalP: 0.99, rejectClose: false } };
+  const v = validateRunArgs(req);
+  assert.equal(v.ok, true);
+  assert.deepEqual(runArgv(v.args), [
+    "-m", "sportsan.tracking.anchors", "fill", "--match", "a", "--part", "b", "--unnamed-cost", "3", "--variant", "exp",
+    "--seg-max-cost", "1.5", "--seg-min-entry-p", "0.9", "--seg-internal-p", "0.99", "--seg-reject-close", "no",
+  ]);
+  // Sin umbrales, la línea de siempre.
+  assert.deepEqual(runArgv(validateRunArgs({ task: "fill", match: "a", part: "b", variant: "exp" }).args), ["-m", "sportsan.tracking.anchors", "fill", "--match", "a", "--part", "b", "--variant", "exp"]);
+  // Solo parciales: lo que no se manda no se pasa.
+  assert.deepEqual(runArgv(validateRunArgs({ ...req, unnamedCost: undefined, seg: { rejectClose: true } }).args).slice(-4), ["--variant", "exp", "--seg-reject-close", "yes"]);
+  for (const bad of [
+    { ...req, seg: { maxCost: 9 } },
+    { ...req, seg: { minEntryP: 0.2 } },
+    { ...req, seg: { internalP: "0.9" } },
+    { ...req, seg: { rejectClose: "no" } },
+    { ...req, seg: { maxCost: 1, extra: 1 } },
+    { ...req, seg: ["x"] },
+    { ...req, unnamedCost: 100 },
+    { ...req, unnamedCost: "2; rm" },
+    { ...req, variant: undefined }, // seg solo vale en la variante B
+    { ...req, task: "suggest" },
+    { task: "ball", match: "a", part: "b", unnamedCost: 2 },
+  ])
+    assert.equal(validateRunArgs(bad).ok, false, JSON.stringify(bad));
+  // El costo sin nombre también vale en el relleno normal.
+  assert.deepEqual(runArgv(validateRunArgs({ task: "fill", match: "a", part: "b", unnamedCost: 2.5 }).args).slice(-2), ["--unnamed-cost", "2.5"]);
+});
+
+test("balón: la confianza de Detalles técnicos se pasa a ball run --accept", () => {
+  assert.deepEqual(runArgv(validateRunArgs({ task: "ball", match: "a", part: "v1_0_10", accept: 0.95 }).args).slice(-2), ["--accept", "0.95"]);
+  assert.equal(validateRunArgs({ task: "ball", match: "a", part: "b", accept: 0.5 }).ok, false);
+});

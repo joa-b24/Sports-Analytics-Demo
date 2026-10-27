@@ -2,11 +2,15 @@
 
 import { ArrowCounterClockwise } from "@phosphor-icons/react";
 import { useState } from "react";
+import { autoDownloadOn } from "@/lib/downloads";
+import { EVENT_DEFAULTS } from "@/lib/eventDetect";
+import { EVENT_PARAM_FIELDS, clampEventParam, type EventParamField } from "@/lib/eventReview";
 import { PARAM_FIELDS, clampParam, type ParamField } from "@/lib/playgroundPossession";
 import { POSSESSION_DEFAULTS } from "@/lib/possession";
 import { mutate } from "@/lib/store";
-import { TECH_GROUPS, possessionParamsOf, resetTech, techChanged, withTechParam } from "@/lib/tech";
+import { EVENT_TECH_GROUP, TECH_GROUPS, eventParamsOf, eventTechChanged, possessionParamsOf, resetEventTech, resetTech, techChanged, withEventParam, withTech, withTechParam } from "@/lib/tech";
 import type { Match } from "@/lib/types";
+import { TechTracking } from "./TechTracking";
 
 const fmt = (n: number) => n.toLocaleString("es-MX", { maximumFractionDigits: 2 });
 const patchMatch = (id: string, f: (m: Match) => Match) => mutate((s) => ({ ...s, matches: s.matches.map((m) => (m.match_id === id ? f(m) : m)) }));
@@ -45,12 +49,48 @@ function NumField({ field, value, onChange }: { field: ParamField; value: number
   );
 }
 
+// Same field for a parameter of the event detectors.
+function EventField({ field, value, onChange }: { field: EventParamField; value: number; onChange: (v: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const def = EVENT_DEFAULTS[field.key] as number;
+  return (
+    <label className="block text-xs text-muted" title={field.help}>
+      <span className="block">{field.label}</span>
+      <span className="mt-1 flex items-center gap-1.5">
+        <input
+          type="number"
+          inputMode="decimal"
+          className="input tc w-24"
+          min={field.min}
+          max={field.max}
+          step={field.step}
+          value={draft ?? String(value)}
+          aria-label={`${field.label}${field.unit ? ` (${field.unit})` : ""}`}
+          onFocus={() => setDraft(String(value))}
+          onBlur={() => setDraft(null)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (e.target.value.trim() === "") return;
+            const v = clampEventParam(field, Number(e.target.value), value);
+            if (v !== value) onChange(v);
+          }}
+        />
+        <span className="text-faint">{field.unit}</span>
+        <span className={value !== def ? "tag tag-accent" : "text-faint"}>por defecto {fmt(def)}</span>
+      </span>
+      <span className="mt-0.5 block text-[11px] text-faint">{field.help}</span>
+    </label>
+  );
+}
+
 // Configuración del partido > Detalles técnicos: the parameters the possession is computed with, grouped, with their
 // defaults in view. They are saved per match (Match.tech) and everything that reads possession uses them (report, summary,
 // Playground), so changing one changes the report.
 export function TechPanel({ match }: { match: Match }) {
   const params = possessionParamsOf(match);
   const changed = techChanged(match);
+  const eventParams = eventParamsOf(match);
+  const eventChanged = eventTechChanged(match);
   const set = (f: ParamField) => (v: number) => patchMatch(match.match_id, (m) => withTechParam(m, f.key, v));
   return (
     <div className="space-y-5 text-xs text-muted">
@@ -84,6 +124,40 @@ export function TechPanel({ match }: { match: Match }) {
           </div>
         </section>
       ))}
+      <section aria-label={EVENT_TECH_GROUP.title}>
+        <h3 className="m-0 text-sm font-semibold text-ink">{EVENT_TECH_GROUP.title}</h3>
+        <p className="m-0 mb-2 text-faint">{EVENT_TECH_GROUP.help} Se verifican en Playground &gt; Eventos.</p>
+        <div className="grid grid-cols-1 gap-x-5 gap-y-3 sm:grid-cols-2">
+          {EVENT_PARAM_FIELDS.map((f) => (
+            <EventField key={f.key} field={f} value={eventParams[f.key] as number} onChange={(v) => patchMatch(match.match_id, (m) => withEventParam(m, f.key, v))} />
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button type="button" className="btn" disabled={eventChanged.length === 0} onClick={() => patchMatch(match.match_id, resetEventTech)}>
+            <ArrowCounterClockwise size={14} />
+            Restablecer eventos
+          </button>
+          <span className="text-faint">{eventChanged.length === 0 ? "Eventos con los valores por defecto." : `${eventChanged.length} distinto${eventChanged.length === 1 ? "" : "s"} del defecto.`}</span>
+        </div>
+      </section>
+      <section aria-label="Videos">
+        <h3 className="m-0 text-sm font-semibold text-ink">Videos</h3>
+        <label className="mt-2 flex items-start gap-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={autoDownloadOn(match)}
+            onChange={(e) => patchMatch(match.match_id, (m) => withTech(m, { autoDownload: e.target.checked ? undefined : false }))}
+          />
+          <span>
+            Descargar videos que falten automáticamente
+            <span className="mt-0.5 block text-[11px] text-faint">
+              Por defecto: sí. Al abrir el partido, cada video con enlace de YouTube que no esté en su carpeta se baja solo (1080p, solo imagen). Solo funciona con la app en esta computadora; un error o una cancelación no se reintentan solos.
+            </span>
+          </span>
+        </label>
+      </section>
+      <TechTracking match={match} />
       <div className="flex flex-wrap items-center gap-3 border-t border-line-soft pt-3">
         <button type="button" className="btn" disabled={changed.length === 0} onClick={() => patchMatch(match.match_id, resetTech)}>
           <ArrowCounterClockwise size={14} />

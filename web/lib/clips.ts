@@ -1,6 +1,7 @@
 // Clip edits (drawings over the video of a play): what an edit needs from the tracking of its part, positions with the
 // 1-second rule, the calibration of each frame and the labels of players. Pure functions, no storage, no React.
-import type { Annotation, ClipEdit, ClipSnapshot, LabelMode, Pt, ResolveContext } from "./annotations.ts";
+import { isMeasuredSource } from "./smooth.ts";
+import { HIGHLIGHT_SHAPES, type Annotation, type ClipEdit, type ClipSnapshot, type LabelMode, type Pt, type ResolveContext } from "./annotations.ts";
 import type { FixedFile } from "./positions.ts";
 import type { Play, RosterPlayer } from "./types.ts";
 
@@ -30,7 +31,7 @@ export function newEdit(edit_id: string, play: Play): ClipEdit {
 
 // An edit as saved, with what a backup may lack filled in.
 export function normalizeEdit(e: Partial<ClipEdit> & { edit_id: string }): ClipEdit {
-  return {
+  return migrateEdit({
     ...e,
     edit_id: e.edit_id,
     match_id: e.match_id ?? "",
@@ -41,7 +42,19 @@ export function normalizeEdit(e: Partial<ClipEdit> & { edit_id: string }): ClipE
     freezes: e.freezes ?? [],
     annotations: e.annotations ?? [],
     label_mode: e.label_mode === "name" || e.label_mode === "none" ? e.label_mode : "number",
-  };
+  });
+}
+
+// A clip saved before the studio dropped the box mark: a highlight whose shape is not one of today's (the old «box»)
+// opens as the oval; the rest of the clip is left as it was. Returns the same object when there is nothing to change.
+export function migrateEdit(e: ClipEdit): ClipEdit {
+  const known = (v: unknown) => (HIGHLIGHT_SHAPES as readonly unknown[]).includes(v);
+  const bad = (a: Annotation) => a.style.shape !== undefined && !known(a.style.shape);
+  const defaultBad = e.highlight_shape !== undefined && !known(e.highlight_shape);
+  if (!defaultBad && !e.annotations.some(bad)) return e;
+  const next: ClipEdit = { ...e, annotations: e.annotations.map((a) => (bad(a) ? { ...a, style: { ...a.style, shape: "oval" } } : a)) };
+  if (defaultBad) next.highlight_shape = "oval";
+  return next;
 }
 
 // --------------------------------------------------------------------------------------------- calibration
@@ -86,7 +99,7 @@ export function snapshotContext(s: Pick<ClipSnapshot, "fps" | "stride" | "tracks
   for (const [id, rows] of Object.entries(s.tracks))
     seen.set(
       id,
-      rows.filter((r) => r[3] !== "interpolated").map((r) => [r[0], r[1], r[2]] as [number, number, number]).sort((x, y) => x[0] - y[0]),
+      rows.filter((r) => isMeasuredSource(r[3])).map((r) => [r[0], r[1], r[2]] as [number, number, number]).sort((x, y) => x[0] - y[0]),
     );
   const step = s.stride / s.fps;
   return {

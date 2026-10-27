@@ -85,3 +85,35 @@ export function testVerdict(t: TestSummary): { tone: "ok" | "warn" | "bad"; text
   if (t.on_pitch_median < 16) return { tone: "warn", text: "Ve a una parte del equipo. Si la cámara abarca casi toda la cancha, prueba un detector más grande o más cortes." };
   return { tone: "ok", text: "Ve a casi todas las jugadoras en cuadro: se puede procesar." };
 }
+
+// Post-processing applied while processing a part (sportsan.tracking.process): corrected feet and the calibration
+// smoothed in time (SMOOTH_H, window in seconds). Kept in match.yaml as one line, `postprocess: {feet: true,
+// smooth_h: true, smooth_window_s: 0.7}`; with no line the defaults of process.py apply (all on, window 0.7 s).
+export interface PostSettings {
+  feet: boolean;
+  smoothH: boolean;
+  smoothWindowS: number;
+}
+export const DEFAULT_POST: PostSettings = { feet: true, smoothH: true, smoothWindowS: 0.7 };
+export const POST_WINDOW = { min: 0.2, max: 3, step: 0.1 } as const;
+
+const POST_LINE = /^postprocess:\s*\{([^}]*)\}.*$/m;
+
+export function readPost(yaml: string | null): PostSettings {
+  const out = { ...DEFAULT_POST };
+  const m = yaml?.match(POST_LINE);
+  if (!m) return out;
+  for (const part of m[1].split(",")) {
+    const [k, v] = part.split(":").map((x) => x.trim());
+    if (k === "feet" && (v === "true" || v === "false")) out.feet = v === "true";
+    else if (k === "smooth_h" && (v === "true" || v === "false")) out.smoothH = v === "true";
+    else if (k === "smooth_window_s" && Number(v) >= POST_WINDOW.min && Number(v) <= POST_WINDOW.max) out.smoothWindowS = Number(v);
+  }
+  return out;
+}
+
+export const postLine = (p: PostSettings) => `postprocess: {feet: ${p.feet}, smooth_h: ${p.smoothH}, smooth_window_s: ${Number(p.smoothWindowS.toFixed(1))}}`;
+
+export function writePost(yaml: string, p: PostSettings): string {
+  return POST_LINE.test(yaml) ? yaml.replace(POST_LINE, postLine(p)) : `${yaml.replace(/\s*$/, "")}\n\n# Pies y calibración en el procesamiento (elegido en la app)\n${postLine(p)}\n`;
+}

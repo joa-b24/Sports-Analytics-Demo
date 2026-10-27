@@ -52,13 +52,16 @@ export interface PlayersInput {
   parts: Oriented[];
   // Which half each video belongs to (match.yaml `period`, MatchVideo.period). Without it every video is its own half.
   videoPeriods?: { video_id: string; period: number }[];
+  // «Partido completo»: videos that hold both halves, with where each half starts and ends in the video (lib/videos.ts
+  // fullWindows). Such a video belongs to both halves; its periods ignore `videoPeriods`.
+  videoHalves?: Record<string, { h1: [number, number]; h2: [number, number] }>;
   // Play stretches by video; with none, all the followed ball counts (as in ballReport).
   playByVideo?: Record<string, Segment[]>;
 }
 
 const clean = (s: string | null | undefined) => (s ?? "").trim();
 
-export function playerRows({ events, parts, playByVideo = {}, videoPeriods }: PlayersInput): PlayerRow[] {
+export function playerRows({ events, parts, playByVideo = {}, videoPeriods, videoHalves }: PlayersInput): PlayerRow[] {
   const rows = new Map<string, PlayerRow>();
   const row = (team: Side, id: string): PlayerRow => {
     const key = `${team}|${id}`;
@@ -117,7 +120,7 @@ export function playerRows({ events, parts, playByVideo = {}, videoPeriods }: Pl
         r.hsr_m = p.hsr_m;
         r.sprints = p.sprints;
       }
-    for (const [key, m] of playedMinutes({ events, parts, playByVideo, videoPeriods })) {
+    for (const [key, m] of playedMinutes({ events, parts, playByVideo, videoPeriods, videoHalves })) {
       const r = rows.get(key);
       if (r) r.minutes_played = m;
     }
@@ -180,15 +183,25 @@ export const NO_DATA = "sin dato";
 // time she enters or leaves, in the clock of that half. A player who is not a starter of a half and has no entry
 // tagged in it is unknown for that half, and then her total is null (no data): it is not guessed.
 // Returns minutes by `${team}|${name}`.
-export function playedMinutes({ events, parts, playByVideo = {}, videoPeriods }: Pick<PlayersInput, "events" | "parts" | "playByVideo" | "videoPeriods">): Map<string, number | null> {
+export function playedMinutes({ events, parts, playByVideo = {}, videoPeriods, videoHalves = {} }: Pick<PlayersInput, "events" | "parts" | "playByVideo" | "videoPeriods" | "videoHalves">): Map<string, number | null> {
   const videoIds = [...new Set(parts.map((o) => o.file.video_id))];
   const periodOf = new Map<string, number>(videoIds.map((v, i) => [v, i + 1]));
   for (const vp of videoPeriods ?? []) if (videoIds.includes(vp.video_id)) periodOf.set(vp.video_id, vp.period);
   const num = (v: string) => Number(v.replace(/\D/g, "")) || 0;
-  const periods = [...new Set(periodOf.values())].sort((a, b) => a - b);
+  // Halves a video holds: a full video, both; any other, its own.
+  const periodsOf = (v: string): number[] => (videoHalves[v] ? [1, 2] : periodOf.has(v) ? [periodOf.get(v) as number] : []);
+  const periods = [...new Set(videoIds.flatMap(periodsOf))].sort((a, b) => a - b);
+  // Half of an event: in a full video, by the middle of the break between its halves.
+  const periodOfEvent = (e: MatchEvent): number | undefined => {
+    const v = e.video_id ?? "v1";
+    const w = videoHalves[v];
+    return w ? (e.t_video < (w.h1[1] + w.h2[0]) / 2 ? 1 : 2) : periodOf.get(v);
+  };
   const keyOf = (team: string, name: string | null | undefined) => `${team}|${clean(name)}`;
   // Clock of each video: [start, end] in its own t_video.
-  const bounds = (v: string): [number, number] | null => {
+  const bounds = (v: string, period: number): [number, number] | null => {
+    const w = videoHalves[v];
+    if (w) return period === 1 ? w.h1 : w.h2;
     const g = (playByVideo[v] ?? []).filter((x) => x.tipo === "juego" && x.end !== null);
     if (g.length) return [Math.min(...g.map((x) => x.start)), Math.max(...g.map((x) => x.end as number))];
     const fs = parts.filter((o) => o.file.video_id === v);
@@ -200,19 +213,23 @@ export function playedMinutes({ events, parts, playByVideo = {}, videoPeriods }:
   for (const o of parts)
     for (const p of o.file.people) if (clean(p.player_id) && (p.team === "own" || p.team === "opp")) total.set(keyOf(p.team, p.player_id), 0);
   for (const period of periods) {
-    const vids = [...periodOf].filter(([, p]) => p === period).map(([v]) => v).sort((a, b) => num(a) - num(b));
+    const vids = videoIds.filter((v) => periodsOf(v).includes(period)).sort((a, b) => num(a) - num(b));
     // Where each video starts on the clock of the half, and the length of the half.
     const offset = new Map<string, number>();
     let len = 0;
     for (const v of vids) {
-      const b = bounds(v);
+      const b = bounds(v, period);
       if (!b) continue;
       offset.set(v, len - b[0]);
       len += b[1] - b[0];
     }
     if (len <= 0) continue;
     // Starters: named people with a position in the first clip of the half.
-    const first = parts.filter((o) => o.file.video_id === vids[0]).sort((a, b) => a.file.start_frame - b.file.start_frame)[0];
+    // (in a full video, the clips that overlap the half).
+    const win = videoHalves[vids[0]] ? bounds(vids[0], period) : null;
+    const first = parts
+      .filter((o) => o.file.video_id === vids[0] && (!win || (o.file.end_frame / o.file.fps >= win[0] && o.file.start_frame / o.file.fps <= win[1])))
+      .sort((a, b) => a.file.start_frame - b.file.start_frame)[0];
     const starters = new Set<string>();
     if (first) {
       const seen = new Set<number>();
@@ -222,7 +239,7 @@ export function playedMinutes({ events, parts, playByVideo = {}, videoPeriods }:
     type Move = { t: number; key: string; on: boolean };
     const moves: Move[] = [];
     for (const e of events) {
-      if ((e.team !== "own" && e.team !== "opp") || periodOf.get(evVideo(e)) !== period) continue;
+      if ((e.team !== "own" && e.team !== "opp") || periodOfEvent(e) !== period) continue;
       const off = offset.get(evVideo(e));
       if (off === undefined) continue;
       const t = Math.min(len, Math.max(0, e.t_video + off));

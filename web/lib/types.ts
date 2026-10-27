@@ -167,6 +167,16 @@ export interface MatchVideo {
   label: string;
   // Half of the match this video belongs to (a half can come in several videos). Absent = first video 1, others 2.
   period?: 1 | 2;
+  // «Partido completo»: this single video holds both halves. The four marks (seconds inside this video) say where each
+  // half starts and ends; kept here, not in segments.csv. Absent: the video is one half (`period`). See lib/videos.ts.
+  full?: FullVideoMarks;
+}
+
+export interface FullVideoMarks {
+  h1_start?: number;
+  h1_end?: number;
+  h2_start?: number;
+  h2_end?: number;
 }
 
 export interface Match {
@@ -199,7 +209,18 @@ export interface Match {
   };
   // Technical details of the match (Configuración del partido > Detalles técnicos, lib/tech.ts): only the parameters the
   // analyst changed; the rest are the defaults. Part of the backup with the rest of the match.
-  tech?: { possession?: Partial<Record<string, number | boolean>> };
+  tech?: {
+    possession?: Partial<Record<string, number | boolean>>;
+    // Parameters of the event detectors (lib/eventDetect.ts), only what the analyst changed.
+    events?: Partial<Record<string, number | boolean>>;
+    // Event types whose detection the analyst accepted: they are created by themselves as «automático» suggestions.
+    autoEvents?: string[];
+    // Parameters of the tracking tools (fill, green gaps, ball confidence, search strip, g key): lib/tech.ts TRACKING_FIELDS.
+    tracking?: Partial<Record<string, number | boolean>>;
+    // Download by itself the videos of this match that have a link but no file in its folder (app on this computer only).
+    // Absent = on; false = off (lib/downloads.ts autoDownloadOn).
+    autoDownload?: boolean;
+  };
   // Penalty shootout after a draw (lib/shootout.ts), in kick order. Absent: none.
   shootout?: ShootoutKick[];
   is_demo?: boolean;
@@ -236,6 +257,9 @@ export interface MatchEvent {
   // Shots: where the ball crossed the goal line seen from the shooter, meters from the left post and height.
   goal_y?: number | null;
   goal_z?: number | null;
+  // Created by itself from the detection of its type (Match.tech.autoEvents): the lists label it «automático». App only:
+  // not a column of the data contract nor of events CSV (EVENT_COLUMNS).
+  auto?: boolean;
 }
 
 export interface Keyframe {
@@ -423,7 +447,13 @@ export interface TrackEdits {
   // Single boxes left out: the second box of a player who was detected twice in that frame. Absent in older edits.
   dropped?: { track: number; frame: number }[];
   // Ball marked by hand on the video (pixels), one per frame. Absent in older edits.
-  ball?: { frame: number; px: number; py: number }[];
+  // `aerial`: the mark is the projection (shadow) on the ground of a ball in the air, not the ball itself: nobody touches
+  // it there (docs/pautas_marcado_balon.md).
+  ball?: { frame: number; px: number; py: number; aerial?: boolean }[];
+  // The ball is not visible from this frame (state "hidden": in play but out of frame or covered; «no se ve») or is
+  // out of the pitch with the game stopped (state "out": «fuera»), until the next ball mark or state mark. A hand mark in
+  // `ball` is the third state, «visible». Absent in older edits (everything visible).
+  ballStates?: { frame: number; state: "hidden" | "out" }[];
   // Two ball marks joined by a straight line whatever the time between them: a long pass or a ball in the air, marked
   // only where it leaves and where it lands.
   ballLinks?: { from: number; to: number }[];

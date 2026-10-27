@@ -5,6 +5,7 @@
 //
 // Only what the camera saw counts (positions filled inside holes are not measurements), and a frame with fewer than
 // MIN_VISIBLE field players of a team does not count: what is measured describes the zone of the play.
+import { isMeasuredSource } from "./smooth.ts";
 import { metersPerUnit, orient, type Oriented } from "./positions.ts";
 import type { Segment } from "./segments.ts";
 import { PITCH } from "./types.ts";
@@ -130,7 +131,7 @@ export function blockShape(parts: Oriented[], play: Record<string, Segment[]>, v
       const y: Record<"own" | "opp", number[]> = { own: [], opp: [] };
       for (const q of fr.positions) {
         const tm = team.get(q.id);
-        if ((tm !== "own" && tm !== "opp") || q.source === "interpolated") continue;
+        if ((tm !== "own" && tm !== "opp") || !isMeasuredSource(q.source)) continue;
         const [x, yy] = orient(o, q.x, q.y);
         d[tm].push((tm === "own" ? x : PITCH.length - x) * mx);
         y[tm].push(yy * my);

@@ -88,6 +88,7 @@ export function PersonTimeline({
   manual = [],
   open = [],
   offCamera = [],
+  greenRange = [2, 7],
   anomalies = [],
   onAnomaly,
   person,
@@ -114,6 +115,8 @@ export function PersonTimeline({
   open?: [number, number][];
   // Holes where she left the frame: nothing to fix, filled on export.
   offCamera?: [number, number][];
+  // Seconds [min, max] of a hole out of the camera shown green (Detalles técnicos).
+  greenRange?: [number, number];
   // Impossible movements of hers still to look at (lib/anomalies.ts): from the jump to where she is back.
   anomalies?: { frame: number; until?: number; current?: boolean }[];
   onAnomaly?: (frame: number) => void;
@@ -274,13 +277,13 @@ export function PersonTimeline({
           .filter(([a, b]) => b >= v0 && a <= v1)
           .map(([a, b]) => {
             // 2 to 7 s out of the camera's reach: green, nothing to fill by hand.
-            const green = (b - a) / fps >= 2 && (b - a) / fps <= 7;
+            const green = (b - a) / fps >= greenRange[0] && (b - a) / fps <= greenRange[1];
             return (
               <span
                 key={`o${a}`}
                 className={`absolute top-4 bottom-4 rounded-sm ${green ? "bg-ok/50" : "bg-faint/40"}`}
                 style={{ left: `${pct(a + stride)}%`, width: `max(2px, ${pct(b) - pct(a + stride)}%)` }}
-                title={`Fuera de cuadro ${((b - a) / fps).toFixed(1)} s: se rellena al guardar${green ? " (verde: de 2 a 7 s fuera de la cámara, no hace falta rellenarlo a mano)" : ""}`}
+                title={`Fuera de cuadro ${((b - a) / fps).toFixed(1)} s: se rellena al guardar${green ? " (verde: de ${greenRange[0]} a ${greenRange[1]} s fuera de la cámara, no hace falta rellenarlo a mano)" : ""}`}
               />
             );
           })}

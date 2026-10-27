@@ -2,18 +2,10 @@ import type { PointerEvent as RPointerEvent, Ref } from "react";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { arrowHead, curvePath, labelPoint, type Pt, type Resolved } from "@/lib/annotations";
 import { framingBox } from "@/lib/boards";
+import { useDrawColor } from "@/components/studio/palette";
 import type { BoardFraming, BoardToken } from "@/lib/types";
 
-// Drawing colours as tokens of globals.css (the stored value is the name, lib/annotations.ts DRAW_COLORS).
-export const DRAW_COLOR_VAR: Record<string, string> = {
-  accent: "var(--color-accent-300)",
-  warn: "var(--color-warn)",
-  danger: "var(--color-danger)",
-  ok: "var(--color-ok)",
-  ink: "var(--color-ink)",
-};
-export const DRAW_COLOR_LABELS: Record<string, string> = { accent: "Azul", warn: "Ámbar", danger: "Rojo", ok: "Verde", ink: "Blanco" };
-const colorOf = (c: string) => DRAW_COLOR_VAR[c] ?? DRAW_COLOR_VAR.accent;
+// Drawing colours come from the palette of Estudio (lib/palette.ts, components/studio/palette.tsx).
 
 const TOKEN_R = 1.9;
 const BALL_R = 1.1;
@@ -21,7 +13,7 @@ const BALL_R = 1.1;
 // One drawing in pitch meters (a text in screen coordinates is placed over the pitch box). Zones and lines go under
 // the pieces, the rest over them. A drawing that appears is drawn in (arrows and lines) or fades in.
 function Drawing({ r, selected, onPick }: { r: Resolved; selected: boolean; onPick?: (id: string) => void }) {
-  const color = colorOf(r.style.color);
+  const color = useDrawColor()(r.style.color);
   const pts: Pt[] = r.space === "screen" ? r.points.map(([x, y]) => [x * 105, y * 68]) : r.points;
   const dash = r.style.dashed ? "1.4 0.9" : undefined;
   const width = selected ? 0.75 : 0.5;

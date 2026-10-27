@@ -121,3 +121,17 @@ test("minutes played add the halves, which can come in several videos", () => {
   assert.equal(by.Paz, 20); // 600 + 300 + 300 = 1200 s
   assert.equal(by.Kat, null); // starter in half 1, not in the first clip of half 2 and no entry tagged: no data
 });
+
+test("minutes played in a full video (both halves in one): the four marks set each half, events go to their half", () => {
+  const h1 = { ...file2("v1", [["Paz", 1], ["Kat", 2]]), start_frame: 0, end_frame: 18000 };
+  const h2 = { ...file2("v1", [["Paz", 1]]), start_frame: 27000, end_frame: 45000 };
+  const parts = [{ file: h1, ownRight: true }, { file: h2, ownRight: true }];
+  const videoHalves = { v1: { h1: [0, 600], h2: [900, 1500] } };
+  const by = (events) => Object.fromEntries(playerRows({ events, parts, videoHalves }).map((r) => [r.id, r.minutes_played]));
+  const plain = by([]);
+  assert.equal(plain.Paz, 20); // 600 + 600 s
+  assert.equal(plain.Kat, null); // starter in half 1 only, nothing says she was on in half 2
+  // Paz leaves at 1200 s of the video: 600 s of the first half + 300 s of the second.
+  assert.equal(by([sub(1200, "Paz", "Kat")]).Paz, 15);
+  assert.equal(by([sub(1200, "Paz", "Kat")]).Kat, 10 + 5); // 600 s + from 1200 to the end of the second half
+});

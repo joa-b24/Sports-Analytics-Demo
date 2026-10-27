@@ -78,6 +78,44 @@ export interface BallPoint {
   x: number;
   y: number;
   source: BallSource;
+  // The mark is the ground projection of a ball in the air: nobody touches it there.
+  aerial?: boolean;
+}
+
+// State of the ball over time, from the marks of the analyst. «visible» is the default (a hand mark, the tracker, an
+// event); «hidden» (no se ve): in play but not seen, so the path is interpolated and no touch is measured on it; «out»
+// (fuera): outside the pitch with the game stopped until the next visible mark: dead ball, no positions, no possession.
+export type BallStateName = "visible" | "hidden" | "out";
+// Frames [from, to) (to null: until the end of the part). Ranges end at the next mark of any kind.
+export interface BallStateRange {
+  from: number;
+  to: number | null;
+  state: "hidden" | "out";
+}
+
+export function ballStateRanges(edits: Pick<TrackEdits, "ball" | "ballStates">): BallStateRange[] {
+  const marks = [...(edits.ball ?? []).map((b) => b.frame), ...(edits.ballStates ?? []).map((s) => s.frame)].sort((a, b) => a - b);
+  return [...(edits.ballStates ?? [])]
+    .sort((a, b) => a.frame - b.frame)
+    .map((s) => ({ from: s.frame, to: marks.find((m) => m > s.frame) ?? null, state: s.state }));
+}
+const inRange = (r: BallStateRange, frame: number) => frame >= r.from && (r.to === null || frame < r.to);
+
+// State of the ball at a frame of a part (visible where no range covers it).
+export function ballStateAtFrame(ranges: BallStateRange[] | undefined, frame: number): BallStateName {
+  return (ranges ?? []).find((r) => inRange(r, frame))?.state ?? "visible";
+}
+
+// What the ball was doing at video time `t` (seconds): the state of the part that covers it. Null where no part covers
+// that moment (nothing is known). Reads `ball_states` of tracks_fixed; parts saved before it are all «visible».
+export function ballStateAt(parts: { file: { video_id: string; fps: number; start_frame: number; end_frame: number; ball_states?: BallStateRange[] } }[], video: string, t: number): BallStateName | null {
+  for (const o of parts) {
+    const f = o.file;
+    if (f.video_id !== video) continue;
+    const frame = t * f.fps;
+    if (frame >= f.start_frame && frame < f.end_frame) return ballStateAtFrame(f.ball_states, frame);
+  }
+  return null;
 }
 
 // Longest stretch between two known ball positions that is joined with a straight line (s).
@@ -103,7 +141,7 @@ export function manualBall(file: TracksFile, edits: TrackEdits): BallPoint[] {
   const out: BallPoint[] = [];
   for (const m of edits.ball ?? []) {
     const p = pixelToPitch(file, H.get(m.frame), m.px, m.py);
-    if (p) out.push({ frame: m.frame, x: p[0], y: p[1], source: "manual" });
+    if (p) out.push({ frame: m.frame, x: p[0], y: p[1], source: "manual", ...(m.aerial ? { aerial: true } : {}) });
   }
   return out.sort((a, b) => a.frame - b.frame);
 }
@@ -126,13 +164,14 @@ export const BALL_JUMP_RUN_S = 1;
 // Frames of tracker ("auto") positions to distrust because of jumps. Hand marks are never touched, but they count as
 // neighbours: an automatic run that jumps away from a mark and back is as suspicious as one that jumps away from
 // another automatic run. `mx, my`: meters per unit of the pitch. Pure, no file access.
-export function ballJumpFrames(points: { frame: number; x: number; y: number; source: string }[], fps: number, mx = 1, my = 1, maxRunS = BALL_JUMP_RUN_S): Set<number> {
+// `jumpMs`: the speed above which two positions are not the same ball (Detalles técnicos; default BALL_JUMP_MS).
+export function ballJumpFrames(points: { frame: number; x: number; y: number; source: string }[], fps: number, mx = 1, my = 1, maxRunS = BALL_JUMP_RUN_S, jumpMs = BALL_JUMP_MS): Set<number> {
   const pts = points.filter((p) => p.source === "manual" || p.source === "auto").sort((a, b) => a.frame - b.frame);
   const bad = new Set<number>(); // index i: the link between pts[i] and pts[i+1] is a jump
   for (let i = 0; i + 1 < pts.length; i++) {
     const dt = (pts[i + 1].frame - pts[i].frame) / fps;
     if (dt <= 0 || dt > BALL_JUMP_LINK_S) continue;
-    if (Math.hypot((pts[i + 1].x - pts[i].x) * mx, (pts[i + 1].y - pts[i].y) * my) / dt > BALL_JUMP_MS) bad.add(i);
+    if (Math.hypot((pts[i + 1].x - pts[i].x) * mx, (pts[i + 1].y - pts[i].y) * my) / dt > jumpMs) bad.add(i);
   }
   const out = new Set<number>();
   let start = 0;
@@ -154,11 +193,11 @@ export type BallDropReason = "jump" | "ref_box" | "unk_box";
 // The tracker's ball on the pitch, without the frames rejected by hand and those with a hand mark (the hand wins).
 // Also left out (see autoBallChecked): isolated runs that jump faster than a ball can move, and positions that fall
 // inside the box of a referee or of a person with no team (on the pitch) without any box of a team around.
-export function autoBall(file: TracksFile, auto: BallAuto | null, edits: TrackEdits, check = true): BallPoint[] {
-  return autoBallChecked(file, auto, edits, check).kept;
+export function autoBall(file: TracksFile, auto: BallAuto | null, edits: TrackEdits, check = true, jumpMs = BALL_JUMP_MS): BallPoint[] {
+  return autoBallChecked(file, auto, edits, check, jumpMs).kept;
 }
 
-export function autoBallChecked(file: TracksFile, auto: BallAuto | null, edits: TrackEdits, check = true): { kept: BallPoint[]; dropped: { frame: number; reason: BallDropReason }[] } {
+export function autoBallChecked(file: TracksFile, auto: BallAuto | null, edits: TrackEdits, check = true, jumpMs = BALL_JUMP_MS): { kept: BallPoint[]; dropped: { frame: number; reason: BallDropReason }[] } {
   if (!auto) return { kept: [], dropped: [] };
   const H = new Map(file.frames.map((fr) => [fr.frame, fr.H]));
   const rejected = new Set(edits.ballRejected ?? []);
@@ -174,7 +213,7 @@ export function autoBallChecked(file: TracksFile, auto: BallAuto | null, edits: 
   const [mx, my] = metersPerUnit(file);
   // Hand marks are neighbours of the jump test even though they are not returned here.
   const marks = manualBall(file, edits);
-  const jumps = ballJumpFrames([...marks, ...pts], file.fps, mx, my);
+  const jumps = ballJumpFrames([...marks, ...pts], file.fps, mx, my, BALL_JUMP_RUN_S, jumpMs);
   const refs = fileTeamRefs(file);
   const boxesAt = new Map(file.frames.map((fr) => [fr.frame, fr.boxes]));
   const kept: BallPoint[] = [];
@@ -222,9 +261,15 @@ export function holdBall(file: TracksFile, edits: TrackEdits, frame: number): Tr
 // processed frames. Longer stretches stay empty. Hand marks win: a tagged event (whose time and place are only
 // roughly the ball's) is used only where no hand mark is within maxFillS, so it fills what was not marked instead of
 // pulling the ball off its path.
-export function ballPath(known: BallPoint[], fps: number, stride: number, maxFillS = BALL_FILL_S, links: { from: number; to: number }[] = []): BallPoint[] {
+export function ballPath(known: BallPoint[], fps: number, stride: number, maxFillS = BALL_FILL_S, links: { from: number; to: number }[] = [], states: BallStateRange[] = []): BallPoint[] {
+  // Inside «no se ve» / «fuera» only hand marks stand: the tracker and the events are replaced by what the analyst said.
+  const inState = (frame: number) => states.some((r) => inRange(r, frame));
+  known = known.filter((p) => p.source === "manual" || !inState(p.frame));
+  // A «fuera» stretch is never crossed by a line; a «no se ve» one is crossed whatever its length (the ball stayed in play).
+  const crosses = (r: BallStateRange, a: number, b: number) => a < (r.to ?? Infinity) && b > r.from;
+  const cut = (a: number, b: number) => states.some((r) => r.state === "out" && crosses(r, a, b));
   // Two known positions inside a line drawn by hand are joined whatever the time between them.
-  const linked = (a: number, b: number) => links.some((l) => l.from <= a && b <= l.to);
+  const linked = (a: number, b: number) => links.some((l) => l.from <= a && b <= l.to) || states.some((r) => r.state === "hidden" && crosses(r, a, b));
   // Hand marks and the tracker's ball are precise: an event near either is left out.
   const precise = known.filter((p) => p.source === "manual" || p.source === "auto").map((p) => p.frame);
   const nearPrecise = (f: number) => precise.some((m) => Math.abs(m - f) / fps <= maxFillS);
@@ -239,7 +284,7 @@ export function ballPath(known: BallPoint[], fps: number, stride: number, maxFil
   pts.forEach((p, i) => {
     out.push(p);
     const next = pts[i + 1];
-    if (!next || ((next.frame - p.frame) / fps > maxFillS && !linked(p.frame, next.frame))) return;
+    if (!next || cut(p.frame, next.frame) || ((next.frame - p.frame) / fps > maxFillS && !linked(p.frame, next.frame))) return;
     for (let f = p.frame + stride; f < next.frame; f += stride) {
       const k = (f - p.frame) / (next.frame - p.frame);
       out.push({ frame: f, x: p.x + (next.x - p.x) * k, y: p.y + (next.y - p.y) * k, source: "interpolated" });
@@ -448,6 +493,7 @@ export function joinParts(input: Part[], o: JoinOptions): Joined {
 
   const knownBall = [...(o.ball ?? []), ...parts.flatMap((p) => (p.edits ? manualBall(p.file, p.edits) : []))];
   const ballLinks = parts.flatMap((p) => p.edits?.ballLinks ?? []);
+  const ballStates = parts.flatMap((p) => (p.edits ? ballStateRanges(p.edits) : []));
   const last = parts[parts.length - 1].file;
   return {
     schema_version: 2,
@@ -462,7 +508,8 @@ export function joinParts(input: Part[], o: JoinOptions): Joined {
     parts: parts.map((p, k) => ({ start_frame: p.file.start_frame, end_frame: p.file.end_frame, corrected: hasCorrections(p.edits), linked_to_previous: linked[k] })),
     smoothing: o.smooth ? { max_speed_ms: o.smooth.maxSpeedMs, max_fill_s: o.smooth.maxFillS, window_s: o.smooth.windowS, ...totals } : null,
     people: peopleOut,
-    ball: ballPath(knownBall, first.fps, first.stride, BALL_FILL_S, ballLinks).map((b) => ({ frame: b.frame, x: r2(b.x), y: r2(b.y), source: b.source })),
+    ball: ballPath(knownBall, first.fps, first.stride, BALL_FILL_S, ballLinks, ballStates).map((b) => ({ frame: b.frame, x: r2(b.x), y: r2(b.y), source: b.source, ...(b.aerial ? { aerial: true } : {}) })),
+    ...(ballStates.length ? { ball_states: ballStates } : {}),
     // The processed frames of every part, plus the frames filled in the hole between two parts.
     frames: [...new Set([...parts.flatMap((p) => p.file.frames.map((fr) => fr.frame)), ...byFrame.keys()])]
       .sort((a, b) => a - b)

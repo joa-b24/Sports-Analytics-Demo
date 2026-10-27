@@ -2,8 +2,16 @@
 
 Los modelos se inyectan (dataclass Models), de modo que la lógica se prueba sin GPU.
 Implementaciones reales en models.py. Salidas siguen docs/data_contract.md.
+
+Con `python -m sportsan.tracking.pipeline <tracking|fill-ball> ...` este módulo no corre el pipeline: delega en
+`orchestrate.py` (orquestadores de línea de comandos) antes de importar nada pesado.
 """
 from __future__ import annotations
+
+if __name__ == "__main__":
+    from .orchestrate import main as _orchestrate_main
+
+    raise SystemExit(_orchestrate_main())
 
 import contextlib
 import time

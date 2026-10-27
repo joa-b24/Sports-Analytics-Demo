@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard, Anchor, Table } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowRight, ArrowUp, SignOut, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, WarningCircle, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard, Anchor, Table } from "@phosphor-icons/react";
 import { Pager } from "@/components/Paged";
+import { VideoMissingNotice } from "@/components/match/VideoDownload";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BallStrip } from "@/components/BallStrip";
 import { ViewShade } from "@/components/ViewShade";
@@ -19,18 +20,18 @@ import { FilePicker, partLabel } from "@/components/LocalPick";
 import { PersonTimeline, RANGE_DRAG, type JoinTarget } from "@/components/workspace/PersonTimeline";
 import { SpeedControl } from "@/components/SpeedControl";
 import { downloadText, fmtT, isTyping } from "@/lib/format";
-import { viewPolygon, BALL_FILL_S, autoBall, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, metersPerUnit, pitchToPixel, pixelToPitch, type BallAuto, type Part } from "@/lib/parts";
+import { viewPolygon, BALL_FILL_S, autoBall, ballCoverage, ballPath, ballStateAtFrame, ballStateRanges, type BallStateName, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, metersPerUnit, pitchToPixel, pixelToPitch, type BallAuto, type Part } from "@/lib/parts";
 import { anomalyKey, ballAnomalies, playerAnomalies, type Anomaly } from "@/lib/anomalies";
 import { quitJump, tryJumpFix, trimAtJump, type JumpFix, type JumpStatus } from "@/lib/jumpFix";
 import { applyHint, applyTeamCuts, cutHints, type CutHint } from "@/lib/cuts";
 import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
 import { buildLabels, labelsName } from "@/lib/labels";
-import { hhmm, partHash, partId } from "@/lib/saveAll";
+import { dirtyPartKeys, hhmm, partHash, partId } from "@/lib/saveAll";
 import { savePart, useSaveLog } from "@/lib/saveMatch";
 import { useAsk } from "@/components/match/SaveStatus";
 import { feetLine, feetPath, parseFeet, type FeetFile } from "@/lib/feetFix";
 import { clearFit, fitAt, fitCount, fitKeys, fitMarks, newFitId, removeKey, setKey } from "@/lib/feetKeys";
-import { localFile, listLocal, localVideo, readLocal, tracksParts, writeLocal } from "@/lib/local";
+import { localFile, listLocal, localVideo, localVideoProxy, readLocal, tracksParts, writeLocal } from "@/lib/local";
 import { parseHms } from "@/lib/segments";
 import { SMOOTH_DEFAULTS, smoothTrack, type SmoothOptions, type SmoothReport, type TrackPoint } from "@/lib/smooth";
 import { getPref, mutate, setPref, uid, useHydrated, usePref, useStore } from "@/lib/store";
@@ -59,6 +60,9 @@ import {
   separateRun,
   withoutReferees,
   setBall,
+  setBallState,
+  removeBallState,
+  toggleAerial,
   setPerson,
   setRemoved,
   setRemovedMany,
@@ -73,7 +77,9 @@ import {
 import { type MatchEvent, type RivalPlayer, type TrackEdits } from "@/lib/types";
 import { autoEvents, pending as pendingAuto, reviewedStretches, AUTO, type Suggestion as AutoSuggestion } from "@/lib/autoEvents";
 import type { FixedFile } from "@/lib/positions";
-import { matchVideos } from "@/lib/videos";
+import { matchVideos, periodAt } from "@/lib/videos";
+import { ballRequestOf } from "@/lib/techTracking";
+import { useTrackingTech } from "@/lib/useTech";
 import { AutoSuggestions } from "@/components/workspace/AutoSuggestions";
 import { AnchorsPanel, RunControl, type BoxPick } from "@/components/workspace/AnchorsPanel";
 import { Notice } from "@/components/workspace/Notice";
@@ -188,6 +194,9 @@ export function Correction({
   const overlayRef = useRef<SVGSVGElement>(null);
 
   const [fileUrl, setFileUrl] = useState<string | null>(null);
+  // Work on the light copy of the video when the folder has one (pref «correction:proxy», on by default).
+  const lightVideo = usePref("correction:proxy", "on") === "on";
+  const [hasProxy, setHasProxy] = useState(false);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [time, setTime] = useState(0);
   const [rate, setRate] = useState(1);
@@ -379,7 +388,8 @@ export function Correction({
   const colors = state.jerseys[mid] || NO_COLORS;
   const writeEdits = (next: TrackEdits) => mutate((s) => ({ ...s, trackEdits: [...s.trackEdits.filter((e) => e.key !== next.key), next] }));
   const hKey = key;
-  const partSaved = useSaveLog(mid)[partId(key)];
+  const saveLog = useSaveLog(mid);
+  const partSaved = saveLog[partId(key)];
   // The mode of each part is remembered (the last used; Anclas the first time).
   const modePref = usePref(`correction:mode:${key}`, "anchors");
   const [prevKey, setPrevKey] = useState(key);
@@ -594,13 +604,19 @@ export function Correction({
   useEffect(() => {
     if (!embedded || !folder || fileUrl) return;
     let live = true;
-    void localVideo(folder, video).then((url) => {
-      if (live && url) setFileUrl(url);
-    });
+    // The light copy (video/<id>_proxy.mp4) when there is one and it is not turned off: it seeks several times faster.
+    void localVideoProxy(folder, video)
+      .then((p) => {
+        if (live) setHasProxy(!!p);
+        return (lightVideo && p) || localVideo(folder, video);
+      })
+      .then((url) => {
+        if (live && url) setFileUrl(url);
+      });
     return () => {
       live = false;
     };
-  }, [embedded, folder, video, fileUrl]);
+  }, [embedded, folder, video, fileUrl, lightVideo]);
 
   const onVideo = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -737,7 +753,14 @@ export function Correction({
   const eventMatch = usePref(`ballMatch:${mid}`, "");
   const attack = usePref(`attack:${mid}:${data?.video_id ?? "v1"}`, "");
   const eventsMatchId = eventMatch || matchAppId || (state.matches.find((m) => m.match_id === mid)?.match_id ?? "");
+  // Parts of this folder with corrections not yet saved (the picker flags them; saving one never hides the others).
+  const unsavedParts = useMemo(
+    () => dirtyPartKeys(state.trackEdits, mid, state.events.filter((e) => e.match_id === eventsMatchId), (v) => getPref(`attack:${mid}:${v}`, ""), saveLog),
+    [state.trackEdits, state.events, mid, eventsMatchId, saveLog],
+  );
   const matchEvents = useMemo(() => state.events.filter((e) => e.match_id === eventsMatchId), [state.events, eventsMatchId]);
+  // Detalles técnicos of the match of this folder (g key step, green gaps, ball confidence and jump).
+  const { match: techMatch, params: tech } = useTrackingTech(folder, matchAppId || eventsMatchId);
   // The ball tracker's work on this part (python -m sportsan.tracking.ball run), if it ran: its sure frames and where
   // it asks for a hand mark.
   const [ballAuto, setBallAuto] = useState<BallAuto | null>(null);
@@ -761,10 +784,10 @@ export function Correction({
     };
   }, [autoKey, ballAutoRuns]);
   const ballKnown = useMemo(
-    () => (data ? [...(attack ? eventBall(data, matchEvents, attack === "right") : []), ...autoBall(data, ballAuto, edits), ...manualBall(data, edits)] : []),
-    [data, edits, matchEvents, attack, ballAuto],
+    () => (data ? [...(attack ? eventBall(data, matchEvents, attack === "right") : []), ...autoBall(data, ballAuto, edits, true, tech.ballJumpMs), ...manualBall(data, edits)] : []),
+    [data, edits, matchEvents, attack, ballAuto, tech],
   );
-  const ball = useMemo(() => (data ? ballPath(ballKnown, data.fps, data.stride, BALL_FILL_S, edits.ballLinks ?? []) : []), [data, ballKnown, edits.ballLinks]);
+  const ball = useMemo(() => (data ? ballPath(ballKnown, data.fps, data.stride, BALL_FILL_S, edits.ballLinks ?? [], ballStateRanges(edits)) : []), [data, ballKnown, edits]);
   // A line by hand: the mark where the ball leaves, waiting for the click where it lands.
   const [ballLinkFrom, setBallLinkFrom] = useState<number | null>(null);
   // Frames where the ball comes from a tagged event or from the ball tracker: they count for the part as the hand marks do.
@@ -815,6 +838,7 @@ export function Correction({
   const removeBallHere = () => {
     if (pf === null) return;
     if ((edits.ball ?? []).some((b) => b.frame === pf)) return setEdits(removeBall(edits, pf));
+    if ((edits.ballStates ?? []).some((b) => b.frame === pf)) return setEdits(removeBallState(edits, pf));
     if (autoHere) setEdits({ ...edits, ballRejected: [...new Set([...(edits.ballRejected ?? []), pf])] });
   };
 
@@ -881,6 +905,30 @@ export function Correction({
     if (r.note) setMsg(r.note);
     bGo(bIdx + 1);
   };
+  // The three states of the ball (docs/pautas_marcado_balon.md): visible (a mark), u «no se ve», o «fuera». A state lasts
+  // until the next mark of any kind. Everything goes through setEdits, so Ctrl + Z undoes it.
+  const stateRanges = useMemo(() => ballStateRanges(edits), [edits]);
+  const stateHere: BallStateName = pf === null ? "visible" : ballStateAtFrame(stateRanges, pf);
+  const markBallState = (state: "hidden" | "out") => {
+    if (pf === null) return;
+    videoRef.current?.pause();
+    const marked = setBallState(edits, pf, state);
+    setMsg(state === "out" ? `Balón fuera desde ${fmtT(pf / fps)}: detenido, sin posesión, hasta tu próxima marca visible. Ctrl + Z lo deshace.` : `Balón en juego pero no se ve desde ${fmtT(pf / fps)}: se interpola, sin contacto medido, hasta tu próxima marca. Ctrl + Z lo deshace.`);
+    if (view === "ball" && bSamples.includes(pf)) {
+      const r = finishIfComplete({ ...marked, ballReview: { every: bEvery, seen: [...new Set([...bSeen, pf])] } });
+      setEdits(r.edits);
+      return bGo(bIdx + 1);
+    }
+    setEdits(marked);
+  };
+  // y: the mark of this frame is the shadow (ground projection) of a ball in the air.
+  const toggleAerialHere = () => {
+    if (pf === null) return;
+    const next = toggleAerial(edits, pf);
+    if (!next) return setMsg("Marca primero la proyección del balón en el suelo en este cuadro; luego y la marca como balón aéreo.");
+    setEdits(next);
+    setMsg((edits.ball ?? []).find((b) => b.frame === pf)?.aerial ? "Marca normal: el balón va por el suelo." : "Marca de balón aéreo: es la sombra en el suelo, nadie lo toca ahí.");
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "L" || !e.shiftKey || isTyping(e.target) || e.ctrlKey || e.metaKey) return;
@@ -905,6 +953,9 @@ export function Correction({
       else if (e.key === "n") nextMissingBall();
       else if (e.key === "i") startBallLine();
       else if (e.key === "k") holdHere();
+      else if (e.key === "u" && !e.altKey) markBallState("hidden");
+      else if (e.key === "o" && !e.altKey) markBallState("out");
+      else if (e.key === "y" && !e.altKey) toggleAerialHere();
       else if (e.key === "a" && !e.altKey) nextBallAnomaly();
       else if ((e.key === "q" || e.code === "KeyQ") && e.altKey) removePrevBall();
       else if ((e.key === "Backspace" || e.key === "Delete") && pf !== null) removeBallHere();
@@ -1693,7 +1744,7 @@ export function Correction({
   const nextGap = () => {
     const gaps = selGaps;
     if (gaps.length === 0) return;
-    const sec = Math.round(fps);
+    const sec = Math.max(1, Math.round(fps * tech.gStepS));
     const inside = gaps.find(([a, b]) => frame >= a && frame < b - stride);
     if (inside && frame + sec < inside[1]) return seekFrame(frame + sec);
     const next = gaps.find(([a]) => a > frame + stride && (!inside || a >= inside[1])) ?? gaps[0];
@@ -1818,7 +1869,7 @@ export function Correction({
     if (!data) return;
     resetSaveAsk();
     const r = await savePart(
-      { folder: mid, file: data, edits, hash: partHash(edits, matchEvents, attack), colors, smooth: smoothOn ? smoothCfg : null, showRefs, events: matchEvents, attack, ballAuto },
+      { folder: mid, file: data, edits, hash: partHash(edits, matchEvents, attack), colors, smooth: smoothOn ? smoothCfg : null, showRefs, events: matchEvents, attack, ballAuto, ballJumpMs: tech.ballJumpMs },
       saveAsk,
     );
     setSave(
@@ -2308,7 +2359,7 @@ export function Correction({
       applied = r.edits;
       note = `Revisión rápida agregada: ${r.moved} tramo(s) pasaron a su jugadora${r.kept ? `; ${r.kept} de jugadoras verificadas se dejaron como estaban` : ""}`;
     } else {
-      applied = { ...applyQuick(data, qBase, qModel), quick: edits.quick, ballReview: edits.ballReview, ball: edits.ball, ballLinks: edits.ballLinks };
+      applied = { ...applyQuick(data, qBase, qModel), quick: edits.quick, ballReview: edits.ballReview, ball: edits.ball, ballLinks: edits.ballLinks, ballStates: edits.ballStates };
       // Players already checked in the table keep their tick (by name) when the review is applied again.
       const names = new Set(Object.values(edits.people).flatMap((m) => (m.done && m.player_id ? [m.player_id] : [])));
       for (const [id, m] of Object.entries(applied.people)) if (m.player_id && names.has(m.player_id)) applied = setPerson(applied, Number(id), { done: true });
@@ -2409,13 +2460,13 @@ export function Correction({
     if (!m) return setMsg("Elige el partido de los eventos en el engrane del balón.");
     const vids = matchVideos(m);
     const vi = vids.findIndex((v) => v.video_id === data.video_id);
-    const period = vids[vi]?.period ?? (vi <= 0 ? 1 : 2);
+    const periodOfT = (t: number) => (vids[vi] ? periodAt(vids[vi], vi, t) : vi <= 0 ? 1 : 2);
     const evs: MatchEvent[] = opt.events.map((e) => ({
       event_id: uid("e"),
       match_id: m.match_id,
       video_id: data.video_id,
       t_video: Math.round((e.frame / data.fps) * 10) / 10,
-      period,
+      period: periodOfT(e.frame / data.fps),
       type: e.type,
       team: e.team,
       player_id: e.player_id ?? null,
@@ -2447,7 +2498,9 @@ export function Correction({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
-  const autoPanel = (
+  // The panels below are only built for the view that shows them (building every one on every render made each render of
+  // the table cost three times what the visible view needs).
+  const autoPanel = view !== "ball" ? null : (
     <AutoSuggestions list={autoList} active={autoActive} frame={frame} fps={fps} blocked={autoBlocked} onSeek={seekFrame} onAccept={acceptAuto} onReject={rejectAuto} />
   );
 
@@ -2526,7 +2579,7 @@ export function Correction({
       ))}
     </span>
   );
-  const ballBar = (
+  const ballBar = view !== "ball" ? null : (
     <div className="rounded-2xl bg-surface/70 p-3 text-xs text-muted">
       <div className="flex items-center gap-2">
         <span className="tc min-w-[4.5rem] whitespace-nowrap text-ink-2">
@@ -2536,9 +2589,28 @@ export function Correction({
           <span className="absolute inset-y-0 left-0 rounded-full bg-accent/60" style={{ width: `${100 * ballShare}%` }} />
         </div>
         <span className="tc min-w-[2.75rem] text-right text-ink-2">{Math.round(100 * ballShare)} %</span>
-        <button type="button" className={btn} onClick={bNotSeen} title="El balón no se ve o está fuera de juego: siguiente muestra (no cuenta como faltante)">
-          <EyeSlash size={15} /> <kbd className="kbd">Enter</kbd>
+        <button type="button" className={btn} onClick={bNotSeen} title="Pasar esta muestra sin decir nada del balón: siguiente muestra (no cuenta como faltante). Para decir qué pasa, usa «No se ve» o «Fuera»">
+          <ArrowRight size={15} /> <kbd className="kbd">Enter</kbd>
         </button>
+        <button type="button" className={`${btn} ${stateHere === "hidden" ? "!border-warn text-warn" : ""}`} onClick={() => markBallState("hidden")} title="No se ve: el balón sigue en juego pero está fuera de cuadro o tapado. Se interpola entre tus marcas, sin contacto medido, hasta la siguiente marca (u)">
+          <EyeSlash size={15} /> No se ve <kbd className="kbd">u</kbd>
+        </button>
+        <button type="button" className={`${btn} ${stateHere === "out" ? "!border-warn text-warn" : ""}`} onClick={() => markBallState("out")} title="Fuera: el balón salió de la cancha y el juego está detenido. Queda quieto y sin dueño (sin posesión) hasta tu siguiente marca visible, que debe ser el punto exacto de la reanudación (o)">
+          <SignOut size={15} /> Fuera <kbd className="kbd">o</kbd>
+        </button>
+        <IconButton
+          label={ballMarkHere?.aerial ? "Quitar la bandera de balón aéreo de esta marca (y)" : "Marca de este cuadro = sombra en el suelo de un balón en el aire (y): nadie lo toca ahí"}
+          tone={ballMarkHere?.aerial ? "accent" : "default"}
+          disabled={!ballMarkHere}
+          onClick={toggleAerialHere}
+        >
+          <ArrowUp size={15} weight={ballMarkHere?.aerial ? "bold" : "regular"} />
+        </IconButton>
+        {stateHere !== "visible" && (
+          <span className="tag tag-warn" title="Estado del balón en este cuadro, según tus marcas">
+            {stateHere === "out" ? "Balón fuera (detenido)" : "Balón no se ve"}
+          </span>
+        )}
         <IconButton
           label={ballLinkFrom !== null ? "Recta en curso: clic donde cae (i para cancelar)" : "Recta a mano (i): desde la última marca hasta donde cae, para pases largos o balones por alto"}
           tone={ballLinkFrom !== null ? "accent" : "default"}
@@ -2548,9 +2620,9 @@ export function Correction({
         </IconButton>
         {/* Always in its place (disabled without a mark here), so the bar beside it does not move. */}
         <IconButton
-          label={ballMarkHere ? "Quitar la marca de este cuadro (Supr)" : autoHere ? "Quitar el balón del tracker en este cuadro (Supr): estaba mal" : "Sin marca en este cuadro"}
+          label={ballMarkHere ? "Quitar la marca de este cuadro (Supr)" : (edits.ballStates ?? []).some((b) => b.frame === pf) ? "Quitar el estado «no se ve» / «fuera» de este cuadro (Supr)" : autoHere ? "Quitar el balón del tracker en este cuadro (Supr): estaba mal" : "Sin marca en este cuadro"}
           tone="danger"
-          disabled={(!ballMarkHere && !autoHere) || pf === null}
+          disabled={(!ballMarkHere && !autoHere && !(edits.ballStates ?? []).some((b) => b.frame === pf)) || pf === null}
           onClick={removeBallHere}
         >
           <Eraser size={15} />
@@ -2582,7 +2654,7 @@ export function Correction({
         )}
         <span
           className="inline-flex cursor-help items-center text-faint"
-          title={"Clic en el balón (o en la cancha) marca\n→ paso · Alt → cuadro · Tab dos pasos\nEnter no se ve / fuera · n donde falta\ni recta hasta donde cae · k mantener quieto\na salto imposible · Supr quitar · Alt+Q quitar la marca anterior · h marcas · z zoom\ns acepta la sugerencia · x la descarta"}
+          title={"Clic en el balón (o en la cancha) marca\n→ paso · Alt → cuadro · Tab dos pasos\nEnter pasar la muestra · u no se ve · o fuera\ny marca aérea (sombra) · n donde falta\ni recta hasta donde cae · k mantener quieto\nUn estado dura hasta tu siguiente marca · Ctrl + Z deshace\na salto imposible · Supr quitar · Alt+Q quitar la marca anterior · h marcas · z zoom\ns acepta la sugerencia · x la descarta"}
           aria-label="Atajos de teclado"
         >
           <Keyboard size={16} />
@@ -2603,7 +2675,7 @@ export function Correction({
             task="ball"
             label="Detectar balón automáticamente"
             icon={<SoccerBall size={14} />}
-            extra={{ force: ballAuto !== null }}
+            extra={{ force: ballAuto !== null, ...ballRequestOf(techMatch) }}
             warn={() => (ballAuto ? "Ya hay balón detectado en esta parte (ball_auto). Se vuelve a detectar y se reemplaza ese archivo; tus marcas a mano no se tocan. Tarda varios minutos." : null)}
             onDone={() => setBallAutoRuns((n) => n + 1)}
           />
@@ -2839,7 +2911,7 @@ export function Correction({
   );
 
 
-  const quickOverlay = qf === null ? null : (
+  const quickOverlay = qf === null || view !== "quick" ? null : (
     <g>
       {qBoxes.map((b) => {
         const lab = qLabelAt(b[0]);
@@ -2939,7 +3011,7 @@ export function Correction({
     ["Tab", "siguiente jugadora sin hacer"],
     ["Mayús + Enter", "hecha y siguiente"],
   ];
-  const quickPlayerPanel = (
+  const quickPlayerPanel = view !== "quick" ? null : (
     <section className="rounded-lg bg-surface p-3">
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <h2 className="cond text-sm font-bold tracking-wide text-ink uppercase">Revisión rápida</h2>
@@ -3080,7 +3152,7 @@ export function Correction({
     ["A / S", "plantilla nuestra / rival"],
     ["← →", "muestra anterior / siguiente sin confirmar"],
   ];
-  const quickSamplesPanel = (
+  const quickSamplesPanel = view !== "quick" ? null : (
     <section className="rounded-lg bg-surface p-3">
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <h2 className="cond text-sm font-bold tracking-wide text-ink uppercase">Revisión rápida</h2>
@@ -3144,7 +3216,7 @@ export function Correction({
   // The squad as shirt numbers, ours or theirs (A / S). By player: a click picks who is followed (the current one
   // filled, done ones tinted with a tick, started ones with a dot). By samples: a click names the yellow box. Rivals are
   // added here with their dorsal and, if known, their name.
-  const squadPanel = (
+  const squadPanel = view !== "quick" ? null : (
     <section className="rounded-lg bg-surface p-3">
       <div className="mb-2.5 flex flex-wrap items-center gap-2">
         <div className="seg" role="group" aria-label="Plantilla">
@@ -3216,7 +3288,7 @@ export function Correction({
   // In the side column the pitch is as large as the window leaves after the other modules there (no page scroll).
   const sideAvail = fitH ? fitH - 16 - (bottomBox.h + 24) : 0;
   const pitchMaxW = fitH && sideBox.h > 0 && pitchBox.h > 0 && !belowSet.has("pitch") ? Math.max(200, Math.floor((sideAvail - (sideBox.h - pitchBox.h)) * (109 / 72))) : null;
-  const pitchCard = (
+  const pitchCard = view === "quick" || view === "anchors" ? null : (
             <Card
               title={<span title="Anillo amarillo: marcada a mano · borde naranja: balón (hueco si es una posición rellenada) · de la seleccionada, 4 s antes y después: gris lo medido, blanco lo que se guardará">En la cancha</span>}
               note="este cuadro"
@@ -3291,7 +3363,7 @@ export function Correction({
             </Card>
   );
   // The panel of the selected player (or the ones to check), with the pinned one under it.
-  const personModule = (
+  const personModule = view === "quick" || view === "anchors" || view === "ball" ? null : (
     <div className="space-y-3">
                 {blocked && (
                   <div role="alert" className="enter mb-3 rounded-2xl bg-warn-900/70 px-3 py-2.5 text-xs text-warn">
@@ -3626,6 +3698,11 @@ export function Correction({
             const mark = st?.complete ? " ✓ completa" : st && (st.quick > 0 || st.players > 0 || st.ball > 0) ? ` · verificadas ${st.players} · balón ${Math.round(st.ball * 100)} %` : "";
             return `${partLabel(n, data?.fps ?? 29.97)}${mark}`;
           }}
+          warn={(n) => {
+            const m = n.match(/^tracks_(v\d+)_(\d+)_(\d+)\.json$/);
+            return m && unsavedParts.has(`${mid}|${m[1]}|${m[2]}_${m[3]}`) ? "Cambios sin guardar en esta parte" : null;
+          }}
+          flag={unsavedParts.size ? `${unsavedParts.size} ${unsavedParts.size === 1 ? "parte tiene" : "partes tienen"} cambios sin guardar` : null}
           onFile={(f) => {
             setOpening(partLabel(f.name, data?.fps ?? 29.97));
             void onTracks(asEvent([f]));
@@ -3700,7 +3777,7 @@ export function Correction({
                   save.state === "saved" || save.state === "downloaded" ? "!border-ok !bg-ok" : save.state === "error" ? "!border-danger !bg-danger" : ""
                 }`}
                 aria-live="polite"
-                title={[save.note || "Guarda esta parte en la carpeta del partido: lo corregido y el balón (tracks_fixed) y las etiquetas (labels). «Guardar todo» (Ctrl+S) guarda todas las partes.", partSaved ? `Último guardado de esta parte: ${new Date(partSaved.at).toLocaleString("es-MX")}${partSaved.hash === partHash(edits, matchEvents, attack) ? "" : " (hay cambios después)"}` : "Esta parte nunca se guardó desde este navegador."].join(" · ")}
+                title={[save.note || "Guarda esta parte en la carpeta del partido: lo corregido y el balón (tracks_fixed) y las etiquetas (labels). Ctrl+S guarda todas las partes con cambios.", partSaved ? `Último guardado de esta parte: ${new Date(partSaved.at).toLocaleString("es-MX")}${partSaved.hash === partHash(edits, matchEvents, attack) ? "" : " (hay cambios después)"}` : "Esta parte nunca se guardó desde este navegador."].join(" · ")}
                 disabled={save.state === "saving"}
                 onClick={saveNow}
               >
@@ -3716,6 +3793,14 @@ export function Correction({
                 </span>
                 {partSaved && save.state === "idle" && <span className="tc text-[10px] opacity-70">{hhmm(partSaved.at)}</span>}
               </button>
+              <span
+                data-part-save={unsavedParts.has(key) ? "dirty" : "saved"}
+                className={`flex items-center gap-1 text-xs whitespace-nowrap ${unsavedParts.has(key) ? "text-warn" : "text-faint"}`}
+                aria-live="polite"
+              >
+                {unsavedParts.has(key) ? <WarningCircle size={14} aria-hidden /> : <Check size={14} className="text-ok" aria-hidden />}
+                {unsavedParts.has(key) ? "Cambios sin guardar" : partSaved ? `Guardado ${hhmm(partSaved.at)}` : "Sin cambios"}
+              </span>
               {saveAskDialog}
               <Dropdown
                 label="Más acciones"
@@ -3849,7 +3934,7 @@ export function Correction({
               type="button"
               className={`${btn} w-full !justify-start`}
               onClick={() => {
-                setEdits({ ...emptyEdits(key), quick: edits.quick, ball: edits.ball, ballReview: edits.ballReview });
+                setEdits({ ...emptyEdits(key), quick: edits.quick, ball: edits.ball, ballStates: edits.ballStates, ballReview: edits.ballReview });
                 setSel(null);
                 setMode(null);
                 setModal(null);
@@ -3893,6 +3978,8 @@ export function Correction({
           </button>
         </div>
       )}
+
+      {embedded && folder && !fileUrl && <VideoMissingNotice folder={folder} video={video} quiet />}
 
       {embedded && folder && !data && listing ? (
         <LoadingStage label="Buscando las partes procesadas" />
@@ -3995,7 +4082,11 @@ export function Correction({
                     onPlay={() => setPlaying(true)}
                     onPause={() => setPlaying(false)}
                     onLoadedMetadata={(e) => {
-                      setDims({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight });
+                      // The boxes are in pixels of the original: a lighter copy (720p) of the same shape draws on the original's grid.
+                      const vw = e.currentTarget.videoWidth;
+                      const vh = e.currentTarget.videoHeight;
+                      const sameShape = !!data.image_w && !!data.image_h && Math.abs(data.image_w / data.image_h - vw / vh) < 0.01;
+                      setDims(sameShape ? { w: data.image_w, h: data.image_h } : { w: vw, h: vh });
                       e.currentTarget.currentTime = (data.start_frame + 0.5) / fps;
                     }}
                   />
@@ -4269,6 +4360,20 @@ export function Correction({
                     {fmtT(time)} · cuadro {frame}
                   </span>
                   {!inRange && <span className="tag tag-warn">fuera de la parte cargada</span>}
+                  {hasProxy && (
+                    <button
+                      type="button"
+                      className="tag tag-outline cursor-pointer hover:text-ink"
+                      title={lightVideo ? "Trabajas con la copia ligera (720p, salta de un cuadro a otro mucho más rápido). Clic: usar el video original" : "Trabajas con el video original (1080p). Clic: usar la copia ligera"}
+                      onClick={() => {
+                        setPref("correction:proxy", lightVideo ? "off" : "on");
+                        setFileUrl(null);
+                        setDims(null);
+                      }}
+                    >
+                      {lightVideo ? "Video ligero" : "Video original"}
+                    </button>
+                  )}
                   <form
                     className="flex items-center gap-1.5"
                     onSubmit={(e) => {
@@ -4616,6 +4721,7 @@ export function Correction({
                     manual={edits.manual.filter((m) => m.identity === selected.id).map((m) => m.frame)}
                     open={selGaps}
                     offCamera={selOffCamera}
+                    greenRange={[tech.greenMinS, tech.greenMaxS]}
                     anomalies={selAnoms.map((a) => ({ frame: a.frame, until: a.until, current: anomOn && anomAt?.frame === a.frame }))}
                     onAnomaly={(f) => {
                       const a = selAnoms.find((x) => x.frame === f);

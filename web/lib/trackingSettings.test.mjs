@@ -39,3 +39,17 @@ test("the verdict of a short test", () => {
   assert.equal(testVerdict({ ...base, on_pitch_median: 13 }).tone, "warn");
   assert.equal(testVerdict({ ...base, calibrated_share: 0.3 }).tone, "bad");
 });
+
+import { DEFAULT_POST, postLine, readPost, writePost } from "./trackingSettings.ts";
+
+test("postprocess: defaults when there is no line, round trip when there is", () => {
+  assert.deepEqual(readPost(null), DEFAULT_POST);
+  assert.deepEqual(readPost(YAML), DEFAULT_POST);
+  const out = writePost(YAML, { feet: false, smoothH: true, smoothWindowS: 1.2 });
+  assert.match(out, /^postprocess: \{feet: false, smooth_h: true, smooth_window_s: 1.2\}$/m);
+  assert.match(out, /^# Cámara amplia$/m);
+  assert.deepEqual(readPost(out), { feet: false, smoothH: true, smoothWindowS: 1.2 });
+  assert.equal(writePost(out, DEFAULT_POST).match(/^postprocess:/gm).length, 1);
+  assert.equal(readPost("postprocess: {smooth_window_s: 99}").smoothWindowS, 0.7);
+  assert.equal(postLine(DEFAULT_POST), "postprocess: {feet: true, smooth_h: true, smooth_window_s: 0.7}");
+});

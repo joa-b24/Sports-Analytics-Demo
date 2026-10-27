@@ -12,6 +12,7 @@
 //
 // In a "rival" match the `own` team of the data is the team being studied (focus_team), not ours: the report always
 // speaks of "equipo analizado" and "contrario".
+import { isMeasuredSource } from "./smooth.ts";
 import {
   SHOT_WINDOW_S,
   boxEntries,
@@ -34,6 +35,7 @@ import type { ClipEdit } from "./annotations.ts";
 import { fmtT, youtubeLink } from "./format.ts";
 import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
 import { possessionParamsOf, techSummary } from "./tech.ts";
+import { trackingParamsOf } from "./techTracking.ts";
 import { autoWarning, possessionCellsOf, possessionIntervals, summarizePossession, type PossessionResult, type PossessionSummary } from "./possession.ts";
 import type { Segment } from "./segments.ts";
 import { LANES_5, THIRDS_3, countByType, laneThirdOf, zoneGrid5x3 } from "./stats.ts";
@@ -157,7 +159,7 @@ export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, 
     const own = new Set(o.file.people.filter((p) => p.team === "own").map((p) => p.id));
     for (const fr of o.file.frames)
       for (const q of fr.positions) {
-        if (q.source === "interpolated" || !own.has(q.id)) continue;
+        if (!isMeasuredSource(q.source) || !own.has(q.id)) continue;
         ownSeen++;
         if (named.has(q.id)) ownNamed++;
       }
@@ -547,7 +549,7 @@ export function buildReport(input: ReportInput): ReportData {
   const side = (e: MatchEvent) => e.team as Side;
 
   // Possession as intervals (lib/possession.ts): one reading for the coverage, the possession and its warnings.
-  const poss = possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match));
+  const poss = possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match), undefined, trackingParamsOf(match).ballJumpMs);
   const level = dataLevel(raw, segmentsByVideo, parts, poss);
   const br = level.sources.ball ? ballReport(parts, segmentsByVideo, raw, possessionCellsOf(poss.samples)) : null;
   const possSummary = br ? summarizePossession(poss.samples) : null;

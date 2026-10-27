@@ -41,6 +41,25 @@ TRACKS_SCHEMA_VERSION = 3
 # jugadoras a la vez, más en la banda lejana. Se suaviza la proyección de 6 puntos fijos (mediana + Savitzky-Golay,
 # ~0.7 s) sin cruzar cortes de calibración. Medido en tracking/revision/refine.md. False: H tal cual por cuadro.
 SMOOTH_H = True
+
+
+def post_settings(cfg: dict | None) -> dict:
+    """Posprocesado de `postprocess` en match.yaml ({feet, smooth_h, smooth_window_s}, lo escribe la app): pies corregidos,
+    calibración suavizada y su ventana en segundos. Lo que falta o no es válido queda en el comportamiento de siempre
+    (FEET_CORRECTION, SMOOTH_H, refine.WINDOW_S); la ventana válida va de 0.2 a 3 s."""
+    from .refine import WINDOW_S
+
+    raw = (cfg or {}).get("postprocess")
+    raw = raw if isinstance(raw, dict) else {}
+    win = raw.get("smooth_window_s")
+    ok_win = isinstance(win, (int, float)) and not isinstance(win, bool) and 0.2 <= win <= 3
+    return {
+        "feet": raw["feet"] if isinstance(raw.get("feet"), bool) else FEET_CORRECTION,
+        "smooth_h": raw["smooth_h"] if isinstance(raw.get("smooth_h"), bool) else SMOOTH_H,
+        "window_s": float(win) if ok_win else WINDOW_S,
+    }
+
+
 TEAM_CODES = ("unk", "own", "opp", "ref")
 # Una caja a menos de estos píxeles del borde de la imagen está saliendo o entrando del encuadre.
 EDGE_PX = 10
@@ -165,7 +184,7 @@ BAND_BOTTOM_PX = 20
 BAND_MARGIN_M = 3.0
 
 
-def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h: int) -> tuple[int, int] | None:
+def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h: int, margin_m: float = BAND_MARGIN_M) -> tuple[int, int] | None:
     """(y0, y1) en píxeles donde cae la cancha (con BAND_MARGIN_M alrededor) según la calibración H (píxel -> metros).
     None si no hay calibración o si la cancha no cae en la imagen."""
     if H is None:
@@ -174,7 +193,7 @@ def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h:
         inv = np.linalg.inv(np.asarray(H, dtype=float).reshape(3, 3))
     except np.linalg.LinAlgError:
         return None
-    m = BAND_MARGIN_M
+    m = margin_m
     # Las cuatro esquinas y puntos de las bandas: una banda curvada por la perspectiva queda bien cubierta.
     pts = [(x, y) for x in np.linspace(-m, length_m + m, 9) for y in (-m, width_m + m)]
     ys = []
@@ -190,7 +209,7 @@ def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h:
     return (y0, y1) if y1 - y0 > 40 else None
 
 
-def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: float, tracker: str, progress=None, tiles: int = 1, band: tuple[int, int] | str | None = None, mask_rects: list | None = None):
+def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: float, tracker: str, progress=None, tiles: int = 1, band: tuple[int, int] | str | None = None, mask_rects: list | None = None, band_margin_m: float = BAND_MARGIN_M):
     """Una pasada por la parte: movimiento de cámara, detección y seguimiento, y ubicación con la biblioteca cada `every` cuadros procesados."""
     import cv2
 
@@ -231,7 +250,7 @@ def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: floa
                 hint = loc.ref
                 if auto_band:
                     venue = lib.meta.get("venue") or {}
-                    ft.band = pitch_band(loc.H, float(venue.get("length_m", PITCH_LENGTH_M)), float(venue.get("width_m", PITCH_WIDTH_M)), w, h)
+                    ft.band = pitch_band(loc.H, float(venue.get("length_m", PITCH_LENGTH_M)), float(venue.get("width_m", PITCH_WIDTH_M)), w, h, band_margin_m)
         row: list[dict] = []
         for tid, x1, y1, x2, y2, c in ft.step(img):
             if in_mask(rects, (x1 + x2) / 2, (y1 + y2) / 2):
@@ -309,8 +328,10 @@ def propose_identities(frames: list[int], rows: list[list[dict]], meters: list[n
             "team_conf": {t: c for t, (_, c) in votes.items()}, "absorbed": absorbed, "duplicates": duplicates}
 
 
-def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray], fps: float, max_error_m: float) -> dict:
-    """Calibra la parte, pasa las cajas a la cancha, une fragmentos, asigna equipos y resume la calidad."""
+def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray], fps: float, max_error_m: float, post: dict | None = None) -> dict:
+    """Calibra la parte, pasa las cajas a la cancha, une fragmentos, asigna equipos y resume la calidad.
+    post: lo que devuelve post_settings (sin él, los de siempre)."""
+    post = post or post_settings(None)
     stride_s = (frames[1] - frames[0]) / fps if len(frames) > 1 else 1 / fps
     w, h = lib.meta["image_w"], lib.meta["image_h"]
     venue = lib.meta.get("venue") or {}
@@ -322,15 +343,15 @@ def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray
     positions: list[np.ndarray] = []
     insides: list[np.ndarray] = []
     # Feet: the bottom of the box, or under the head where that bottom is not reliable (feet.py, FEET_CORRECTION).
-    if FEET_CORRECTION:
+    if post["feet"]:
         feet_rows, _ = correct_rows(frames, rows, fps)
     else:
         feet_rows = [np.array([[(r["box"][0] + r["box"][2]) / 2, r["box"][3]] for r in row], dtype=float).reshape(-1, 2) for row in rows]
     # Calibration smoothed in time (refine.py, SMOOTH_H): the H of each frame is cut by cut, not filtered across a cut.
-    if SMOOTH_H and len(frames) >= 2:
+    if post["smooth_h"] and len(frames) >= 2:
         from .refine import image_points, smooth_homographies
 
-        Hs, _ = smooth_homographies(Hs, np.asarray(frames, dtype=float) / fps, image_points(feet_rows, w, h))
+        Hs, _ = smooth_homographies(Hs, np.asarray(frames, dtype=float) / fps, image_points(feet_rows, w, h), post["window_s"])
     for H, row, feet in zip(Hs, rows, feet_rows):
         m = to_meters(H, feet)
         xy = m * np.array([PITCH_LENGTH_M / length, PITCH_WIDTH_M / width])
@@ -388,7 +409,7 @@ def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray
         "teams": {t: sum(1 for i in identities if teams.get(i) == t) for t in TEAM_CODES},
     })
     track_labs = [np.median(np.array([b[6:9] for line in out_rows for b in line if b[0] == t]), axis=0) for t in inside_tracks]
-    return {"boxes": out_rows, "quality": quality, "colors": dominant_colors(np.array(track_labs)) if track_labs else [], "H": Hs}
+    return {"boxes": out_rows, "quality": quality, "colors": dominant_colors(np.array(track_labs)) if track_labs else [], "H": Hs, "post": post}
 
 
 def tracking_table(meta: dict, chunk: Chunk, frames: list[int], boxes: list[list[list]]):
@@ -419,6 +440,7 @@ def tracking_table(meta: dict, chunk: Chunk, frames: list[int], boxes: list[list
 
 def write_outputs(out_dir: Path, meta: dict, chunk: Chunk, stride: int, frames: list[int], result: dict) -> Path:
     path = out_dir / f"tracks_{meta['video_id']}_{chunk.name}.json"
+    post = result.get("post") or post_settings(None)
     data = {
         "schema_version": TRACKS_SCHEMA_VERSION,
         "kind": "tracks_px",
@@ -434,12 +456,12 @@ def write_outputs(out_dir: Path, meta: dict, chunk: Chunk, stride: int, frames: 
         ],
         "quality": result["quality"],
         # Lo que ya trae la parte (refine no lo repite).
-        "refined": {"feet": FEET_CORRECTION, "smooth_h": SMOOTH_H},
+        "refined": {"feet": post["feet"], "smooth_h": post["smooth_h"], "window_s": post["window_s"]},
     }
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     tmp.replace(path)
-    if FEET_CORRECTION:
+    if post["feet"]:
         # Which boxes had their feet corrected (the app draws a line there): tracks_<part>.feet.json.
         from .refine import feet_marks_path, write_feet_marks
 
@@ -495,6 +517,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--model", help="modelo (carpeta OpenVINO o .pt); por defecto, `detector.model` de match.yaml o el de siempre")
     ap.add_argument("--tiles", type=int, help="trozos a lo ancho para detectar (cámara amplia); por defecto, `detector.tiles` de match.yaml o 1")
     ap.add_argument("--band", help="franja de la cancha en la imagen: «auto» (desde la calibración) o «y0,y1» en píxeles; por defecto, `detector.band` de match.yaml o todo el alto")
+    ap.add_argument("--band-margin", type=float, default=BAND_MARGIN_M, help="con --band auto: metros alrededor de la cancha que se le dan al detector (por defecto %(default)s)")
     ap.add_argument("--library")
     ap.add_argument("--conf", type=float, help="confianza mínima de una caja; por defecto, `detector.conf` de match.yaml o 0.2")
     ap.add_argument("--tracker", default=str(DEFAULT_TRACKER))
@@ -507,6 +530,7 @@ def main(argv: list[str] | None = None) -> None:
     args = ap.parse_args(argv)
 
     cfg = load_config(match=args.match, video=args.video)
+    post = post_settings(cfg)
     root = project_root()
     fps = float(cfg["video_fps"])
     stride = args.stride or int(cfg.get("analysis_stride") or 3)
@@ -560,8 +584,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.benchmark:
         probe = Chunk(chunks[0].start, min(chunks[0].end, chunks[0].start + round(20 * fps)))
         t0 = time.time()
-        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None)
-        result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
+        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None, band_margin_m=args.band_margin)
+        result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error, post)
         per = (time.time() - t0) / max(1, len(frames))
         q = result["quality"]
         print(f"  prueba de {len(frames)} cuadros: {per * 1000:.0f} ms por cuadro procesado")
@@ -582,8 +606,8 @@ def main(argv: list[str] | None = None) -> None:
         test_dir = root / cfg["paths"]["tracking_dir"] / "prueba"
         test_dir.mkdir(parents=True, exist_ok=True)
         t0 = time.time()
-        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None)
-        result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
+        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None, band_margin_m=args.band_margin)
+        result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error, post)
         per = (time.time() - t0) / max(1, len(frames))
         path = write_outputs(test_dir, meta, probe, stride, frames, result)
         summary = test_summary(result, frames, per, total_frames, stride, fps)
@@ -610,12 +634,12 @@ def main(argv: list[str] | None = None) -> None:
             t0 = time.time()
             after = sum(c.end - c.start for c in pending[n:]) // stride
             bar = Progress(f"[{n}/{len(pending)}]", (chunk.end - chunk.start) // stride + 1, fps, stride, after_s=after)
-            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, conf, args.tracker, progress=bar, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None)
+            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, conf, args.tracker, progress=bar, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None, band_margin_m=args.band_margin)
             bar.end()
             if not frames:
                 print(f"  parte {chunk.name}: sin cuadros (¿fin del video?)")
                 continue
-            result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
+            result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error, post)
             path = write_outputs(out_dir, meta, chunk, stride, frames, result)
             q = result["quality"]
             index["chunks"] = [c for c in index["chunks"] if c["name"] != chunk.name] + [

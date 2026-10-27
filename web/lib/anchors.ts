@@ -27,6 +27,8 @@ export interface SuggestFile {
   fps: number;
   chains: AnchorChain[];
   suggestions: AnchorSuggestion[];
+  // How many suggestions Python would write at each density (anchors per minute): {"1": 132, "2": 248, ...}, plus other keys.
+  available?: Record<string, unknown>;
 }
 export interface Anchor {
   frame: number;
@@ -138,25 +140,28 @@ export function filterByDensity(suggestions: AnchorSuggestion[], density: number
   return out;
 }
 
-// How many suggestions each density gets; `short` when a density adds none over the one below (there are not enough
-// suggested moments for it: Python would need more, with --per-min).
-export function densityCounts(suggestions: AnchorSuggestion[], fps: number): { density: number; n: number; short: boolean }[] {
-  let prev = -1;
-  return DENSITIES.map((d) => {
-    const n = filterByDensity(suggestions, d, fps).length;
-    const short = d > 1 && n <= prev;
-    prev = n;
-    return { density: d, n, short };
-  });
+// The density a suggest file was generated at (anchors per minute), read from the counts Python wrote next to it: the
+// one whose count equals the number of suggestions of the file (the largest, when several tie). Null when the file does
+// not say (an old one). The density is a choice made when generating, not a filter of the app: a file holds one
+// suggestion per chain, so thinning it by density never removed anything (measured on the 4 real parts of
+// 2026_09_25_tec_ccm_vs_anahuac: the same count at 1, 2, 3, 4 and 5 per minute).
+export function densityChoices(s: Pick<SuggestFile, "available">): { density: number; n: number }[] {
+  const av = s.available ?? {};
+  return DENSITIES.flatMap((d) => (typeof av[String(d)] === "number" ? [{ density: d, n: av[String(d)] as number }] : []));
+}
+export function generatedDensity(s: Pick<SuggestFile, "suggestions" | "available">): number | null {
+  const hit = densityChoices(s).filter((c) => c.n === s.suggestions.length);
+  return hit.length ? hit[hit.length - 1].density : null;
 }
 
 // What is left to do: the suggestions of the density without an anchor of their chain near them and not skipped.
 // An anchor names its whole chain, so a chain already anchored within the density's window needs no other.
-export function pendingSuggestions(list: AnchorSuggestion[], anchors: Anchor[], skipped: string[], chains: AnchorChain[], density: number, fps: number): AnchorSuggestion[] {
+// `chainOf` is the chainIndex of the chains when the caller already has it (building it walks every box of every chain).
+export function pendingSuggestions(list: AnchorSuggestion[], anchors: Anchor[], skipped: string[], chains: AnchorChain[], density: number, fps: number, chainOf: Map<string, number | string> = chainIndex(chains)): AnchorSuggestion[] {
   const skip = new Set(skipped);
-  const chainOf = chainIndex(chains);
   const gap = (60 / Math.max(1, density)) * fps;
   const anchoredAt = new Map<string, number[]>();
+  const anchored = new Set(anchors.map((a) => `${a.track}:${a.frame}`));
   for (const a of anchors) {
     const c = chainOf.get(`${a.track}:${a.frame}`);
     const k = c === undefined ? `t${a.track}` : String(c);
@@ -165,7 +170,7 @@ export function pendingSuggestions(list: AnchorSuggestion[], anchors: Anchor[], 
   return list.filter((s) => {
     if (skip.has(suggestionKey(s))) return false;
     const near = anchoredAt.get(String(s.chain)) ?? [];
-    return !near.some((f) => Math.abs(f - s.frame) < gap) && !anchors.some((a) => a.track === s.track && a.frame === s.frame);
+    return !near.some((f) => Math.abs(f - s.frame) < gap) && !anchored.has(`${s.track}:${s.frame}`);
   });
 }
 
@@ -390,10 +395,11 @@ export interface TramoSuggestion {
 export const tramoKey = (s: Pick<TramoSuggestion, "track" | "frame_ini" | "frame_fin">) => `sug:${s.track}:${s.frame_ini}:${s.frame_fin}`;
 
 // The suggestions still to answer: best p first, then lowest cost, then by time.
-export function pendingTramos(links: Pick<LinksFile, "suggestions"> | null | undefined, resolved: string[] = []): TramoSuggestion[] {
+// `min`: floor of p and ceiling of cost (Detalles técnicos); Python writes p >= 0.8 and cost <= 1.0, so this can only be stricter.
+export function pendingTramos(links: Pick<LinksFile, "suggestions"> | null | undefined, resolved: string[] = [], min: { p: number; maxCost: number } = { p: 0, maxCost: Infinity }): TramoSuggestion[] {
   const done = new Set(resolved);
   return (links?.suggestions ?? [])
-    .filter((s) => s.kind === "union_dudosa" && s.person && s.frame_fin >= s.frame_ini && !done.has(tramoKey(s)))
+    .filter((s) => s.kind === "union_dudosa" && s.person && s.frame_fin >= s.frame_ini && s.p >= min.p && s.cost <= min.maxCost && !done.has(tramoKey(s)))
     .sort((a, b) => b.p - a.p || a.cost - b.cost || a.frame_ini - b.frame_ini || a.track - b.track);
 }
 
@@ -652,36 +658,4 @@ export function focusBoxes<B extends readonly unknown[]>(
     }
   });
   return { found, missing, same };
-}
-
-// ---------------------------------------------------------------- stopwatch of the session
-
-export interface TimedAction {
-  kind: "ancla" | "saltar" | "duda" | "verificar";
-  s: number;
-  at: number;
-  part?: string;
-  // Version of the old comparison tab (A or B) in actions measured with it; absent since.
-  version?: "A" | "B";
-}
-// A pause longer than this is not work on the action (she stepped away): it counts as this much.
-export const MAX_ACTION_S = 60;
-
-const median = (xs: number[]) => {
-  if (!xs.length) return Number.NaN;
-  const s = [...xs].sort((a, b) => a - b);
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-};
-
-export function timingSummary(actions: TimedAction[]) {
-  const capped = actions.map((a) => ({ ...a, s: Math.min(MAX_ACTION_S, Math.max(0, a.s)) }));
-  const kinds = ["ancla", "saltar", "duda"] as const;
-  const per = Object.fromEntries(
-    kinds.map((k) => {
-      const xs = capped.filter((a) => a.kind === k).map((a) => a.s);
-      return [k, { n: xs.length, total_s: xs.reduce((x, y) => x + y, 0), median_s: median(xs) }];
-    }),
-  ) as Record<(typeof kinds)[number], { n: number; total_s: number; median_s: number }>;
-  return { n: capped.length, total_s: capped.reduce((x, a) => x + a.s, 0), median_s: median(capped.map((a) => a.s)), per, cap_s: MAX_ACTION_S };
 }

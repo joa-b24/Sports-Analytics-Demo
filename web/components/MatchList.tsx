@@ -4,10 +4,12 @@ import { ArrowRight, CalendarBlank, CheckCircle, Folder, MapPin, Plus, Trash, Wa
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { MODES, STEP_ICONS, ScoreBug } from "@/components/match/MatchHeader";
+import { MissingTag } from "@/components/match/VideoDownload";
 import { Modal } from "@/components/Modal";
 import { Reveal } from "@/components/motion";
 import { Select } from "@/components/Select";
 import { DemoBadge, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
+import { missingVideos } from "@/lib/downloads";
 import { parseYouTubeId } from "@/lib/format";
 import { FOLDER_RULE, isFolderName, readFolderFiles, suggestFolder } from "@/lib/local";
 import { segmentsFromMarks } from "@/lib/segments";
@@ -39,6 +41,7 @@ function MatchRow({ m, events, state, files }: { m: Match; events: MatchEvent[];
   const marks = state.segments.filter((g) => g.match_id === m.match_id);
   const steps = matchSteps({
     videoIds: vids,
+    linked: matchVideos(m).filter((v) => !!v.youtube_id).map((v) => v.video_id),
     folder: m.folder,
     venueId: m.venue_id,
     segmentsByVideo: Object.fromEntries(vids.map((v) => [v, segmentsFromMarks(marks.filter((g) => videoOf(g) === v))])),
@@ -48,6 +51,8 @@ function MatchRow({ m, events, state, files }: { m: Match; events: MatchEvent[];
     files: m.folder ? files : null,
   });
   const done = STEP_ORDER.filter(([id]) => steps[id].state === "done");
+  // Videos with a link and no file in the folder (only known when the folder can be read).
+  const lacking = m.folder ? missingVideos(matchVideos(m), files?.video) : [];
   return (
     <Link
       href={`/partido?id=${m.match_id}`}
@@ -57,6 +62,7 @@ function MatchRow({ m, events, state, files }: { m: Match; events: MatchEvent[];
         <div className="flex items-center gap-2 text-xs text-faint">
           <span className="cond font-bold uppercase">{fmtDate(m.date)}</span>
           {!m.youtube_id && !m.folder && <span>· sin video</span>}
+          {lacking.length > 0 && <MissingTag />}
           {m.is_demo && <DemoBadge />}
         </div>
         <div className="mt-1.5 overflow-hidden">

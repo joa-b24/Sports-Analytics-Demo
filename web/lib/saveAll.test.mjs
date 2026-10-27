@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backupName, backupsToDelete, dirtyItems, eventsPath, hashText, isConflict, matchBackup, matchItems, partHash, stableJson, statusText } from "./saveAll.ts";
+import { dirtyPartKeys, backupName, backupsToDelete, dirtyItems, eventsPath, hashText, isConflict, matchBackup, matchItems, partHash, stableJson, statusText } from "./saveAll.ts";
 
 const edits = (key, extra = {}) => ({ key, identity: {}, people: {}, removed: [], splits: [], manual: [], dropped: [], ...extra });
 const ev = (id, t, extra = {}) => ({ event_id: id, match_id: "m1", video_id: "v1", t_video: t, period: 1, type: "shot", team: "own", player_id: null, x: 50, y: 30, outcome: null, note: null, ...extra });
@@ -74,4 +74,17 @@ test("el respaldo de un partido solo lleva lo suyo", () => {
   assert.equal(b.trackEdits.length, 1);
   assert.deepEqual(Object.keys(b.jerseys), ["f"]);
   assert.equal(b.sessions.length, 0);
+});
+
+test("dirtyPartKeys flags every part with unsaved corrections, not only the one saved last", () => {
+  const e1 = { key: "f|v1|0_900", ball: [] };
+  const e2 = { key: "f|v1|900_1800", ball: [] };
+  const other = { key: "g|v1|0_900", ball: [] };
+  const att = () => "";
+  const log = {};
+  assert.deepEqual([...dirtyPartKeys([e1, e2, other], "f", [], att, log)].sort(), [e1.key, e2.key]);
+  log[`part:${e1.key}`] = { hash: partHash(e1, [], ""), at: 1 };
+  assert.deepEqual([...dirtyPartKeys([e1, e2], "f", [], att, log)], [e2.key]);
+  const e1b = { ...e1, ball: [{ frame: 3 }] };
+  assert.deepEqual([...dirtyPartKeys([e1b, e2], "f", [], att, log)].sort(), [e1.key, e2.key]);
 });

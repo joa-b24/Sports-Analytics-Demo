@@ -38,7 +38,7 @@ const restBall = (x, y, from, until, x2, y2, before = [x - 8, y]) => (t) => {
 test("saque de banda: balón detenido en la línea que se reanuda, en la reanudación y con el equipo de quien saca", () => {
   const people = [P(1, "own", "Ana"), ...stillPeople];
   const ball = restBall(40, 0.5, 5, 9, 40, 12);
-  const who = (t) => [[1, 40.5, 1.5], ...still()];
+  const who = () => [[1, 40.5, 1.5], ...still()];
   const ev = detectEvents([part({ ball, who, people })], SEG, []);
   const t = of(ev, "throw_in");
   assert.equal(t.length, 1);

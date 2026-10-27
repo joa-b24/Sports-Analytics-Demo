@@ -11,7 +11,7 @@ const COLS = "grid-cols-[1fr_2rem_2.2rem_2.6rem_2.6rem_9.6rem]";
 
 // One row per type: how many came out, how many were reviewed, precision on what was reviewed, recall inside the windows
 // reviewed in full, and the verdict. Click to work on that type.
-export function EventsStatsCard({ stats, active, onPick, minReviews }: { stats: TypeStats[]; active: DetectedType; onPick: (t: DetectedType) => void; minReviews: number }) {
+export function EventsStatsCard({ stats, active, onPick, minReviews, auto = [] }: { stats: TypeStats[]; active: DetectedType; onPick: (t: DetectedType) => void; minReviews: number; auto?: DetectedType[] }) {
   return (
     <Card title="Por tipo de evento" note={`mínimo ${minReviews} revisiones`} className="flex h-full flex-col !p-3">
       <div className={`grid ${COLS} gap-x-2 border-b border-line-soft pb-1 text-[11px] text-faint`} role="row">
@@ -36,6 +36,11 @@ export function EventsStatsCard({ stats, active, onPick, minReviews }: { stats: 
             >
               <span className="truncate text-ink">
                 {TYPE_LABEL[t]}
+                {auto.includes(t) && (
+                  <span className="tag tag-accent ml-1" title="Detección aceptada: se crea sola como sugerencia aceptada">
+                    Automático
+                  </span>
+                )}
                 {warn && (
                   <span className="ml-1 text-warn" title={warn} aria-label={warn}>
                     ⚠
