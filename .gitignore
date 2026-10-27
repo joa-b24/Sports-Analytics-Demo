@@ -53,3 +53,10 @@ data/boards/
 matches/*/respaldo/*
 matches/*/events_*.csv
 matches/*/events/*
+
+# Posesión y revisiones del Playground: llevan nombres de la plantilla
+matches/*/possession_*.csv
+matches/*/possession_review_*.json
+matches/*/passes_review_*.json
+matches/*/events_auto_*.json
+matches/*/events_review_*.json
