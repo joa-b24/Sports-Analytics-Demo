@@ -35,6 +35,12 @@ def test_shared_drawing_cases_unchanged():
         p = g.project(r, to, (cam["image"]["w"], cam["image"]["h"]), lambda i: d["labels"].get(str(i)))
         exp = item["expected"]
         assert p.closed == exp["closed"]
+        assert (p.head is not None) == (exp.get("head") is not None), item["annotation"]["id"]
+        if exp.get("text"):
+            assert p.text[1] == exp["text"][1] and p.anchor == exp.get("anchor", "middle")
+            assert math.hypot(p.text[0][0] - exp["text"][0][0], p.text[0][1] - exp["text"][0][1]) < 1e-6
+        else:
+            assert p.text is None
         for path, epath in zip(p.paths, exp["paths"]):
             assert all(math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6 for a, b in zip(path, epath))
 
@@ -148,7 +154,7 @@ def test_short_render_on_synthetic_video(tmp_path):
     H = [105 / w, 0, 0, 0, 68 / h, 0, 0, 0, 1]
     e = edit(t_start=0.0, t_end=2.0, freezes=[{"t": 0.5, "duration_s": 1.0, "reveal": ["t"]}],
              annotations=[
-                 {"id": "z", "kind": "zone", "anchors": [{"kind": "pitch", "x": 10, "y": 10}, {"kind": "pitch", "x": 40, "y": 10}, {"kind": "pitch", "x": 25, "y": 40}], "t_in": 0, "t_out": 2, "style": {"color": "ok"}},
+                 {"id": "z", "kind": "zone", "anchors": [{"kind": "pitch", "x": 10, "y": 10}, {"kind": "pitch", "x": 40, "y": 10}, {"kind": "pitch", "x": 25, "y": 40}], "t_in": 0, "t_out": 2, "style": {"color": "danger"}},
                  {"id": "h", "kind": "highlight", "anchors": [{"kind": "player", "identity": 1}], "t_in": 0, "t_out": 2, "style": {"color": "warn"}},
                  {"id": "t", "kind": "text", "anchors": [{"kind": "screen", "x": 0.5, "y": 0.2}], "t_in": 0.5, "t_out": 2, "style": {"color": "ink", "label": "Presión"}},
              ],
@@ -208,3 +214,58 @@ def test_roster_numbers_reads_the_app_file(tmp_path):
     f.write_text(json.dumps({"schema_version": 1, "team": "Equipo A", "players": [{"player_id": "Jugadora Uno", "number": 9}]}), encoding="utf-8")
     assert rn.roster_numbers(f) == {"Jugadora Uno": 9}
     assert rn.roster_numbers(tmp_path / "no_existe.json") == {}
+
+
+def test_color_bgr_palette_and_free_hex():
+    assert rn.color_bgr("#ff8000") == (0, 128, 255)
+    assert rn.color_bgr("violet") == rn.DRAW_BGR["violet"]
+    # La analista cambió una casilla; un nombre desconocido cae en el azul.
+    assert rn.color_bgr("warn", {"warn": "#102030"}) == (0x30, 0x20, 0x10)
+    assert rn.color_bgr("no-existe") == rn.DRAW_BGR["accent"]
+
+
+def test_arrow_shape_and_label_side_in_render():
+    cv2 = pytest.importorskip("cv2")
+    pytest.importorskip("PIL")
+    import numpy as np
+
+    w, h = 640, 360
+    H = [105 / w, 0, 0, 0, 68 / h, 0, 0, 0, 1]
+    to = g.pitch_to_image(H, {"length_m": 105, "width_m": 68})
+    pos = lambda i, t: (50.0, 40.0)  # noqa: E731
+    base = np.full((h, w, 3), 60, np.uint8)
+
+    def render(style, **kw):
+        a = {"id": "h", "kind": "highlight", "anchors": [{"kind": "player", "identity": 1}], "t_in": 0, "t_out": 9, "style": style}
+        p = g.project(g.resolve(a, 1, pos), to, (w, h), lambda i: "9", **kw)
+        return p, rn.draw_items(base.copy(), [p], 1.0)
+
+    ring, img_ring = render({"color": "warn"})
+    arrow, img_arrow = render({"color": "warn", "shape": "arrow"})
+    none, img_none = render({"color": "warn", "shape": "none", "label_off": True})
+    assert ring.closed and ring.head is None
+    assert arrow.head is not None and not arrow.paths
+    assert none.text is None and none.head is None and not none.paths
+    assert not (img_none != base).any()
+    assert (img_arrow != base).any() and (img_ring != base).any()
+    # La flecha queda sobre la cabeza: más arriba que el aro.
+    assert min(q[1] for q in arrow.head) < min(q[1] for p in ring.paths for q in p)
+    # Lados del rótulo y rótulo oculto de una jugadora.
+    left, _ = render({"color": "warn"}, side="left")
+    right, _ = render({"color": "warn"}, side="right")
+    assert left.anchor == "end" and right.anchor == "start" and left.text[0][0] < right.text[0][0]
+    hid, _ = render({"color": "warn"}, hidden={"1"})
+    assert hid.text is None
+
+
+def test_players_stand_in_front_of_drawings():
+    import numpy as np
+
+    h, w = 360, 640
+    base = np.full((h, w, 3), 60, np.uint8)
+    wide = g.Projected("z", "zone", {"color": "danger"}, [[(100, 100), (500, 100), (500, 300), (100, 300)]], True, None, None)
+    plain = rn.draw_items(base.copy(), [wide], 1.0)
+    cut = rn.draw_items(base.copy(), [wide], 1.0, bodies=[(250, 150, 40, 100)])
+    assert (plain[200, 270] != base[200, 270]).any()
+    assert (cut[200, 270] == base[200, 270]).all()
+    assert (cut[200, 400] == plain[200, 400]).all()

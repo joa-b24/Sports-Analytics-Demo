@@ -21,6 +21,8 @@ MAX_HOLE_S = 1.0
 # Tamaños para un cuadro de 1080 px de alto (se escalan con la altura) y sobre el césped, en metros normalizados.
 DRAW_PX = {"stroke": 5, "text": 40, "label": 30, "outline": 6}
 DRAW_M = {"ring": 1.2, "head": 2.0}
+HIGHLIGHT_SHAPES = ("oval", "arrow", "none")
+LABEL_SIDES = ("up", "down", "left", "right")
 ARITY = {"highlight": (1, 1), "arrow": (2, math.inf), "line": (2, math.inf), "zone": (3, math.inf), "text": (1, 1)}
 
 
@@ -170,10 +172,25 @@ class Projected:
     closed: bool
     head: list[Pt] | None
     text: tuple[Pt, str] | None
+    # Hacia dónde crece el rótulo desde su punto: "start" (a la derecha), "middle" o "end" (a la izquierda).
+    anchor: str = "middle"
 
 
-def project(r: Resolved, to_image: ToImage | None, image: tuple[int, int], label_of=None, ring_m: float | None = None) -> Projected | None:
-    """El dibujo sobre el cuadro (píxeles). image = (ancho, alto). Igual que `project` de la app."""
+def _pair(lab):
+    return (lab[0], lab[1]) if lab else None
+
+
+def highlight_shape(style: dict) -> str:
+    """Forma de un resalte; lo desconocido (un viejo «box») se lee como óvalo."""
+    return style.get("shape") if style.get("shape") in HIGHLIGHT_SHAPES else "oval"
+
+
+def project(r: Resolved, to_image: ToImage | None, image: tuple[int, int], label_of=None, ring_m: float | None = None,
+            side: str | None = None, hidden: set | None = None) -> Projected | None:
+    """El dibujo sobre el cuadro (píxeles). image = (ancho, alto). Igual que `project` de la app.
+
+    `side` es el lado del rótulo del clip y `hidden` las identidades (como texto) cuyo rótulo no se muestra.
+    """
     w, h = image
     k = h / 1080
     style = r.style
@@ -191,9 +208,11 @@ def project(r: Resolved, to_image: ToImage | None, image: tuple[int, int], label
             out.append(q)
         return out
 
-    def label_at(p, who):
-        value = " · ".join(v for v in (who, style.get("label")) if v)
-        return (p, value) if value and p is not None else None
+    def label_at(p, who, anchor="middle"):
+        value = "" if style.get("label_off") else " · ".join(v for v in (who, style.get("label")) if v)
+        if not value or p is None:
+            return None
+        return (p[0] + (style.get("label_dx") or 0) * k, p[1] + (style.get("label_dy") or 0) * k), value, anchor
 
     def above(p):
         return (p[0], p[1] - 12 * k) if p is not None else None
@@ -207,9 +226,39 @@ def project(r: Resolved, to_image: ToImage | None, image: tuple[int, int], label
         ring = proj([(cx + rad * math.cos(i / 32 * 2 * math.pi), cy + rad * math.sin(i / 32 * 2 * math.pi)) for i in range(32)])
         if ring is None:
             return None
+        player = r.players[0] if r.players else None
+        is_hidden = player is not None and hidden is not None and str(player) in hidden
+        who = label_of(player) if label_of and player is not None and not is_hidden else None
+        shape = highlight_shape(style)
+        xs, ys = [p[0] for p in ring], [p[1] for p in ring]
+        left, right = min(xs), max(xs)
         top = min(ring, key=lambda p: p[1])
-        who = label_of(r.players[0]) if label_of and r.players and r.players[0] is not None else None
-        return Projected(r.id, r.kind, style, [ring], True, None, label_at(above(top), who))
+        bottom = max(ring, key=lambda p: p[1])
+        mid = (min(ys) + max(ys)) / 2
+        w = right - left
+        # Una persona mide unos 1.75 m y el aro 2.4 m de ancho: la flecha flota sobre la cabeza a esa escala.
+        body_h = (w / (2 * rad)) * 1.75
+        head_y = mid - body_h
+        cxp = (left + right) / 2
+        where = style.get("label_side") or side or "up"
+        roof = head_y - w * 0.55 if shape == "arrow" else head_y if shape == "none" else top[1]
+        spots = {
+            "up": ((top[0] if shape == "oval" else cxp, roof - 12 * k), "middle"),
+            "down": ((bottom[0], bottom[1] + 34 * k), "middle"),
+            "left": ((left - 12 * k, mid + 10 * k), "end"),
+            "right": ((right + 12 * k, mid + 10 * k), "start"),
+        }
+        pt, anchor = spots.get(where, spots["up"])
+        lab = label_at(pt, who, anchor)
+        text, anc = ((lab[0], lab[1]), lab[2]) if lab else (None, "middle")
+        if shape == "oval":
+            return Projected(r.id, r.kind, style, [ring], True, None, text, anc)
+        if shape == "none":
+            return Projected(r.id, r.kind, style, [], False, None, text, anc)
+        tip_y = head_y - w * 0.12
+        size = w * 0.4
+        head = [(cxp, tip_y), (cxp - size / 2, tip_y - size * 0.85), (cxp + size / 2, tip_y - size * 0.85)]
+        return Projected(r.id, r.kind, style, [], False, head, text, anc)
     if r.kind == "arrow":
         curve = sample_curve(r.points)
         head = arrow_head(curve, DRAW_M["head"])
@@ -219,11 +268,11 @@ def project(r: Resolved, to_image: ToImage | None, image: tuple[int, int], label
         pb, ph = proj(body), proj(head)
         if pb is None or ph is None:
             return None
-        return Projected(r.id, r.kind, style, [pb], False, ph, label_at(above(to_image(label_point(r.kind, r.points))), None))
+        return Projected(r.id, r.kind, style, [pb], False, ph, _pair(label_at(above(to_image(label_point(r.kind, r.points))), None)))
     pts = proj(r.points)
     if pts is None:
         return None
-    return Projected(r.id, r.kind, style, [pts], r.kind == "zone", None, label_at(above(to_image(label_point(r.kind, r.points))), None))
+    return Projected(r.id, r.kind, style, [pts], r.kind == "zone", None, _pair(label_at(above(to_image(label_point(r.kind, r.points))), None)))
 
 
 # ------------------------------------------------------------------------------------------- línea de tiempo
@@ -356,4 +405,30 @@ def drawings_at(edit: dict, t_video: float, position_of, stop: dict | None, show
         r = resolve(a, t_video, position_of)
         if r is not None:
             out.append(r)
+    return out
+
+
+# --------------------------------------------------------------------------------------- jugadoras por delante
+
+def player_bodies(snap: dict, position_of, to_image: ToImage | None, t: float) -> list[tuple[float, float, float, float]]:
+    """Caja de pie de cada jugadora en el cuadro (x, y, ancho, alto): unos 1.75 x 0.6 m a la escala local de la cámara.
+
+    Los dibujos se recortan ahí para que ellas queden por delante (igual que `bodies` en ClipEditor de la app).
+    """
+    if to_image is None:
+        return []
+    out = []
+    length = snap["venue"]["length_m"]
+    for ident in (snap.get("tracks") or {}):
+        p = position_of(ident, t)
+        if p is None:
+            continue
+        feet, side = to_image(p), to_image((p[0] + 105 / length, p[1]))
+        if feet is None or side is None:
+            continue
+        s = math.hypot(side[0] - feet[0], side[1] - feet[1])
+        if not s > 0 or s > snap["image_w"] / 4:
+            continue
+        w, h = 0.6 * s, 1.75 * s
+        out.append((feet[0] - w / 2, feet[1] - h, w, h + 0.1 * s))
     return out

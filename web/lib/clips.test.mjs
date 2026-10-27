@@ -165,6 +165,7 @@ test("los dibujos completos (círculo, flecha curva, zona y línea con jugadoras
     p.head?.forEach((q, j) => close(q, expected.head[j], `${annotation.id} punta`));
     assert.equal(p.text?.value ?? null, expected.text?.[1] ?? null, annotation.id);
     if (p.text) close(p.text.at, expected.text[0], `${annotation.id} texto`);
+    if (expected.anchor) assert.equal(p.text?.anchor ?? "middle", expected.anchor, `${annotation.id} lado del texto`);
   }
 });
 
