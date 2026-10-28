@@ -4,7 +4,7 @@ import { blockShape } from "./blockShape.ts";
 import { buildFixed } from "./fixedExport.ts";
 import { physical, teamBlock } from "./physical.ts";
 import { trackedPasses } from "./passSources.ts";
-import { editsKey, emptyEdits } from "./tracks.ts";
+import { editsKey, emptyEdits, setPerson } from "./tracks.ts";
 import { extrapolateEnds, isExtrapolated, isMeasuredSource } from "./smooth.ts";
 import { behindBallAtLosses, heatmap, namedPlayers, passesAndTurnovers, positionsAt, touches } from "./positions.ts";
 import { possessionIntervals } from "./possession.ts";
@@ -45,7 +45,7 @@ const rawPart = {
   frames: Array.from({ length: 30 }, (_, i) => ({ frame: i * 3, H, boxes: i >= 10 && i < 20 ? [[1, 0, 0, 10, 30, 0.9, ...LAB, 40 + i, 30, true, "unk", 1]] : [] })),
 };
 test("the export marks the held positions as extrapolated, only when the path is cleaned, and says how many", () => {
-  const edits = emptyEdits(editsKey(rawPart));
+  const edits = setPerson(emptyEdits(editsKey(rawPart)), 1, { player_id: "Ana" });
   const smooth = { maxSpeedMs: 9, maxFillS: 2, windowS: 0 };
   const { out, note } = buildFixed(rawPart, edits, { smooth });
   const src = out.frames.map((f) => f.positions.map((p) => p.source)[0]);
@@ -58,6 +58,13 @@ test("the export marks the held positions as extrapolated, only when the path is
   assert.ok(buildFixed(rawPart, edits, { smooth: null }).out.frames.slice(0, 10).every((f) => f.positions.length === 0));
   // Switched off.
   assert.ok(buildFixed(rawPart, edits, { smooth, extrapolate: false }).out.frames.slice(0, 10).every((f) => f.positions.length === 0));
+});
+
+test("a loose fragment with no name is not held still across the part (it made the file too big to save)", () => {
+  const { out } = buildFixed(rawPart, emptyEdits(editsKey(rawPart)), { smooth: { maxSpeedMs: 9, maxFillS: 2, windowS: 0 } });
+  const all = out.frames.flatMap((f) => f.positions);
+  assert.ok(all.length > 0 && all.every((p) => p.source !== "extrapolated"));
+  assert.equal(out.smoothing.extrapolated, 0);
 });
 
 test("distance, speed, sprints and block: extrapolated positions count for nothing", () => {

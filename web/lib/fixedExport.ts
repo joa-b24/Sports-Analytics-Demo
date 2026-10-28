@@ -30,7 +30,7 @@ export interface FixedOptions {
   ballAuto?: BallAuto | null;
   // Salto máximo del balón (m/s) de Detalles técnicos; absent: BALL_JUMP_MS.
   ballJumpMs?: number;
-  // Hold each person still before her first and after her last position of the part (source "extrapolated", invented:
+  // Hold each named person still before her first and after her last position of the part (source "extrapolated", invented:
   // drawn dimmer, excluded from every measure). Default: on when the paths are cleaned, never on "as measured".
   extrapolate?: boolean;
 }
@@ -68,12 +68,15 @@ export function buildFixed(file: TracksFile, edits: TrackEdits, opts: FixedOptio
   const r2 = (v: number) => Math.round(v * 100) / 100;
   const frameNumbers = file.frames.map((fr) => fr.frame).sort((a, b) => a - b);
   const extrapolate = !!cfg && opts.extrapolate !== false;
+  // Only the people with a name are held still: a loose fragment of a few seconds padded across the whole part is a ghost
+  // and made a part with 1,000 fragments weigh 278 MB (more than the app may write: the save failed).
+  const named = new Set(ppl.filter((p) => p.player_id).map((p) => p.id));
   let extrapolated = 0;
   const byFrameOut = new Map<number, { id: number; x: number; y: number; source: string; raw?: [number, number] }[]>();
   for (const id of paths.keys()) {
     if (refIds.has(id)) continue;
     let pts = cfg ? (cleaned.get(id)?.points ?? []) : [...(paths.get(id) ?? [])].sort((u, v) => u.frame - v.frame);
-    if (extrapolate) {
+    if (extrapolate && named.has(id)) {
       const ext = extrapolateEnds(pts, frameNumbers);
       pts = ext.points;
       extrapolated += ext.added;
