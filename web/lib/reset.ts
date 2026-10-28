@@ -23,6 +23,8 @@ export function resetPart<T extends { trackEdits: TrackEdits[]; reviews?: PartRe
   else if (cur) {
     next = { ...cur };
     delete next.anchorDoubts;
+    // The record of the automatic acceptances goes too (the pieces themselves stay with their player).
+    delete next.autoAccepted;
     // The cuts made by a fill by stretches go too (the identities of whole tracks stay, as before).
     if (cur.linkSplits?.length) {
       const made = new Set(cur.linkSplits.map((s) => `${s.track}:${s.frame}`));
@@ -36,7 +38,7 @@ export function resetPart<T extends { trackEdits: TrackEdits[]; reviews?: PartRe
   return {
     state: { ...state, trackEdits, reviews: (state.reviews ?? []).filter((r) => r.key !== key) },
     timing: kept,
-    prefKeys: [`anchors:skipped:${folder}:${part}`, `anchors:skipped:${folder}:${part}:ejemplo`],
+    prefKeys: [`anchors:skipped:${folder}:${part}`, `anchors:skipped:${folder}:${part}:ejemplo`, `anchors:autoSkip:${folder}:${part}`],
     summary: { review: !!review, doubts, timing: timing.length - kept.length, segments },
   };
 }

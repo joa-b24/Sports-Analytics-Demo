@@ -4119,7 +4119,7 @@ export function Correction({
                     >
                       {view === "quick" && quickOverlay}
                       {anchorHits?.found.map(({ b, mark, index }) => {
-                        const c = FOCUS_COLORS[index % FOCUS_COLORS.length];
+                        const c = mark.color ?? FOCUS_COLORS[index % FOCUS_COLORS.length];
                         return (
                           <g key={`af${b[0]}`} pointerEvents="none">
                             <rect x={b[1] - 2 * dotR} y={b[2] - 2 * dotR} width={b[3] - b[1] + 4 * dotR} height={b[4] - b[2] + 4 * dotR} rx={dotR} fill="none" stroke={c} strokeWidth={dotR * 0.9} />

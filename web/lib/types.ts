@@ -429,6 +429,19 @@ export interface VenueSpec {
 
 // The person's corrections to the automatic tracks of one processed part (lib/tracks.ts). The file with the
 // detections is never changed: these edits are applied on top of it.
+// One suggestion of the tramos file (lib/anchors.ts TramoSuggestion) accepted by the «seguras» batch: the piece of `track`
+// (frames inclusive) went to `person`; `prev` is the identity it had before (so it can go back).
+export interface AutoAccepted {
+  key: string;
+  person: string;
+  track: number;
+  frame_ini: number;
+  frame_fin: number;
+  p: number;
+  cost: number;
+  prev: number;
+}
+
 export interface TrackEdits {
   // `${match_id}|${video_id}|${start_frame}_${end_frame}` of the tracks file.
   key: string;
@@ -471,6 +484,9 @@ export interface TrackEdits {
   autoRejected?: string[];
   // Anchors mode (lib/anchors.ts): doubts of links_<part>.json already resolved, by doubtKey. Absent in older edits.
   anchorDoubts?: string[];
+  // Suggested joins accepted by themselves as «seguras» (lib/autoAccept.ts), so the list «Aceptadas automáticamente» can show
+  // and undo them one by one. Absent in older edits; «Empezar de cero» clears it.
+  autoAccepted?: AutoAccepted[];
   // Splits of `splits` created by a fill by stretches (editsFromLinks, links with `segments`): «Empezar de cero» removes them.
   linkSplits?: { track: number; frame: number }[];
   // Double boxes of a player skipped in the table («Siguiente / saltar»), as "<identity>:<frame>" (lib/doubles.ts).

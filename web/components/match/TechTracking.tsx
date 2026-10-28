@@ -70,6 +70,17 @@ export function TechTracking({ match }: { match: Match }) {
                 </span>
               </label>
             )}
+            {g.id === "assist" && (
+              <label className="flex items-start gap-2 text-xs text-muted" title="Al abrir una parte en Anclas se aceptan solas las uniones seguras; quedan marcadas y se pueden deshacer">
+                <input type="checkbox" className="mt-0.5" checked={p.autoAcceptOn} onChange={(e) => patchMatch(match.match_id, (m) => withTrackingParam(m, "autoAcceptOn", e.target.checked))} />
+                <span>
+                  Aceptar las seguras al abrir la parte
+                  <span className="mt-0.5 block text-[11px] text-faint">
+                    Por defecto: {TRACKING_DEFAULTS.autoAcceptOn ? "sí" : "no"}. Con esto activo, al abrir Anclas se aplican las uniones seguras en un solo paso, con aviso y botón Deshacer; quedan en «Aceptadas automáticamente».
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
         </section>
       ))}

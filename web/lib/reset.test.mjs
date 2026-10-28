@@ -33,3 +33,10 @@ test("resetPart removes the cuts made by a fill by stretches, not the hand cuts"
   assert.equal(out.state.trackEdits[0].linkSplits, undefined);
   assert.equal(out.summary.segments, 2);
 });
+
+test("resetPart olvida el registro de lo aceptado solo y su lista de quitadas", () => {
+  const e = { ...named(), anchorDoubts: ["sug:1:0:3"], autoAccepted: [{ key: "sug:1:0:3", person: "Ana", track: 1, frame_ini: 0, frame_fin: 3, p: 0.99, cost: 0.2, prev: 1 }] };
+  const out = resetPart({ trackEdits: [e] }, KEY, "v1_0_87", "f", []);
+  assert.equal(out.state.trackEdits[0].autoAccepted, undefined);
+  assert.ok(out.prefKeys.includes("anchors:autoSkip:f:v1_0_87"));
+});

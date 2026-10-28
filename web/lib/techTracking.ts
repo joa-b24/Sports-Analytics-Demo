@@ -25,6 +25,12 @@ export interface TrackingParams {
   ballTrajMaxJumpM: number;
   searchMarginM: number;
   gStepS: number;
+  // Auto-accept of safe suggestions (lib/autoAccept.ts): minimum p, and whether the batch is applied on opening a part.
+  autoAcceptP: number;
+  autoAcceptOn: boolean;
+  // Sample pass of the anchors mode (lib/samples.ts): minimum gap between samples (s) and own boxes in view.
+  sampleGapS: number;
+  sampleMinPlayers: number;
 }
 // Same as the Python ones (tracking/segments.py DEFAULT_POLICY, anchors_cli UNNAMED_COST_REAL, process BAND_MARGIN_M).
 export const TRACKING_DEFAULTS: TrackingParams = {
@@ -42,11 +48,15 @@ export const TRACKING_DEFAULTS: TrackingParams = {
   ballTrajMaxJumpM: 10,
   searchMarginM: 3,
   gStepS: 1,
+  autoAcceptP: 0.98,
+  autoAcceptOn: false,
+  sampleGapS: 45,
+  sampleMinPlayers: 8,
 };
 
 export interface TrackingField {
-  key: Exclude<keyof TrackingParams, "fillRejectClose">;
-  group: "fill" | "gaps" | "ball" | "search" | "keys";
+  key: Exclude<keyof TrackingParams, "fillRejectClose" | "autoAcceptOn">;
+  group: "fill" | "gaps" | "ball" | "search" | "keys" | "assist";
   label: string;
   unit: string;
   min: number;
@@ -60,6 +70,7 @@ export const TRACKING_GROUPS: { id: TrackingField["group"]; title: string; help:
   { id: "ball", title: "Balón", help: "Qué tan seguro debe estar el detector para marcar un balón, y cuánto salto se le permite." },
   { id: "search", title: "Franja de búsqueda del tracking", help: "Zona de la imagen donde el detector busca personas." },
   { id: "keys", title: "Mesa de corrección", help: "Atajos de la mesa." },
+  { id: "assist", title: "Anclas: aceptar seguras y muestras", help: "Cuánta seguridad pide «Aceptar las seguras» y cómo se eligen los cuadros de la pasada por muestras." },
 ];
 export const TRACKING_FIELDS: TrackingField[] = [
   { key: "fillMaxCost", group: "fill", label: "Costo máximo", unit: "", min: 0.1, max: 5, step: 0.1, help: "Una cadena con costo mayor queda sin asignar." },
@@ -75,6 +86,9 @@ export const TRACKING_FIELDS: TrackingField[] = [
   { key: "ballTrajMaxJumpM", group: "ball", label: "Salto máximo al corregir trayectorias", unit: "m", min: 1, max: 50, step: 1, help: "Reservado para la corrección de la trayectoria del balón (aún sin algoritmo): solo se guarda." },
   { key: "searchMarginM", group: "search", label: "Margen alrededor de la cancha", unit: "m", min: 0, max: 15, step: 0.5, help: "Con la franja «auto», metros fuera de la cancha donde aún se busca (process --band-margin). Más margen, más cuadro que detectar." },
   { key: "gStepS", group: "keys", label: "Salto de la tecla g", unit: "s", min: 0.2, max: 10, step: 0.1, help: "Segundos que avanza g dentro de un hueco." },
+  { key: "autoAcceptP", group: "assist", label: "Seguras: probabilidad mínima", unit: "", min: 0.9, max: 0.999, step: 0.001, help: "Una unión sugerida solo es «segura» con al menos esta probabilidad (y sin choques ni costo alto). Por defecto 0.98: sin confirmar, los trozos nuevos aciertan ~76 % (83–84 % con p ≥ 0.8–0.9)." },
+  { key: "sampleGapS", group: "assist", label: "Muestras: separación mínima", unit: "s", min: 10, max: 300, step: 5, help: "Tiempo mínimo entre dos cuadros de la pasada por muestras." },
+  { key: "sampleMinPlayers", group: "assist", label: "Muestras: jugadoras propias a la vista", unit: "", min: 3, max: 11, step: 1, help: "Un cuadro solo es muestra si se ven al menos tantas cajas de nuestro equipo (por color de uniforme)." },
 ];
 export const trackingFieldOf = (key: keyof TrackingParams) => TRACKING_FIELDS.find((f) => f.key === key);
 
@@ -92,6 +106,7 @@ export function trackingParamsOf(m: Holder): TrackingParams {
     if (typeof v === "number" && Number.isFinite(v) && v >= f.min && v <= f.max) Object.assign(out, { [f.key]: v });
   }
   if (typeof set.fillRejectClose === "boolean") out.fillRejectClose = set.fillRejectClose;
+  if (typeof set.autoAcceptOn === "boolean") out.autoAcceptOn = set.autoAcceptOn;
   if (out.greenMinS > out.greenMaxS) {
     out.greenMinS = TRACKING_DEFAULTS.greenMinS;
     out.greenMaxS = TRACKING_DEFAULTS.greenMaxS;

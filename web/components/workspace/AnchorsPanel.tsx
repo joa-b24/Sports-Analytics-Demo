@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowBendUpRight, ArrowsSplit, CircleDashed, LinkBreak, Question, UserCircleDashed, type Icon } from "@phosphor-icons/react";
-import { ArrowClockwise, ArrowCounterClockwise, CaretDown, Check, FastForward, Keyboard, Lightning, LinkSimple, MagicWand, Scissors, UserSwitch, Warning, X } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, CaretDown, Check, FastForward, Keyboard, Lightning, LinkSimple, MagicWand, Scissors, ShieldCheck, UserSwitch, Warning, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconButton, Modal } from "@/components/Modal";
 import { DoubtCard, boxLabel } from "@/components/workspace/DoubtCard";
@@ -49,6 +49,8 @@ import {
   type LinksFile,
   type SuggestFile,
 } from "@/lib/anchors";
+import { AUTO_REASON_NAMES, AUTO_MAX_COST, autoLabel, planAutoAccept, revertAuto, type AutoReason } from "@/lib/autoAccept";
+import { findSamples, nameInSample, sampleBoxes, sampleFocus, sampleProgress } from "@/lib/samples";
 import { fmtT, isTyping } from "@/lib/format";
 import { readLocal, writeLocal } from "@/lib/local";
 import { setPref, usePref } from "@/lib/store";
@@ -58,7 +60,7 @@ import { phaseName, type RunStatus, type RunTask } from "@/lib/runTask";
 import { applyQuickJoin, holeKey, quickHoles, quickProgress, type QuickCandidate, type QuickHole } from "@/lib/quickJoin";
 import type { FeetFile } from "@/lib/feetFix";
 import { dropBoxes, editsKey, merge, separateRun, setPerson, type Person, type TracksFile } from "@/lib/tracks";
-import type { RosterPlayer, TrackEdits } from "@/lib/types";
+import type { AutoAccepted, RosterPlayer, TrackEdits } from "@/lib/types";
 
 // Anchors mode of the correction table: name suggested moments (anchors), have Python fill the rest (links), then go
 // through its short list of doubts. (The stopwatch of the session was removed on 2026-10-27.)
@@ -108,6 +110,17 @@ const SHORTCUTS: { tab: string; title: string; keys: [string, string][] }[] = [
       ["← →", "cuadros"],
       ["Tab", "siguiente"],
       ["Enter X N", "uniones sugeridas: acepta, rechaza, siguiente"],
+    ],
+  },
+  {
+    tab: "samples",
+    title: "Muestras",
+    keys: [
+      ["clic + 1 2 3 …", "clic en la caja y tecla de la jugadora (o al revés)"],
+      ["x", "no es jugadora"],
+      ["n", "siguiente muestra"],
+      ["Shift n", "muestra anterior"],
+      ["Esc Supr", "deshace la última"],
     ],
   },
   {
@@ -194,7 +207,7 @@ export function AnchorsPanel({
   const fps = data.fps;
   // Detalles técnicos of the match of this folder (green gaps, doubtful-join floor, fill thresholds).
   const { match: techMatch, params: tech } = useTrackingTech(folder);
-  const [tab, setTab] = useState<"anchors" | "doubts" | "quick">("anchors");
+  const [tab, setTab] = useState<"anchors" | "doubts" | "quick" | "samples">("anchors");
   // The fill is B (links_<part>_exp.json, fewer jumps): the recommended mode.
   const variant = "exp" as const;
   const paths = anchorPaths(folder, part, false, variant);
@@ -495,6 +508,53 @@ export function AnchorsPanel({
   };
   const openTramo = tramos.find((t) => tramoKey(t) === sugOpen) ?? null;
 
+  // «Aceptar las seguras» (lib/autoAccept.ts): the suggestions that are trivial, all in one edit. Those the analyst took out
+  // of the automatic list (autoSkip) are not taken again; she can still accept them one by one.
+  const namedMap = useMemo(() => new Map(people.filter((p) => p.player_id).map((p) => [p.player_id, p.id])), [people]);
+  const autoSkipKey = `anchors:autoSkip:${folder}:${part}`;
+  const autoSkipRaw = usePref(autoSkipKey, "");
+  const autoSkip = useMemo(() => new Set(autoSkipRaw.split(",").filter(Boolean)), [autoSkipRaw]);
+  const plan = useMemo(
+    () => (links && tramos.length > 0 ? planAutoAccept({ file: data, edits, ppl: people, named: namedMap, doubts: doubts.pending }, tramos, tech.autoAcceptP, autoSkip) : null),
+    [links, tramos, data, edits, people, namedMap, doubts.pending, tech.autoAcceptP, autoSkip],
+  );
+  const autoList = edits.autoAccepted ?? [];
+  // The batch just applied (for the notice with «Deshacer»).
+  const [autoNote, setAutoNote] = useState<AutoAccepted[] | null>(null);
+  const sugText = (n: number) => `${n} sugerencia${n === 1 ? "" : "s"} segura${n === 1 ? "" : "s"}`;
+  const applyAuto = (byItself: boolean) => {
+    if (!plan || plan.accepted.length === 0) return;
+    editsChange(plan.edits);
+    setAutoNote(plan.accepted);
+    onMsg(`Se ${plan.accepted.length === 1 ? "aceptó" : "aceptaron"} ${sugText(plan.accepted.length)}${byItself ? " al abrir la parte" : ""}${plan.refused ? ` (${plan.refused} se rechazaron al aplicar por chocar entre ellas)` : ""}. Ctrl + Z deshace el lote entero.`);
+  };
+  // With the switch on (Detalles técnicos), the batch is applied once for each links file loaded, when the part opens.
+  const autoRan = useRef<LinksFile | null>(null);
+  useEffect(() => {
+    if (!tech.autoAcceptOn || !links || loaded !== loadKey || ask || autoRan.current === links) return;
+    autoRan.current = links;
+    applyAuto(true);
+  });
+  // Takes acceptances out: the stretch goes back to what it was, the suggestion is pending again and is not taken again
+  // by the batch.
+  const removeAuto = (recs: AutoAccepted[]) => {
+    const r = revertAuto(edits, data, recs, namedMap);
+    editsChange(r.edits);
+    setPref(autoSkipKey, [...autoSkip, ...recs.map((x) => x.key)].join(","));
+    onMsg(`${r.reverted} unión(es) vuelven a como estaban${r.changed ? `; ${r.changed} ya habían cambiado a mano y se dejaron` : ""}. Ctrl + Z lo deshace.`);
+  };
+  const showAuto = (a: AutoAccepted) => {
+    setViewFrame(a.frame_ini);
+    onSeek(a.frame_ini);
+    onFocus({ frame: a.frame_ini, marks: [{ track: a.track, label: "✓", what: `trozo ${a.track} (${a.person})` }] });
+  };
+  const unsafeText = plan
+    ? (Object.entries(plan.unsafe) as [AutoReason, number][])
+        .sort((a, b) => b[1] - a[1])
+        .map(([r, n]) => `${n} ${AUTO_REASON_NAMES[r]}`)
+        .join(", ")
+    : "";
+
   // A-5: quick join. Her holes, the pieces that fit each one, and where we are.
   const quickNames = useMemo(() => {
     const order = new Map(roster.map((r) => [r.player_id, r.number ?? 999]));
@@ -543,9 +603,86 @@ export function AnchorsPanel({
     setQuickCursor(prev.a);
   };
 
+  // «Muestras»: frames where many of our players are in view, named box by box with the player keys of «Anclas».
+  const sampleMin = Math.round(tech.sampleMinPlayers);
+  const samples = useMemo(() => (tab === "samples" ? findSamples(data, tech.sampleGapS, sampleMin) : []), [tab, data, tech.sampleGapS, sampleMin]);
+  const [sampleIdx, setSampleIdx] = useState(0);
+  const [sChosen, setSChosen] = useState<string | null>(null);
+  const [selTrack, setSelTrack] = useState<number | null>(null);
+  const nameOfId = useMemo(() => new Map(people.filter((p) => p.player_id).map((p) => [p.id, p.player_id])), [people]);
+  const sample = samples[Math.min(sampleIdx, samples.length - 1)] ?? null;
+  const sBoxes = useMemo(() => (sample ? sampleBoxes(data, edits, sample.frame, anchors, nameOfId) : []), [sample, data, edits, anchors, nameOfId]);
+  const sProg = sampleProgress(sBoxes);
+  // The circle of a box shows the shirt number of the player, else the start of her name.
+  const sLabel = (name: string) => {
+    const n = roster.find((r) => r.player_id === name)?.number;
+    return n != null ? String(n) : name.slice(0, 2);
+  };
+  // Entering the tab (or new parameters): start at the first sample that still has boxes to name.
+  const sampleStart = useRef<unknown>(null);
+  useEffect(() => {
+    if (tab !== "samples" || samples.length === 0 || sampleStart.current === samples) return;
+    sampleStart.current = samples;
+    const first = samples.findIndex((x) => {
+      const p = sampleProgress(sampleBoxes(data, edits, x.frame, anchors, nameOfId));
+      return p.named < p.total;
+    });
+    setSampleIdx(first < 0 ? 0 : first);
+    setSChosen(null);
+    setSelTrack(null);
+    // Only when the list of samples changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, samples]);
+  const sFrame = tab === "samples" && sample ? sample.frame : null;
+  useEffect(() => {
+    if (sFrame !== null) onSeek(sFrame);
+    // Only when the sample changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sFrame]);
+  useEffect(() => {
+    if (tab !== "samples" || !sample) return;
+    onFocus(sampleFocus(sample.frame, sBoxes, selTrack, sLabel));
+    // The marks follow the boxes and the selected one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, sample, sBoxes, selTrack]);
+  const moveSample = (dir: 1 | -1) => {
+    if (samples.length === 0) return;
+    setSampleIdx((i) => (Math.min(i, samples.length - 1) + dir + samples.length) % samples.length);
+    setSChosen(null);
+    setSelTrack(null);
+  };
+  // Naming one box: an ordinary anchor, as in «Anclas» (the same warning when her chain overlaps another of hers).
+  const sampleName = (track: number, player: string) => {
+    if (!sample) return;
+    setStack((st) => [...st.slice(-199), { kind: "anchors", anchors, skipped }]);
+    const a = { frame: sample.frame, track, player };
+    const ov = chainOverlaps(chainLook, chainIdx, anchors, a);
+    setOverlapWarn(ov.length ? { player, items: ov } : null);
+    saveAnchors(nameInSample(anchors, a));
+    setSChosen(null);
+    setSelTrack(null);
+  };
+  // A key (or a click on the list) with a box already selected names it; otherwise the player waits for the click.
+  const samplePlayer = (player: string) => {
+    if (selTrack !== null) sampleName(selTrack, player);
+    else setSChosen((c) => (c === player ? null : player));
+  };
+  // Esc: first drops what is half done; Supr: undoes the last anchor.
+  const sampleUndo = () => {
+    const last = stack[stack.length - 1];
+    if (!last || last.kind !== "anchors") return onMsg("No hay un ancla reciente que deshacer (Ctrl + Z deshace también las ediciones).");
+    undo();
+  };
+
   // A click on a highlighted box of the open doubt: «this is her» (Correction calls it through pickRef).
   useEffect(() => {
     pickRef.current = (chosen, highlighted, frame) => {
+      if (tab === "samples") {
+        if (!sample || !sBoxes.some((b) => b.track === chosen.track)) return false;
+        if (sChosen) sampleName(chosen.track, sChosen);
+        else setSelTrack((t) => (t === chosen.track ? null : chosen.track));
+        return true;
+      }
       if (tab !== "doubts" || !openD) return false;
       const r = pickInDoubt(edits, data, frame, chosen, highlighted, (id) => playerOfId(id), named, openD.players);
       resolve(openD, r.edits);
@@ -598,6 +735,23 @@ export function AnchorsPanel({
         if (e.key === "Enter") return stop(), openD.kind === "dos_sitios" ? answer(openD, "both") : doubtOk(openD);
         if (k === "d") return stop(), setOtherFor(doubtKey(openD));
         if (k === "s") return stop(), doubtDrop(openD);
+        return;
+      }
+      if (tab === "samples") {
+        const k = e.key.toLowerCase();
+        if (k === "n") return stop(), moveSample(e.shiftKey ? -1 : 1);
+        if (e.key === "Escape") {
+          if (sChosen !== null || selTrack !== null) {
+            setSChosen(null);
+            setSelTrack(null);
+          } else sampleUndo();
+          return stop();
+        }
+        if (e.key === "Delete" || e.key === "Backspace") return stop(), sampleUndo();
+        if (!sample || e.shiftKey) return;
+        if (k === "x") return stop(), samplePlayer(NOT_PLAYER);
+        const pk = PLAYER_KEYS.indexOf(k);
+        if (pk >= 0 && pk < roster10.length) return stop(), samplePlayer(roster10[pk].player_id);
         return;
       }
       if (tab === "quick") {
@@ -656,6 +810,9 @@ export function AnchorsPanel({
         </button>
         <button type="button" className="seg-opt flex-1 !px-2" aria-pressed={tab === "quick"} title="Unión rápida: recorre los huecos de una jugadora y une la pieza que cabe, con una tecla" onClick={() => setTab("quick")}>
           Unión
+        </button>
+        <button type="button" className="seg-opt flex-1 !px-2" aria-pressed={tab === "samples"} title="Muestras: cuadros con muchas de nuestras jugadoras a la vista; se nombran varias cajas de una vez" onClick={() => setTab("samples")}>
+          Muestras
         </button>
       </div>
       <IconButton label="Tipos de duda y atajos de teclado" onClick={() => setLegend(true)}>
@@ -776,6 +933,184 @@ export function AnchorsPanel({
     </div>
   );
 
+  const overlapNode =
+    overlapWarn && overlapWarn.items.length > 0 ? (
+    <div className="space-y-1.5 rounded-lg bg-warn-900/60 p-2 text-[11px] text-warn" role="alert">
+      {overlapWarn.items.map((o) => (
+        <div key={`${o.chain}:${o.other}`} className="space-y-1">
+          <p className="flex items-start gap-1.5">
+            <Warning size={13} className="mt-px shrink-0" />
+            <span>
+              Esta cadena ({String(o.chain)}) se solapa con otra de {overlapWarn.player} ({String(o.other)}) entre {fmtT(o.from / fps)} y {fmtT(o.to / fps)} ({((o.to - o.from) / fps).toFixed(1)} s): en el solape una de las dos es otra
+              persona. El ancla se guardó igual.
+            </span>
+          </p>
+          <div className="flex flex-wrap gap-1">
+            <button type="button" className="btn !px-1.5 !py-0.5 text-[11px]" title="La cadena que acabas de anclar pierde el solape: sus tramos ahí quedan como personas aparte, sin nombre" onClick={() => fixOverlap(o, "esta", "partir")}>
+              <Scissors size={12} /> Partir (esta)
+            </button>
+            <button type="button" className="btn !px-1.5 !py-0.5 text-[11px]" title="Las cajas de la cadena que acabas de anclar en el solape no cuentan" onClick={() => fixOverlap(o, "esta", "descartar")}>
+              <X size={12} /> Descartar (esta)
+            </button>
+            <button type="button" className="btn btn-ghost !px-1.5 !py-0.5 text-[11px]" title="La otra cadena (ya anclada a ella) pierde el solape: sus tramos ahí quedan como personas aparte" onClick={() => fixOverlap(o, "otra", "partir")}>
+              <Scissors size={12} /> Partir (la otra)
+            </button>
+            <button type="button" className="btn btn-ghost !px-1.5 !py-0.5 text-[11px]" title="Las cajas de la otra cadena en el solape no cuentan" onClick={() => fixOverlap(o, "otra", "descartar")}>
+              <X size={12} /> Descartar (la otra)
+            </button>
+            <button type="button" className="btn btn-ghost !px-1.5 !py-0.5 text-[11px]" onClick={() => setOverlapWarn((w) => (w ? { ...w, items: w.items.filter((x) => x !== o) } : w))}>
+              Dejar así
+            </button>
+          </div>
+        </div>
+      ))}
+      <p className="text-faint">«Descartar» es definitivo para el relleno; «Partir» se puede reemplazar si vuelves a rellenar por tramos. Ctrl + Z deshace cualquiera.</p>
+    </div>
+  ) : null;
+
+  // «Muestras»: the sample being shown, its boxes and the roster to name them with.
+  const samplesBody = (
+    <div className="space-y-2.5 text-xs">
+      {samples.length === 0 || !sample ? (
+        <p className="rounded-lg bg-raised/60 px-2 py-1.5 text-ink-2">
+          Ningún cuadro de esta parte tiene {sampleMin} o más de nuestras jugadoras a la vista (por color de uniforme), con {tech.sampleGapS} s entre muestras. Baja el mínimo o la separación en Configuración › Detalles técnicos.
+        </p>
+      ) : (
+        <>
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="text-[13px] font-bold text-ink">Muestras</h3>
+            <span className="tc text-ink-2" title="Muestra actual y cuántas de nuestras cajas de ese cuadro ya tienen nombre (ancla de este cuadro o nombre en la mesa)">
+              muestra <span className="text-ink">{Math.min(sampleIdx, samples.length - 1) + 1}</span>/{samples.length} · <span className="text-ink">{sProg.named}</span> de {sProg.total} nombradas
+            </span>
+          </div>
+          <div className="h-1 overflow-hidden rounded-full bg-raised" role="progressbar" aria-valuemin={0} aria-valuemax={sProg.total} aria-valuenow={sProg.named} aria-label="Cajas nombradas en esta muestra">
+            <div className="h-full bg-ok transition-[width] duration-300" style={{ width: `${sProg.total ? (100 * sProg.named) / sProg.total : 0}%` }} />
+          </div>
+          {overlapNode}
+          <div className="space-y-2 rounded-xl bg-raised/50 p-2.5">
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-ink-2">
+              <span className="tc text-base text-ink">{fmtT(sample.frame / fps)}</span>
+              <span className="tag">{sample.own} propias a la vista</span>
+              <span className="tc ml-auto text-faint">verde = con nombre · amarillo = falta</span>
+            </p>
+            {focusMissing && <p className="text-[11px] text-warn">{focusMissing}</p>}
+            <p className="text-ink">
+              {sChosen
+                ? `Elegiste a ${sChosen === NOT_PLAYER ? "«No es jugadora»" : sChosen}: haz clic en su caja.`
+                : selTrack !== null
+                  ? `Caja del trozo ${selTrack} elegida: pulsa la tecla de la jugadora.`
+                  : "Clic en una caja y la tecla de la jugadora (o la tecla y luego el clic)."}
+            </p>
+            <div className="grid grid-cols-4 gap-0.5">
+              {roster10.map((p, i) => {
+                const inFrame = sBoxes.some((b) => b.name === p.player_id);
+                return (
+                  <button
+                    key={p.player_id}
+                    type="button"
+                    className={`btn !justify-start !gap-1 !px-1.5 !py-0.5 text-[11px] ${sChosen === p.player_id ? "btn-primary" : "btn-ghost"} ${inFrame && sChosen !== p.player_id ? "!text-ok" : ""}`}
+                    aria-pressed={sChosen === p.player_id}
+                    title={inFrame ? `${p.player_id} ya tiene caja en este cuadro (si la nombras en otra, se mueve)` : undefined}
+                    onClick={() => samplePlayer(p.player_id)}
+                  >
+                    {PLAYER_KEYS[i] && <kbd className="tc w-2.5 shrink-0 text-faint uppercase">{PLAYER_KEYS[i]}</kbd>}
+                    <span className="truncate">{shownName(p.player_id)}</span>
+                    {inFrame && <Check size={11} weight="bold" className="ml-auto shrink-0" aria-hidden />}
+                  </button>
+                );
+              })}
+            </div>
+            {roster10.length === 0 && <p className="text-warn">Sin plantilla: añádela en Configuración para nombrar cajas.</p>}
+            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] gap-1">
+              <button type="button" className="btn btn-ghost !px-1.5 text-xs" title="Muestra anterior (Shift + N)" onClick={() => moveSample(-1)}>
+                ‹ <kbd className="tc text-faint">Shift n</kbd>
+              </button>
+              <button type="button" className="btn btn-primary justify-center !px-1.5 text-xs" title="Pasa a la siguiente muestra (las cajas sin nombre se quedan sin nombre)" onClick={() => moveSample(1)}>
+                <FastForward size={14} />
+                {sProg.named < sProg.total ? "Saltar muestra" : "Siguiente muestra"} <kbd className="tc opacity-70">n</kbd>
+              </button>
+              <button type="button" className="btn !px-1.5 text-xs" title="Árbitra, banca, cuerpo técnico: la caja elegida se guarda como «no es jugadora»" disabled={selTrack === null && sChosen === null} onClick={() => samplePlayer(NOT_PLAYER)}>
+                No es jugadora <kbd className="tc text-faint">x</kbd>
+              </button>
+              <button type="button" className="btn !px-1.5 text-xs" title="Deshace el último ancla (Esc o Supr)" onClick={sampleUndo}>
+                <ArrowCounterClockwise size={13} />
+              </button>
+            </div>
+          </div>
+          <p className="text-[10px] text-faint">
+            Cada nombre es un ancla igual que en «Anclas» (mismo archivo anchors_{part}.json); después «Rellenar» conecta el resto. Las muestras salen de cuántas cajas nuestras se ven (por color), no del seguimiento: una caja de otro equipo mal leída por el color no aparece aquí.
+          </p>
+        </>
+      )}
+    </div>
+  );
+
+  // «Aceptar las seguras» and the list of what was accepted by itself.
+  const autoNode =
+    links && (plan || autoList.length > 0 || autoNote) ? (
+      <div className="mb-3 space-y-1.5 rounded-lg bg-accent-900/30 p-2 text-[11px]">
+        {autoNote && autoNote.length > 0 && (
+          <p className="flex items-center gap-1.5 text-accent-100" role="status">
+            <ShieldCheck size={13} aria-hidden />
+            <span>Se {autoNote.length === 1 ? "aceptó" : "aceptaron"} {sugText(autoNote.length)}</span>
+            <button
+              type="button"
+              className="btn !ml-auto !px-1.5 !py-0.5 text-[11px]"
+              onClick={() => {
+                removeAuto(autoNote);
+                setAutoNote(null);
+              }}
+            >
+              <ArrowCounterClockwise size={12} /> Deshacer
+            </button>
+          </p>
+        )}
+        {plan && (
+          <div className="space-y-1">
+            {plan.accepted.length > 0 ? (
+              <button
+                type="button"
+                className="btn btn-primary w-full justify-center !gap-1 !px-2 !py-1 text-[11px]"
+                title={`${plan.accepted.length} de ${plan.judged} sugerencias pendientes cumplen todo: p ≥ ${(tech.autoAcceptP * 100).toFixed(1)} %, costo ≤ ${AUTO_MAX_COST}, sin choque de equipo, solape, salto ni duda. Se aplican como UNA edición (Ctrl + Z la deshace entera).`}
+                onClick={() => applyAuto(false)}
+              >
+                <ShieldCheck size={13} /> {autoLabel(plan.accepted.length)}
+              </button>
+            ) : (
+              <p className="text-ink-2">Ninguna de las {plan.judged} sugerencias pendientes es segura todavía.</p>
+            )}
+            <p className="text-faint" title="Por qué las demás no son seguras (una sugerencia puede tener varios motivos)">
+              {plan.accepted.length} de {plan.judged} cumplen p ≥ {(tech.autoAcceptP * 100).toFixed(1)} % y costo ≤ {AUTO_MAX_COST} sin choques{unsafeText ? ` · no: ${unsafeText}` : ""}.
+            </p>
+          </div>
+        )}
+        {autoList.length > 0 && (
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-1 text-accent-100 hover:text-ink">
+              <CaretDown size={11} className="transition-transform group-open:rotate-180" aria-hidden /> Aceptadas automáticamente ({autoList.length})
+            </summary>
+            <ul className="mt-1 max-h-40 space-y-0.5 overflow-y-auto">
+              {autoList.map((a) => (
+                <li key={a.key} className="flex items-center gap-1 rounded bg-raised/60 px-1.5 py-0.5">
+                  <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => showAuto(a)} title={`Trozo ${a.track}, cuadros ${a.frame_ini}–${a.frame_fin}: clic para ir al cuadro`}>
+                    <span className="tc text-ink">{fmtT(a.frame_ini / fps)}</span>
+                    <span className="truncate text-ink">{a.person}</span>
+                    <span className="tc shrink-0 text-faint">
+                      {((a.frame_fin - a.frame_ini) / fps + data.stride / fps).toFixed(1)} s · {Math.round(a.p * 1000) / 10} % · {a.cost.toFixed(2)}
+                    </span>
+                  </button>
+                  <IconButton label={`Quitar: el trozo ${a.track} deja de ser de ${a.person} y la sugerencia no se acepta sola otra vez`} onClick={() => removeAuto([a])}>
+                    <X size={12} />
+                  </IconButton>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 text-[10px] text-faint">Aceptadas por el lote, no a mano. Quitar una la devuelve a las uniones sugeridas, sin aceptar.</p>
+          </details>
+        )}
+      </div>
+    ) : null;
+
   let body: React.ReactNode;
   if (loaded !== loadKey) body = <p className="text-xs text-faint">Leyendo la carpeta…</p>;
   else if (tab === "anchors" && !suggest)
@@ -802,39 +1137,7 @@ export function AnchorsPanel({
           <div className="h-1 overflow-hidden rounded-full bg-raised" role="progressbar" aria-valuemin={0} aria-valuemax={list.length} aria-valuenow={done} aria-label="Anclas hechas">
             <div className="h-full bg-ok transition-[width] duration-300" style={{ width: `${list.length ? (100 * done) / list.length : 0}%` }} />
           </div>
-        {overlapWarn && overlapWarn.items.length > 0 && (
-          <div className="space-y-1.5 rounded-lg bg-warn-900/60 p-2 text-[11px] text-warn" role="alert">
-            {overlapWarn.items.map((o) => (
-              <div key={`${o.chain}:${o.other}`} className="space-y-1">
-                <p className="flex items-start gap-1.5">
-                  <Warning size={13} className="mt-px shrink-0" />
-                  <span>
-                    Esta cadena ({String(o.chain)}) se solapa con otra de {overlapWarn.player} ({String(o.other)}) entre {fmtT(o.from / fps)} y {fmtT(o.to / fps)} ({((o.to - o.from) / fps).toFixed(1)} s): en el solape una de las dos es otra
-                    persona. El ancla se guardó igual.
-                  </span>
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  <button type="button" className="btn !px-1.5 !py-0.5 text-[11px]" title="La cadena que acabas de anclar pierde el solape: sus tramos ahí quedan como personas aparte, sin nombre" onClick={() => fixOverlap(o, "esta", "partir")}>
-                    <Scissors size={12} /> Partir (esta)
-                  </button>
-                  <button type="button" className="btn !px-1.5 !py-0.5 text-[11px]" title="Las cajas de la cadena que acabas de anclar en el solape no cuentan" onClick={() => fixOverlap(o, "esta", "descartar")}>
-                    <X size={12} /> Descartar (esta)
-                  </button>
-                  <button type="button" className="btn btn-ghost !px-1.5 !py-0.5 text-[11px]" title="La otra cadena (ya anclada a ella) pierde el solape: sus tramos ahí quedan como personas aparte" onClick={() => fixOverlap(o, "otra", "partir")}>
-                    <Scissors size={12} /> Partir (la otra)
-                  </button>
-                  <button type="button" className="btn btn-ghost !px-1.5 !py-0.5 text-[11px]" title="Las cajas de la otra cadena en el solape no cuentan" onClick={() => fixOverlap(o, "otra", "descartar")}>
-                    <X size={12} /> Descartar (la otra)
-                  </button>
-                  <button type="button" className="btn btn-ghost !px-1.5 !py-0.5 text-[11px]" onClick={() => setOverlapWarn((w) => (w ? { ...w, items: w.items.filter((x) => x !== o) } : w))}>
-                    Dejar así
-                  </button>
-                </div>
-              </div>
-            ))}
-            <p className="text-faint">«Descartar» es definitivo para el relleno; «Partir» se puede reemplazar si vuelves a rellenar por tramos. Ctrl + Z deshace cualquiera.</p>
-          </div>
-        )}
+        {overlapNode}
           {cur ? (
             <div className="space-y-2 rounded-xl bg-raised/50 p-2.5">
               <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2">
@@ -916,6 +1219,7 @@ export function AnchorsPanel({
         </section>
       </div>
     );
+  else if (tab === "samples") body = samplesBody;
   else if (tab === "quick") body = quickBody;
   else if (!links)
     body = <p className="text-xs text-ink-2">Las dudas salen de links_{part}.json. Pulsa «Rellenar» en Anclas.</p>;
@@ -1201,6 +1505,7 @@ export function AnchorsPanel({
         </Modal>
       )}
       {header}
+      {autoNode}
       {body}
       <details className="group mt-3 border-t border-line pt-2 text-[11px] text-faint" open={shortcutsOpen} onToggle={(e) => setShortcutsOpen(e.currentTarget.open)}>
         <summary className="flex cursor-pointer list-none items-center gap-1.5 hover:text-ink-2">

@@ -84,3 +84,20 @@ test("el umbral de salto del balón sale de Detalles técnicos", async () => {
   assert.ok(ballJumpFrames(pts, 30).has(3));
   assert.equal([...ballJumpFrames(pts, 30, 1, 1, 1, trackingParamsOf(withTrackingParam(match, "ballJumpMs", 50)).ballJumpMs)].length, 0);
 });
+
+test("aceptar seguras y muestras: defectos (apagado, 0.98, 45 s, 8) y validación", () => {
+  const d = TRACKING_DEFAULTS;
+  assert.deepEqual([d.autoAcceptP, d.autoAcceptOn, d.sampleGapS, d.sampleMinPlayers], [0.98, false, 45, 8]);
+  const f = trackingFieldOf("autoAcceptP");
+  assert.deepEqual([f.min, f.max], [0.9, 0.999]);
+  const a = withTrackingParam(withTrackingParam(match, "autoAcceptOn", true), "autoAcceptP", 0.99);
+  assert.deepEqual(a.tech, { tracking: { autoAcceptOn: true, autoAcceptP: 0.99 } });
+  assert.equal(trackingParamsOf(a).autoAcceptOn, true);
+  // Volver al defecto lo quita.
+  assert.equal(withTrackingParam(withTrackingParam(a, "autoAcceptOn", false), "autoAcceptP", 0.98).tech, undefined);
+  // Fuera de rango o mal tipado: se ignora.
+  const bad = { ...match, tech: { tracking: { autoAcceptP: 0.5, sampleGapS: 1, sampleMinPlayers: 40, autoAcceptOn: "sí" } } };
+  assert.deepEqual([trackingParamsOf(bad).autoAcceptP, trackingParamsOf(bad).sampleGapS, trackingParamsOf(bad).sampleMinPlayers, trackingParamsOf(bad).autoAcceptOn], [0.98, 45, 8, false]);
+  // No viajan al CLI del relleno.
+  assert.deepEqual(fillRequestOf(a), {});
+});

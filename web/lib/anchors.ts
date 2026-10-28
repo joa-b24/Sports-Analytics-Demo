@@ -617,6 +617,8 @@ export interface FocusMark {
   label: string;
   // What it is, for the line that says it is not in the frame.
   what: string;
+  // Colour of its outline (a token of globals.css); missing = by number, FOCUS_COLORS.
+  color?: string;
 }
 // Colour of the highlighted boxes by their number (1, 2, 3...): tokens of globals.css.
 export const FOCUS_COLORS = ["var(--color-warn)", "var(--color-accent-300)", "var(--color-ok)", "var(--color-danger)"];
