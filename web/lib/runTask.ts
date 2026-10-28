@@ -6,12 +6,17 @@
 // "refine": sportsan.tracking.refine (feet and smoothed calibration of the part, in place with a backup .pre_refine.json).
 // "ball": sportsan.tracking.ball run (the ball tracker on one part; writes ball_auto_<part>.json, never accepted by itself).
 // "train": sportsan.tracking.ball train with the hand samples of a video (Playground > Balón); `part` is the video id (v2).
-export type RunTask = "suggest" | "fill" | "refine" | "ball" | "train";
+// "linkmodel": sportsan.tracking.links_eval, the link model of the match (tracking/link_model.json, one per match, used by every
+// video; trained from the parts corrected by hand, labels_*.json). `part` is always LINKMODEL_PART; `videos` limits the prefixes.
+export type RunTask = "suggest" | "fill" | "refine" | "ball" | "train" | "linkmodel";
+export const LINKMODEL_PART = "modelo";
 export interface RunArgs {
   task: RunTask;
   match: string;
   part: string;
   perMin?: string;
+  // Only for linkmodel: video prefixes to train with (v1, v2...). Absent = links_eval discovers them (--train auto).
+  videos?: string[];
   // "exp": the experimental fill (variant B, links_<part>_exp.json). Only for fill.
   variant?: "exp";
   // Only for ball: probability to accept (0.8-0.99) and whether to overwrite an existing ball_auto_ (--force).
@@ -56,9 +61,15 @@ export const PER_MIN = ["1", "2", "3", "4", "5", "hybrid"] as const;
 export function validateRunArgs(body: unknown): { ok: true; args: RunArgs } | { ok: false; error: string } {
   if (!body || typeof body !== "object") return { ok: false, error: "Petición vacía." };
   const b = body as Record<string, unknown>;
-  if (b.task !== "suggest" && b.task !== "fill" && b.task !== "refine" && b.task !== "ball" && b.task !== "train") return { ok: false, error: "Tarea desconocida." };
+  if (b.task !== "suggest" && b.task !== "fill" && b.task !== "refine" && b.task !== "ball" && b.task !== "train" && b.task !== "linkmodel") return { ok: false, error: "Tarea desconocida." };
   if (typeof b.match !== "string" || !SAFE.test(b.match)) return { ok: false, error: "Partido no válido." };
   if (typeof b.part !== "string" || !SAFE.test(b.part)) return { ok: false, error: "Parte no válida." };
+  if (b.task === "linkmodel" && b.part !== LINKMODEL_PART) return { ok: false, error: "Parte no válida." };
+  let videos: string[] | undefined;
+  if (b.videos !== undefined && b.videos !== null) {
+    if (b.task !== "linkmodel" || !Array.isArray(b.videos) || b.videos.length > 20 || !b.videos.every((v) => typeof v === "string" && /^v\d{1,3}$/.test(v))) return { ok: false, error: "Videos de entrenamiento no válidos." };
+    if (b.videos.length) videos = [...new Set(b.videos as string[])];
+  }
   let perMin: string | undefined;
   if (b.perMin !== undefined && b.perMin !== null) {
     const p = String(b.perMin);
@@ -107,7 +118,7 @@ export function validateRunArgs(body: unknown): { ok: true; args: RunArgs } | { 
   }
   return {
     ok: true,
-    args: { task: b.task, match: b.match, part: b.part, perMin, ...(variant ? { variant } : {}), ...(accept !== undefined ? { accept } : {}), ...(force ? { force } : {}), ...(unnamedCost !== undefined ? { unnamedCost } : {}), ...(seg ? { seg } : {}) },
+    args: { task: b.task, match: b.match, part: b.part, perMin, ...(videos ? { videos } : {}), ...(variant ? { variant } : {}), ...(accept !== undefined ? { accept } : {}), ...(force ? { force } : {}), ...(unnamedCost !== undefined ? { unnamedCost } : {}), ...(seg ? { seg } : {}) },
   };
 }
 
@@ -119,6 +130,7 @@ export function runArgv(a: RunArgs): string[] {
     if (a.force) argv.push("--force");
     return argv;
   }
+  if (a.task === "linkmodel") return ["-m", "sportsan.tracking.links_eval", "--match", a.match, "--train", a.videos?.length ? a.videos.join(",") : "auto"];
   if (a.task === "refine") return ["-m", "sportsan.tracking.refine", "--match", a.match, "--part", a.part];
   const argv = ["-m", "sportsan.tracking.anchors", a.task, "--match", a.match, "--part", a.part];
   if (a.task === "suggest" && a.perMin) argv.push("--per-min", a.perMin);
@@ -158,6 +170,8 @@ export function parseProgress(text: string): { phase: string; done: number; tota
 // A short message in Spanish from the output of a failed run (never the dump itself).
 export function errorMessage(output: string, code: number | null | undefined): string {
   if (/ModuleNotFoundError|No module named/.test(output)) return "Falta instalar algo de Python en .venv (pip install -e \".[dev]\").";
+  if (/Falta el modelo de uniones/.test(output)) return "Falta el modelo de uniones de este partido: entrénalo en Anclas.";
+  if (/No hay con qué entrenar/.test(output)) return "No hay con qué entrenar: corrige y guarda antes una parte con nombres en la mesa (labels_*.json).";
   if (/FileNotFoundError|No such file/.test(output)) return "Falta un archivo de la parte (¿tracks de esta parte o sugerencias/anclas?).";
   if (/unrecognized arguments:.*--samples/.test(output)) return "El entrenamiento con muestras (--samples) aún no está disponible en sportsan.tracking.ball.";
   if (/No hay modelo/.test(output)) return "No hay modelo de balón entrenado (weights/ball_model.pt).";

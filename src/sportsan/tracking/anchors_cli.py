@@ -148,6 +148,28 @@ class Progress:
                 f.write(line + "\n")
 
 
+def missing_model_message(dir_: Path) -> str:
+    """Mensaje (en español) cuando falta `link_model.json`: qué es, cómo se entrena y con qué partes."""
+    from sportsan.tracking.links_eval import label_files, named_parts, train_command, video_prefixes
+
+    match = dir_.parent.name
+    head = (f"Falta el modelo de uniones de este partido ({dir_ / 'link_model.json'}). Es el modelo que aprende, de las partes que "
+            "corregiste a mano, qué trozos de track son la misma persona y cuáles no son jugadoras; lo usan «sugerir» y «rellenar» "
+            "de todos los videos del partido. Se entrena una sola vez por partido.")
+    labels = label_files(dir_)
+    if not labels:
+        return (f"{head}\nNo hay con qué entrenarlo todavía: no existe ningún labels_*.json en {dir_}. Corrige a mano al menos una parte "
+                "en la mesa (nombra a las jugadoras) y guárdala; eso crea su labels_<parte>.json. Después entrena con:\n"
+                f"  {train_command(match, [])}")
+    named = named_parts(dir_)
+    if not named:
+        return (f"{head}\nHay labels_*.json ({', '.join(labels)}) pero ninguno tiene personas con nombre. Nombra a las jugadoras de al "
+                "menos una parte en la mesa y guárdala; después entrena con:\n"
+                f"  {train_command(match, video_prefixes(labels))}")
+    return (f"{head}\nSe entrena con las partes corregidas a mano ({', '.join(named)}), tarda unos 8 minutos:\n"
+            f"  {train_command(match, video_prefixes(named))}")
+
+
 # ------------------------------------------------------------------------------------------------ preparación
 
 @dataclass
@@ -157,7 +179,10 @@ class Models:
 
     @classmethod
     def load(cls, dir_: Path) -> "Models":
-        d = json.loads((dir_ / "link_model.json").read_text(encoding="utf-8"))
+        path = dir_ / "link_model.json"
+        if not path.exists():
+            raise SystemExit(missing_model_message(dir_))
+        d = json.loads(path.read_text(encoding="utf-8"))
         if d["link"].get("features") != FEATURES:
             raise SystemExit("link_model.json no corresponde a las variables actuales (FEATURES): hay que reentrenarlo con links_eval")
         player = TreeModel.from_dict(d["player"])

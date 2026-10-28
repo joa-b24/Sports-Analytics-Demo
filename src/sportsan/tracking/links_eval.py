@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from sportsan.config import load_config, project_root
+from sportsan.tracking.anchors_cli import Progress
 from sportsan.tracking.tracklets import (
     FEATURES,
     LINK_P_MIN,
@@ -90,6 +91,32 @@ def named_parts(dir_: Path) -> list[str]:
     return out
 
 
+def label_files(dir_: Path) -> list[str]:
+    """Nombres de las partes con `labels_*.json` en la carpeta (tengan o no personas con nombre)."""
+    if not dir_.is_dir():
+        return []
+    out = []
+    for p in sorted(dir_.iterdir()):
+        m = NAME.match(p.name)
+        if m:
+            out.append(f"{m[1]}_{m[2]}_{m[3]}")
+    return out
+
+
+def video_prefixes(parts: list[str]) -> list[str]:
+    """Prefijos de video (v1, v2...) de una lista de partes, sin repetir y en orden."""
+    seen: list[str] = []
+    for p in parts:
+        v = p.split("_", 1)[0]
+        if v not in seen:
+            seen.append(v)
+    return seen
+
+
+def train_command(match: str, prefixes: list[str]) -> str:
+    return f"python -m sportsan.tracking.links_eval --match {match} --train {','.join(prefixes) if prefixes else 'auto'}"
+
+
 def _venue(dir_: Path, name: str) -> tuple[float, float]:
     """Medidas de la sede (m) de una parte, en metros reales."""
     v = json.loads((dir_ / f"tracks_{name}.json").read_text(encoding="utf-8")).get("venue") or {}
@@ -146,7 +173,7 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--match")
-    ap.add_argument("--train", default="v1", help="prefijo(s) o nombres de partes de entrenamiento, separados por comas")
+    ap.add_argument("--train", default="auto", help="prefijo(s) o nombres de partes de entrenamiento, separados por comas; «auto» (o vacío): todas las partes con nombres de la carpeta")
     ap.add_argument("--test", default="", help="partes de prueba (no se usan para ajustar)")
     ap.add_argument("--accel-veto", action="store_true", help="descartar las uniones que exigen un arranque o una frenada imposible")
     ap.add_argument("--feet", action="store_true", help="posiciones con los pies corregidos (feet.py)")
@@ -161,9 +188,23 @@ def main() -> None:
     dir_ = root / cfg["paths"]["tracking_dir"]
     all_named = named_parts(dir_)
     pick = lambda spec: [p for p in all_named if any(p == s or p.startswith(s + "_") or p == s for s in spec.split(",") if s)]  # noqa: E731
-    train, test = pick(args.train), pick(args.test)
+    auto = args.train.strip() in ("", "auto")
+    train, test = (list(all_named) if auto else pick(args.train)), pick(args.test)
+    if auto:
+        test = [p for p in test if p not in train]
+    if not train:
+        labels = label_files(dir_)
+        if not labels:
+            raise SystemExit(f"No hay con qué entrenar: {dir_} no tiene ningún labels_*.json. Corrige a mano una parte en la mesa (con nombres de jugadoras) y guárdala; eso crea su labels_.")
+        raise SystemExit(f"No hay con qué entrenar: hay labels_*.json ({', '.join(labels)}) pero {'ninguno con' if auto else 'ninguno de los pedidos con'} personas con nombre. Nombra a las jugadoras de una parte en la mesa y guárdala.")
     print(f"Entrenamiento: {train}\nPrueba: {test}")
-    parts = {n: load_part(dir_, n, args.feet) for n in train + test}
+    pg = Progress(dir_ / "revision" / "progreso_linkmodel_modelo.log")
+    n_parts = len(train) + len(test)
+    parts = {}
+    pg.log("lectura", 0, n_parts)
+    for i, n in enumerate(train + test, 1):
+        parts[n] = load_part(dir_, n, args.feet)
+        pg.log("lectura", i, n_parts)
 
     lines = [f"# Unión de tracks, fase 1 · {cfg.get('match_id', args.match)}", "",
              f"Regla de aceleración: variable `accel_excess` en el modelo{' y veto (se descartan las uniones imposibles)' if args.accel_veto else ' (sin veto)'}. Pies: {'corregidos (feet.py)' if args.feet else 'borde inferior de la caja'}.", ""]
@@ -185,7 +226,8 @@ def main() -> None:
     tl: dict[str, list] = {}
     rows = {"Tracks del seguidor": Score(), "Identidades de process": Score(), "Trozos puros (todas las reglas)": Score()}
     ablate = {f"sin regla «{r}»": Score() for r in ("cross", "size", "speed", "color")}
-    for n in train + test:
+    pg.log("trozos", 0, n_parts)
+    for k, n in enumerate(train + test, 1):
         p = parts[n]
         rows["Tracks del seguidor"] = rows["Tracks del seguidor"].add(score_groups(groups_of(p, "track"), p.truth))
         rows["Identidades de process"] = rows["Identidades de process"].add(score_groups(groups_of(p, "identity"), p.truth))
@@ -195,6 +237,7 @@ def main() -> None:
         for r in ("cross", "size", "speed", "color"):
             t2 = pure_tracklets(p.frames, p.fps, {r: False})
             ablate[f"sin regla «{r}»"] = ablate[f"sin regla «{r}»"].add(score_groups(groups_of(p, "tl", t2, np.arange(len(t2))), p.truth))
+        pg.log("trozos", k, n_parts)
     lines += ["## 2. Pureza de cada forma de agrupar las cajas", "", "| Agrupación | Pureza | Grupos | Uniones pendientes | Cortes pendientes |", "|---|---|---|---|---|"]
     lines += [f"| {k} | {fmt_score(v).replace(' | ', ' | ')} |" for k, v in {**rows, **ablate}.items()] + [""]
 
@@ -212,8 +255,23 @@ def main() -> None:
         k = y >= 0
         return TreeModel().fit(X[k], y[k].astype(float))
 
-    pmodel = {n: fit_trees([pdata[m][0] for m in train if m != n], [pdata[m][1] for m in train if m != n]) for n in train}
-    pfull = fit_trees([pdata[m][0] for m in train], [pdata[m][1] for m in train])
+    n_fit = 2 * (len(train) + 1 if len(train) > 1 else 1)       # modelo «¿es jugadora?» y modelo de unión: uno por parte dejada fuera + el completo
+    fits = [0]
+
+    def logged_fit(Xs, ys):
+        pg.log("entrenamiento", fits[0], n_fit)
+        out = fit_trees(Xs, ys)
+        fits[0] += 1
+        pg.log("entrenamiento", fits[0], n_fit)
+        return out
+
+    pg.log("entrenamiento", 0, n_fit)
+    # Con una sola parte de entrenamiento no hay otra con que probarla: usa el modelo completo (cifras de entrenamiento optimistas).
+    single = len(train) == 1
+    pmodel = {n: logged_fit([pdata[m][0] for m in train if m != n], [pdata[m][1] for m in train if m != n]) for n in train if not single}
+    pfull = logged_fit([pdata[m][0] for m in train], [pdata[m][1] for m in train])
+    if single:
+        pmodel = {train[0]: pfull}
     for n in test:
         pmodel[n] = pfull
     p_player = {n: pmodel[n].predict(pdata[n][0]) for n in train + test}
@@ -241,7 +299,9 @@ def main() -> None:
     # 4. Links among players.
     data = {}
     big: dict[str, np.ndarray] = {}
-    for n in train + test:
+    pg.log("candidatos", 0, n_parts)
+    for k, n in enumerate(train + test, 1):
+        pg.log("candidatos", k - 1, n_parts)
         cands = link_candidates(tl[n], parts[n].fps, accel_veto=args.accel_veto)
         X = np.array([c.x for c in cands]) if cands else np.zeros((0, len(FEATURES)))
         if args.reid or args.reid_sizes:
@@ -253,8 +313,11 @@ def main() -> None:
             if args.reid:
                 X = np.hstack([X, col[:, None]]) if len(cands) else np.zeros((0, len(FEATURES) + 1))
         data[n] = (cands, X, candidate_labels(cands, tl[n], parts[n].truth))
-    lmodel = {n: fit_trees([data[m][1] for m in train if m != n], [data[m][2] for m in train if m != n]) for n in train}
-    lfull = fit_trees([data[m][1] for m in train], [data[m][2] for m in train])
+    pg.log("candidatos", n_parts, n_parts)
+    lmodel = {n: logged_fit([data[m][1] for m in train if m != n], [data[m][2] for m in train if m != n]) for n in train if not single}
+    lfull = logged_fit([data[m][1] for m in train], [data[m][2] for m in train])
+    if single:
+        lmodel = {train[0]: lfull}
     for n in test:
         lmodel[n] = lfull
 
@@ -281,6 +344,10 @@ def main() -> None:
 
     lines += ["## 4. Unión con abstención (solo entre trozos de jugadora)", "",
               "Esfuerzo manual que quedaría = uniones pendientes + cortes pendientes. Se compara con lo que entrega hoy `process`.", ""]
+    n_th = len(set(THRESHOLDS) | {args.p_min})
+    n_val = n_th * ((1 if train else 0) + (1 if test else 0))
+    v_done = 0
+    pg.log("validación", 0, n_val)
     for label, names in (("Entrenamiento (cada parte con modelos que no la vieron)", train), ("Prueba (modelos con todo el entrenamiento)", test)):
         if not names:
             continue
@@ -294,6 +361,8 @@ def main() -> None:
         for th in sorted(set(THRESHOLDS) | {args.p_min}):
             big_stats[:] = [0, 0, 0]
             sc, made, wrong = chain_scores(names, th)
+            v_done += 1
+            pg.log("validación", v_done, n_val)
             mark = " (umbral elegido)" if th == args.p_min else ""
             lines.append(f"| Trozos + unión ≥ {th}{mark} | {made} | {wrong} | {100 * sc.purity:.2f} % | {sc.joins_needed} | {sc.cuts_needed} | {sc.joins_needed + sc.cuts_needed} |")
             if big:
@@ -321,11 +390,13 @@ def main() -> None:
     lines += ["## 5. Modelos", "", f"Unión: árboles de gradiente sobre {len(FEATURES)} variables ({', '.join(FEATURES)}). "
               f"¿Es jugadora?: árboles sobre {len(PLAYER_FEATURES)} variables ({', '.join(PLAYER_FEATURES)}).", ""]
 
+    pg.log("escritura", 0, 1)
     out = dir_ / "revision" / args.report
     out.parent.mkdir(exist_ok=True)
     out.write_text("\n".join(lines), encoding="utf-8")
     if args.report == "union_f1.md" and not args.reid:
         (dir_ / "link_model.json").write_text(json.dumps({"link": full.to_dict(), "player": pfull.to_dict()}), encoding="utf-8")
+    pg.log("escritura", 1, 1)
     print("\n".join(lines))
     print(f"\nInforme: {out}")
 

@@ -52,11 +52,12 @@ import {
 import { AUTO_REASON_NAMES, AUTO_MAX_COST, autoLabel, planAutoAccept, revertAuto, type AutoReason } from "@/lib/autoAccept";
 import { findSamples, nameInSample, sampleBoxes, sampleFocus, sampleProgress } from "@/lib/samples";
 import { fmtT, isTyping } from "@/lib/format";
-import { readLocal, writeLocal } from "@/lib/local";
+import { listLocal, readLocal, writeLocal } from "@/lib/local";
+import { linkModelNotice, linkModelStatus, type LinkModelStatus } from "@/lib/linkModel";
 import { setPref, usePref } from "@/lib/store";
 import { fillRequestOf } from "@/lib/techTracking";
 import { useTrackingTech } from "@/lib/useTech";
-import { phaseName, type RunStatus, type RunTask } from "@/lib/runTask";
+import { LINKMODEL_PART, phaseName, type RunStatus, type RunTask } from "@/lib/runTask";
 import { applyQuickJoin, holeKey, quickHoles, quickProgress, type QuickCandidate, type QuickHole } from "@/lib/quickJoin";
 import type { FeetFile } from "@/lib/feetFix";
 import { dropBoxes, editsKey, merge, separateRun, setPerson, type Person, type TracksFile } from "@/lib/tracks";
@@ -213,6 +214,12 @@ export function AnchorsPanel({
   const paths = anchorPaths(folder, part, false, variant);
   const [suggest, setSuggest] = useState<SuggestFile | null>(null);
   const [loaded, setLoaded] = useState<string | null>(null);
+  // The link model of the match (null: the folder could not be listed, so nothing is blocked).
+  const [model, setModel] = useState<LinkModelStatus | null>(null);
+  const reloadModel = async () => {
+    const l = await listLocal(`matches/${folder}/tracking`);
+    setModel(l ? linkModelStatus(l) : null);
+  };
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   const skippedKey = `anchors:skipped:${folder}:${part}`;
   const skippedRaw = usePref(skippedKey, "");
@@ -240,8 +247,9 @@ export function AnchorsPanel({
   const loadKey = `${paths.dir}|${part}|${paths.links}`;
   useEffect(() => {
     let live = true;
-    void Promise.all([readLocal(paths.suggest), readLocal(paths.anchors), readLinksFile(paths)]).then(([s, a, l]) => {
+    void Promise.all([readLocal(paths.suggest), readLocal(paths.anchors), readLinksFile(paths), listLocal(`matches/${folder}/tracking`)]).then(([s, a, l, dirList]) => {
       if (!live) return;
+      setModel(dirList ? linkModelStatus(dirList) : null);
       try {
         setSuggest(s ? (JSON.parse(s) as SuggestFile) : null);
       } catch {
@@ -1111,6 +1119,29 @@ export function AnchorsPanel({
       </div>
     ) : null;
 
+  // Suggest and fill need the link model of the match: without it they are replaced by the notice to train it.
+  const modelNotice = model ? linkModelNotice(model) : null;
+  const modelMissing = modelNotice != null && modelNotice.kind !== "stale";
+  const modelNode = modelNotice ? (
+    <div className={`space-y-2 rounded-xl p-2.5 text-xs ${modelNotice.kind === "stale" ? "bg-raised/50 text-ink-2" : "bg-warn-900/60 text-warn"}`} role="status">
+      <p className="flex items-start gap-1.5">
+        {modelNotice.kind !== "stale" && <Warning size={13} className="mt-px shrink-0" aria-hidden />}
+        <span>{modelNotice.text}</span>
+      </p>
+      {modelNotice.canTrain && model && (
+        <RunControl
+          match={matchId}
+          part={LINKMODEL_PART}
+          task="linkmodel"
+          label="Entrenar modelo de uniones"
+          icon={<Lightning size={14} />}
+          extra={model.videos.length ? { videos: model.videos } : undefined}
+          onDone={reloadModel}
+        />
+      )}
+    </div>
+  ) : null;
+
   let body: React.ReactNode;
   if (loaded !== loadKey) body = <p className="text-xs text-faint">Leyendo la carpeta…</p>;
   else if (tab === "anchors" && !suggest)
@@ -1120,8 +1151,9 @@ export function AnchorsPanel({
           No hay sugerencias de anclas para esta parte. Elige cuántas anclas por minuto quieres y genera las sugerencias (tarda unos segundos o
           minutos).
         </p>
-        {askDensityControl}
-        <RunControl match={matchId} part={part} task="suggest" perMin={askDensity} label="Generar sugerencias" icon={<MagicWand size={14} />} warn={warnSuggest} onDone={reloadSuggest} />
+        {modelNode}
+        {!modelMissing && askDensityControl}
+        {!modelMissing && <RunControl match={matchId} part={part} task="suggest" perMin={askDensity} label="Generar sugerencias" icon={<MagicWand size={14} />} warn={warnSuggest} onDone={reloadSuggest} />}
       </div>
     );
   else if (tab === "anchors")
@@ -1198,15 +1230,20 @@ export function AnchorsPanel({
               <p>
                 Este archivo trae {suggest?.suggestions.length} sugerencias{suggest && generatedDensity(suggest) ? `, generadas a ${density} por minuto` : ""}. El número se decide al generar, no aquí: Python escribe otro archivo.
               </p>
-              {askDensityControl}
-              <RunControl match={matchId} part={part} task="suggest" perMin={askDensity} label="Generar sugerencias" icon={<MagicWand size={14} />} warn={warnSuggest} onDone={reloadSuggest} />
+              {modelMissing ? <p className="text-warn">Para generar sugerencias nuevas falta el modelo de uniones (ver el aviso en «Relleno»).</p> : (
+                <>
+                  {askDensityControl}
+                  <RunControl match={matchId} part={part} task="suggest" perMin={askDensity} label="Generar sugerencias" icon={<MagicWand size={14} />} warn={warnSuggest} onDone={reloadSuggest} />
+                </>
+              )}
             </div>
           </details>
         </section>
         <section aria-label="Relleno" className="space-y-1.5 border-t border-line pt-3">
           <h3 className="text-[13px] font-bold text-ink">Relleno</h3>
           <p className="text-[11px] text-ink-2">Con las anclas puestas, Python rellena el resto de la parte y deja una lista de dudas.</p>
-          <RunControl match={matchId} part={part} task="fill" variant={variant} label="Rellenar" icon={<Lightning size={14} />} warn={warnFill} extra={{ ...fillRequestOf(techMatch) }} onDone={reloadLinks} />
+          {modelNode}
+          {!modelMissing && <RunControl match={matchId} part={part} task="fill" variant={variant} label="Rellenar" icon={<Lightning size={14} />} warn={warnFill} extra={{ ...fillRequestOf(techMatch) }} onDone={reloadLinks} />}
           <div className="flex items-center gap-2">
             <button type="button" className="btn btn-ghost !px-2 text-xs" title="Volver a leer links_ de la carpeta y aplicarlo a la mesa" onClick={() => void reloadLinks()}>
               <ArrowClockwise size={13} />
