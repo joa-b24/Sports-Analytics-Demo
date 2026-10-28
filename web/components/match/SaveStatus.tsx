@@ -1,11 +1,9 @@
 "use client";
 
-import { CheckCircle, WarningCircle } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal } from "@/components/Modal";
-import { matchItems, statusText } from "@/lib/saveAll";
-import { AUTOSAVE_MS, AUTOSAVE_PREF, attackOf, resultText, saveAll, useSaveLog, type Ask, type Choice, type Progress } from "@/lib/saveMatch";
-import { getPref, setPref, usePref, useStore } from "@/lib/store";
+import { resultText, saveAll, type Ask, type Choice, type Progress } from "@/lib/saveMatch";
+import { useStore } from "@/lib/store";
 import type { Match } from "@/lib/types";
 
 // A file of the folder newer than the last save: asked one by one (or the same answer for the rest of this save).
@@ -56,17 +54,13 @@ export function useAsk(): [Ask, React.ReactNode, () => void] {
   return [ask, dialog, reset];
 }
 
-// In the match header: whether everything is on disk (no button: each part shows its own state), Ctrl+S saves what changed and the optional autosave.
+// In the match header: no visible status any more (each part shows its own state); Ctrl+S saves what changed, with a bar while it runs and a message at the end.
 export function SaveStatus({ match }: { match: Match }) {
   const state = useStore();
   const folder = match.folder;
-  const log = useSaveLog(folder);
-  const items = useMemo(() => (folder ? matchItems(state, match, attackOf(folder)) : []), [state, match, folder]);
-  const status = statusText(items, log);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [result, setResult] = useState<{ text: string; bad: boolean } | null>(null);
   const [ask, dialog, resetAsk] = useAsk();
-  const autosave = usePref(AUTOSAVE_PREF, "") === "1";
   const busy = useRef(false);
 
   const run = useCallback(
@@ -104,32 +98,15 @@ export function SaveStatus({ match }: { match: Match }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
-  const dirtyNow = status.dirty > 0;
-  useEffect(() => {
-    if (!autosave || !folder) return;
-    const id = window.setInterval(() => {
-      if (getPref(AUTOSAVE_PREF, "") === "1") void runRef.current(true);
-    }, AUTOSAVE_MS);
-    return () => window.clearInterval(id);
-  }, [autosave, folder]);
 
   if (!folder) return null;
-  const title = [status.text, ...status.detail, "", "Ctrl+S guarda todas las partes con cambios, el balón, los eventos y un respaldo del partido."].join("\n");
   return (
     <div className="flex items-center gap-2">
-      <span title={title} className={`flex items-center gap-1.5 text-xs whitespace-nowrap ${dirtyNow ? "text-warn" : "text-faint"}`} aria-live="polite" data-save-status>
-        {dirtyNow ? <WarningCircle size={14} aria-hidden /> : <CheckCircle size={14} className="text-ok" aria-hidden />}
-        {progress ? `Guardando${progress.label ? ` · ${progress.label}` : ""} (${progress.done}/${progress.total})` : status.text}
-      </span>
       {progress && (
         <span className="h-1 w-16 overflow-hidden rounded-full bg-line" aria-hidden>
           <span className="block h-full bg-own transition-[width]" style={{ width: `${(100 * progress.done) / Math.max(1, progress.total)}%` }} />
         </span>
       )}
-      <label className="flex items-center gap-1 text-[11px] whitespace-nowrap text-faint" title="Cada 5 minutos, si hay cambios (sin preguntar: un archivo más nuevo en la carpeta se salta)">
-        <input type="checkbox" className="accent-accent" checked={autosave} onChange={(e) => setPref(AUTOSAVE_PREF, e.target.checked ? "1" : "")} />
-        Auto
-      </label>
       {dialog}
       {result && (
         <Modal title={result.bad ? "Guardado con errores" : "Guardado"} onClose={() => setResult(null)}>
