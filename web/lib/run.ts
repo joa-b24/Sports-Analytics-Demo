@@ -6,7 +6,7 @@ import { TRACKING_DEFAULTS, matchOfFolder, trackingParamsOf } from "./techTracki
 
 // The Python jobs the app can start when it runs on this computer (app/api/run). On the web they are not available
 // and the app shows the command to copy instead.
-export type JobKind = "test" | "process" | "kaggle" | "kaggle_pull" | "download";
+export type JobKind = "test" | "process" | "kaggle" | "kaggle_pull" | "download" | "clip";
 export interface JobView {
   id: string;
   kind: JobKind;
@@ -27,6 +27,7 @@ export const JOB_COMMAND: Record<JobKind, (match: string, video: string) => stri
   kaggle: (m, v) => `python -m sportsan.cloud.kaggle run tracking --match ${m} --videos ${v} --no-wait`,
   kaggle_pull: (m) => `python -m sportsan.cloud.kaggle pull --match ${m}`,
   download: (m, v) => `python -m sportsan.ingest.download_videos --match ${m} --video ${v} --youtube-id <id de YouTube>`,
+  clip: (m, v) => `python -m sportsan.clips.render --edit matches/${m}/edits/edit_${v.replace(/_(charla|whatsapp)$/, "")}.json --profile ${v.endsWith("_whatsapp") ? "whatsapp" : "charla"}`,
 };
 
 // Jobs of one match; polls while one runs. `enabled` is null until known, false on the web.

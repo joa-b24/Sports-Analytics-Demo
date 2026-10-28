@@ -19,8 +19,9 @@ export const dynamic = "force-dynamic";
 const ROOT = path.resolve(process.env.SPORTSAN_ROOT ?? path.join(process.cwd(), ".."));
 const enabled = () => process.env.NODE_ENV !== "production" || process.env.SPORTSAN_LOCAL === "1";
 
-type JobKind = "test" | "process" | "kaggle" | "kaggle_pull" | "download";
-const ARGS: Record<JobKind, (match: string, video: string, bandMarginM?: number, youtubeId?: string) => string[]> = {
+type JobKind = "test" | "process" | "kaggle" | "kaggle_pull" | "download" | "clip";
+const PROFILES = ["charla", "whatsapp"];
+const ARGS: Record<JobKind, (match: string, video: string, bandMarginM?: number, youtubeId?: string, clip?: { editId: string; profile: string }) => string[]> = {
   test: (m, v, b) => ["-m", "sportsan.tracking.process", "--match", m, "--video", v, "--test", ...(b !== undefined ? ["--band-margin", String(b)] : [])],
   // overnight has no --band-margin: with the margin of Detalles técnicos the same steps run through the pipeline command.
   process: (m, _v, b) => (b !== undefined ? ["-m", "sportsan.tracking.pipeline", "tracking", "--match", m, "--resume", "--band-margin", String(b)] : ["-m", "sportsan.tracking.overnight", "--match", m]),
@@ -28,6 +29,8 @@ const ARGS: Record<JobKind, (match: string, video: string, bandMarginM?: number,
   kaggle_pull: (m) => ["-m", "sportsan.cloud.kaggle", "pull", "--match", m],
   // yt-dlp with the options of CLAUDE.md (sportsan.ingest.download_videos); the link is checked by validateDownload.
   download: (m, v, _b, y) => downloadArgv({ match: m, video: v, youtubeId: y ?? "" }),
+  // A clip edited in Estudio to MP4 (sportsan.clips.render); for this kind `video` carries the id of the edit.
+  clip: (m, _v, _b, _y, c) => ["-m", "sportsan.clips.render", "--edit", `matches/${m}/edits/edit_${c?.editId ?? ""}.json`, "--profile", c?.profile ?? "charla", "--force"],
 };
 const MAX_LINES = 400;
 
@@ -91,14 +94,16 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   if (!enabled()) return notFound();
-  const body = (await req.json().catch(() => null)) as { kind?: string; match?: string; video?: string; bandMarginM?: unknown; youtubeId?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as { kind?: string; match?: string; video?: string; bandMarginM?: unknown; youtubeId?: unknown; editId?: unknown; profile?: unknown } | null;
   const kind = body?.kind as JobKind | undefined;
   const match = body?.match ?? "";
   const video = body?.video ?? "v1";
   // Search strip margin of the test job (Detalles técnicos): meters, 0 to 15.
   const band = body?.bandMarginM;
   if (band !== undefined && (!(kind === "test" || kind === "process") || typeof band !== "number" || !Number.isFinite(band) || band < 0 || band > 15)) return new Response("Margen no válido", { status: 400 });
-  if (!kind || !(kind in ARGS) || !/^[\w.-]+$/.test(match) || !/^v\d+$/.test(video)) return new Response("Trabajo no válido", { status: 400 });
+  const editId = typeof body?.editId === "string" ? body.editId : "";
+  const profile = typeof body?.profile === "string" ? body.profile : "charla";
+  if (!kind || !(kind in ARGS) || !/^[\w.-]+$/.test(match) || !(kind === "clip" ? /^[\w.-]+$/.test(editId) && PROFILES.includes(profile) : /^v\d+$/.test(video))) return new Response("Trabajo no válido", { status: 400 });
   if (kind === "download") {
     const ok = validateDownload({ match, video, youtubeId: body?.youtubeId });
     if (!ok.ok) return new Response(ok.error, { status: 400 });
@@ -106,12 +111,12 @@ export async function POST(req: Request) {
   if (!existsSync(path.join(ROOT, "matches", match))) return new Response("No existe esa carpeta de partido", { status: 404 });
   // One job of each kind per match at a time.
   // (Downloads: one per video, so the same video is never downloaded twice but two videos can come down together.)
-  const busy = [...jobs.values()].find((j) => j.state === "running" && j.match === match && j.kind === kind && (kind !== "download" || j.video === video));
+  const busy = [...jobs.values()].find((j) => j.state === "running" && j.match === match && j.kind === kind && (kind !== "download" || j.video === video) && (kind !== "clip" || j.video === `${editId}_${profile}`));
   if (busy) return Response.json(view(busy));
 
   const id = `${kind}-${match}-${Date.now().toString(36)}`;
-  const job: Job = { id, kind, match, video, state: "running", started: Date.now(), ended: null, code: null, lines: [], proc: null };
-  const proc = spawn(python(), ARGS[kind](match, video, band as number | undefined, typeof body?.youtubeId === "string" ? body.youtubeId : undefined), {
+  const job: Job = { id, kind, match, video: kind === "clip" ? `${editId}_${profile}` : video, state: "running", started: Date.now(), ended: null, code: null, lines: [], proc: null };
+  const proc = spawn(python(), ARGS[kind](match, video, band as number | undefined, typeof body?.youtubeId === "string" ? body.youtubeId : undefined, { editId, profile }), {
     cwd: ROOT,
     env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", PYTHONUNBUFFERED: "1", TQDM_MININTERVAL: "2" },
     windowsHide: true,

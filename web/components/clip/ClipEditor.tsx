@@ -14,6 +14,7 @@ import {
   CaretDoubleRight,
   CaretLeft,
   CaretRight,
+  FilmSlate,
   Pause,
   PencilSimpleLine,
   Play,
@@ -447,6 +448,30 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
     setMsg(ok ? `Guardado en matches/${match.folder}/edits/edit_${edit.edit_id}.json` : "No se pudo escribir en la carpeta del partido (¿la app corre en esta computadora?). La edición sigue guardada en el navegador.");
   };
 
+  // MP4 of the clip (sportsan.clips.render through app/api/run): saves the edit in the folder first, then waits for the job.
+  const [exporting, setExporting] = useState(false);
+  const exportMp4 = async (profile: "charla" | "whatsapp") => {
+    if (!match.folder) return setMsg("El partido no tiene carpeta: no hay dónde escribir el MP4.");
+    setExporting(true);
+    try {
+      await saveFile();
+      const r = await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "clip", match: match.folder, editId: edit.edit_id, profile }) });
+      if (!r.ok) return setMsg(r.status === 404 ? "Exportar solo funciona con la app corriendo en esta computadora." : `No se pudo empezar la exportación (${await r.text()}).`);
+      const job = (await r.json()) as { id: string };
+      setMsg(`Exportando el MP4 (${profile})…`);
+      for (;;) {
+        await new Promise((ok) => setTimeout(ok, 1500));
+        const x = await fetch(`/api/run?id=${encodeURIComponent(job.id)}`, { cache: "no-store" });
+        if (!x.ok) return setMsg("Se perdió el trabajo de exportación (¿se reinició la app?).");
+        const v = (await x.json()) as { state: string; tail?: string[] };
+        if (v.state === "running") continue;
+        return setMsg(v.state === "done" ? `Listo: matches/${match.folder}/clips/${edit.edit_id}_${profile}.mp4` : `La exportación falló: ${(v.tail ?? []).slice(-3).join(" ")}`);
+      }
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const present = () => {
     setPresenting(true);
     setSelected(null);
@@ -637,6 +662,13 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
       <button type="button" className={btn} onClick={() => void saveFile()} title="Escribe edit_<id>.json en matches/<partido>/edits/ (con las posiciones y la calibración del tramo, para exportar a MP4)">
         <FloppyDisk size={15} />
         Guardar en la carpeta
+      </button>
+      <button type="button" className={btn} disabled={exporting} onClick={() => void exportMp4("charla")} title="MP4 en 1080p para proyectar (matches/<partido>/clips/)">
+        <FilmSlate size={15} />
+        {exporting ? "Exportando…" : "Exportar MP4"}
+      </button>
+      <button type="button" className={btn} disabled={exporting} onClick={() => void exportMp4("whatsapp")} title="MP4 de 720p y ~1.5 Mbps; rotula por dorsal">
+        WhatsApp
       </button>
       <button type="button" className={btnPrimary} onClick={present}>
         <PresentationChart size={15} />
