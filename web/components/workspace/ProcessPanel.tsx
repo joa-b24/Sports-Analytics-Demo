@@ -3,14 +3,16 @@
 import { CloudArrowDown, CloudArrowUp, Cpu, FloppyDisk, Flask, Play, Stop } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Command } from "@/components/Command";
+import { MeasuredKits } from "@/components/workspace/MeasuredKits";
 import { VideoMissingNotice } from "@/components/match/VideoDownload";
 import { videoFileOf } from "@/lib/downloads";
 import { fmtT } from "@/lib/format";
+import { readVideoFps } from "@/lib/matchYaml";
 import { listLocal, readLocal, writeLocal } from "@/lib/local";
 import { TRACKING_DEFAULTS } from "@/lib/techTracking";
 import { useTrackingTech } from "@/lib/useTech";
 import { JOB_COMMAND, useJobs, type JobKind, type JobView } from "@/lib/run";
-import { DEFAULT_POST, DETECTORS, POST_WINDOW, detectorLine, postLine, readPost, readSettings, testVerdict, writePost, writeSettings, type PostSettings, type TestSummary, type TrackingSettings } from "@/lib/trackingSettings";
+import { DEFAULT_POST, DETECTORS, POST_WINDOW, detectorLine, postLine, readPost, readSettings, strideAdvice, testVerdict, writePost, writeSettings, type PostSettings, type TestSummary, type TrackingSettings } from "@/lib/trackingSettings";
 
 const fmtDur = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : `${Math.max(1, Math.round(s / 60))} min`);
 
@@ -149,6 +151,8 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
   }, [doneKey, onRefresh]);
 
   const s = settings;
+  const fps = yaml ? readVideoFps(yaml, video) : null;
+  const advice = s ? strideAdvice(fps, s.stride) : null;
   const set = (p: Partial<TrackingSettings>) => {
     setSettings((o) => (o ? { ...o, ...p } : o));
     setSaved(null);
@@ -244,6 +248,15 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
                       </button>
                     ))}
                   </div>
+                  {advice && (
+                    <p className="mt-2 rounded-lg bg-warn-900/40 px-3 py-2 text-[11px] text-pretty text-ink-2">
+                      Este video va a {fps} fps: con 1 de cada {s.stride} se procesa un cuadro cada {advice.stepS.toFixed(2)} s, {advice.factor.toFixed(1)} veces más seguido que los
+                      demás partidos (0.1 s) y tarda lo mismo de veces más.{" "}
+                      <button type="button" className="underline hover:text-ink" onClick={() => set({ stride: advice.suggested })}>
+                        Usar 1 de cada {advice.suggested}
+                      </button>
+                    </p>
+                  )}
                 </div>
                 <fieldset className="space-y-2 border-t border-line pt-3">
                   <legend className="text-xs text-muted">Posiciones (se aplican al procesar)</legend>
@@ -324,6 +337,7 @@ ${postLine(post)}`}</Command>
                   <Play size={14} />
                   Ver la prueba sobre el video
                 </button>
+                <MeasuredKits folder={folder} file={`prueba/${test.part}`} />
               </div>
             )}
           </div>

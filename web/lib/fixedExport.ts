@@ -46,7 +46,7 @@ export const fixedName = (f: Pick<TracksFile, "video_id" | "start_frame" | "end_
 export function buildFixed(file: TracksFile, edits: TrackEdits, opts: FixedOptions): FixedResult {
   const ppl = people(file, edits, opts.colors);
   const offPitch = (p: (typeof ppl)[number]) => p.onPitchShare < OFF_PITCH_SHARE && !p.player_id && !p.teamByHand;
-  const refIds = new Set(opts.showRefs ? [] : ppl.filter((p) => (p.team === "ref" && !p.teamByHand) || offPitch(p)).map((p) => p.id));
+  const refIds = new Set(opts.showRefs ? [] : ppl.filter((p) => (p.team === "ref" && !p.teamByHand && !p.player_id) || offPitch(p)).map((p) => p.id));
   const paths = measuredPaths(file, edits);
   const known = [
     ...(opts.attackRight === true || opts.attackRight === false ? eventBall(file, opts.events ?? [], opts.attackRight) : []),

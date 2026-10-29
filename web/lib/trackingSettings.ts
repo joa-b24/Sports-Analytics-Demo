@@ -59,6 +59,18 @@ export function writeSettings(yaml: string, s: TrackingSettings): string {
   return text;
 }
 
+// The step between processed frames the work has been measured with: 0.1 s (1 of every 3 at 30 fps). A video with
+// more fps at the same stride is processed proportionally more often (and takes proportionally longer).
+export const TARGET_STEP_S = 0.1;
+export function strideAdvice(fps: number | null, stride: number): { suggested: number; stepS: number; factor: number } | null {
+  if (!fps || fps <= 0) return null;
+  const stepS = stride / fps;
+  const suggested = Math.max(1, Math.round(fps * TARGET_STEP_S));
+  // Only when it processes at least 1.5 times more often than that step.
+  if (stepS > TARGET_STEP_S / 1.5 || suggested === stride) return null;
+  return { suggested, stepS, factor: TARGET_STEP_S / stepS };
+}
+
 // What a short test says, in words: whether the detector sees enough people to be worth the whole night.
 export interface TestSummary {
   frames: number;

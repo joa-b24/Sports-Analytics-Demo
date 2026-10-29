@@ -86,7 +86,7 @@ import { Notice } from "@/components/workspace/Notice";
 import { nextTwice, noneIsHer, pendingTwice, skipTwice } from "@/lib/doubles";
 import { dropHalfFrames } from "@/lib/anchors";
 import { FOCUS_COLORS, focusBoxes, partOfData, type AnchorFocus } from "@/lib/anchors";
-import { NOBODY, PLAYERS_DONE, SAMPLE_S, applyQuick, applyQuickOnto, leftovers, namedCount, nextCheckpoint, partStatus, quickModel, sampleFrames, type QuickLabel } from "@/lib/quick";
+import { NOBODY, PLAYERS_DONE, SAMPLE_S, applyQuick, applyQuickOnto, labelHealth, leftovers, namedCount, nextCheckpoint, partStatus, quickModel, sampleFrames, type QuickLabel } from "@/lib/quick";
 
 const TEAM_LABELS: Record<TeamCode, string> = { own: "Analizado", opp: "Contrario", ref: "Árbitra", unk: "Sin equipo" };
 const TEAM_COLORS: Record<TeamCode, string> = { own: COLORS.own, opp: COLORS.opp, ref: "var(--color-warn)", unk: "var(--color-faint)" };
@@ -356,7 +356,7 @@ export function Correction({
   // Quick review: the player all of the current one's names are moved to (fixing a mix-up).
   const [qMoveTo, setQMoveTo] = useState("");
   // Secondary work opens in a dialog: kit colours, quick cleaning of short pieces, export.
-  const [modal, setModal] = useState<null | "kits" | "cleanup" | "export" | "reset" | "ballEvents" | "applyQuick" | "anomalies">(null);
+  const [modal, setModal] = useState<null | "kits" | "cleanup" | "export" | "reset" | "ballEvents" | "applyQuick" | "anomalies" | "discarded">(null);
   // A candidate being checked on the video ("does she go on as …?").
   const [peek, setPeek] = useState<Suggestion | null>(null);
   // Rows of the list drawn (the list of a long part has thousands of pieces).
@@ -418,6 +418,12 @@ export function Correction({
 
   const byFrame = useMemo(() => new Map((data?.frames ?? []).map((f) => [f.frame, f])), [data]);
   const ppl = useMemo(() => (data ? people(data, edits, colors) : []), [data, edits, colors]);
+  // People left out of the table (by hand, by a complete part or by Anclas): hidden everywhere, so they are listed here to bring them back.
+  const discarded = useMemo(() => {
+    if (!data || edits.removed.length === 0) return [];
+    const gone = new Set(edits.removed);
+    return people(data, { ...edits, removed: [] }, colors).filter((p) => gone.has(p.id));
+  }, [data, edits, colors]);
   const personById = useMemo(() => new Map(ppl.map((p) => [p.id, p])), [ppl]);
   const selected = sel !== null ? (personById.get(sel) ?? null) : null;
 
@@ -665,7 +671,7 @@ export function Correction({
   // Hidden (and left out of what is saved) unless asked for: referees, and people almost never on the pitch (bench,
   // stands, coaches) that nobody named.
   const offPitch = (p: Person) => p.onPitchShare < OFF_PITCH_SHARE && !p.player_id && !p.teamByHand;
-  const refIds = new Set(showRefs ? [] : ppl.filter((p) => (p.team === "ref" && !p.teamByHand) || offPitch(p)).map((p) => p.id));
+  const refIds = new Set(showRefs ? [] : ppl.filter((p) => (p.team === "ref" && !p.teamByHand && !p.player_id) || offPitch(p)).map((p) => p.id));
   const removed = new Set([...edits.removed, ...refIds]);
   const droppedBoxes = useMemo(() => droppedSet(edits), [edits]);
   const shown = (row?.boxes ?? [])
@@ -2350,14 +2356,35 @@ export function Correction({
   const checkedIds = new Set(Object.entries(edits.people).flatMap(([id, m]) => (m.done ? [Number(id)] : [])));
   // "add": the review is added to the table as it is (the checked players are not touched). "replace": the table is
   // rebuilt from the program's proposal and the review (the ticks of the checked players are kept by name).
-  const qApply = (how: "add" | "replace") => {
+  // Also protected: people already named in the table (e.g. from Anclas) whom the review does not name, so applying it
+  // adds the missing players (the goalkeeper) without wiping the rest.
+  const reviewNames = new Set(qModel?.segments.flatMap((x) => (x.name ? [x.name] : [])) ?? []);
+  const keptIds = new Set(checkedIds);
+  for (const [id, m] of Object.entries(edits.people)) if (m.player_id && !reviewNames.has(m.player_id)) keptIds.add(Number(id));
+  const softIds = new Set([...keptIds].filter((id) => !checkedIds.has(id)));
+  // Names of the review with nobody visible under that name in the table now.
+  const missingInTable = [...reviewNames].filter((n) => !ppl.some((p) => p.player_id === n));
+  const qApply = (how: "add" | "replace" | "force") => {
     if (!data || !qModel) return;
     let applied: TrackEdits;
     let note: string;
-    if (how === "add") {
-      const r = applyQuickOnto(data, edits, qBase, qModel, checkedIds);
+    if (how === "force") {
+      // The review wins for the names missing in the table: no protection, discarded people come back.
+      const r = applyQuickOnto(data, edits, qBase, qModel, new Set(), new Set(), new Set(missingInTable));
       applied = r.edits;
-      note = `Revisión rápida agregada: ${r.moved} tramo(s) pasaron a su jugadora${r.kept ? `; ${r.kept} de jugadoras verificadas se dejaron como estaban` : ""}`;
+      note = `Empuje forzado de ${missingInTable.join(", ") || "nadie"}: ${r.moved} tramo(s) pasaron a su jugadora${r.missing.length ? `; sin cajas en la revisión para ${r.missing.map((m) => m.name).join(", ")}` : ""}`;
+    } else if (how === "add") {
+      const r = applyQuickOnto(data, edits, qBase, qModel, checkedIds, softIds);
+      applied = r.edits;
+      const lost = labelHealth(data, qBase, qLabels, qModel).filter((h) => h.pieces === 0 || h.onDropped + h.onMissing > 0);
+      const lostText = lost
+        .map((h) =>
+          h.pieces === 0
+            ? `${h.name}: ${h.labels} marca(s), ${h.onDropped} sobre cajas descartadas, ${h.onMissing} sobre cajas que ya no existen${h.conflict ? ", y el modelo la anuló por chocar con ella misma en otro lugar" : ""}`
+            : `${h.name}: ${h.onDropped + h.onMissing} de ${h.labels} marca(s) caen en cajas descartadas o inexistentes`,
+        )
+        .join("; ");
+      note = `Revisión rápida agregada: ${r.moved} tramo(s) pasaron a su jugadora${lostText ? `. Marcas perdidas — ${lostText}` : ""}${r.kept ? `; ${r.kept} de jugadoras verificadas se dejaron como estaban` : ""}${r.missing.length ? `. No llegó a la mesa: ${r.missing.map((m) => `${m.name} (${m.why === "protected" ? "sus cajas son de una jugadora protegida" : "sin cajas en esta parte: la revisión no las ve, o están descartadas/duplicadas"})`).join(", ")}` : ""}`;
     } else {
       applied = { ...applyQuick(data, qBase, qModel), quick: edits.quick, ballReview: edits.ballReview, ball: edits.ball, ballLinks: edits.ballLinks, ballStates: edits.ballStates };
       // Players already checked in the table keep their tick (by name) when the review is applied again.
@@ -2378,7 +2405,7 @@ export function Correction({
     setMsg(`${note}${extra.length ? `; parte completa, descartadas ${extra.length} personas sin nombre` : ""}. Ctrl + Z lo deshace.`);
   };
   // With players already checked, the button asks; otherwise the table is built from the review.
-  const qApplyAsk = () => (checkedIds.size > 0 ? setModal("applyQuick") : qApply("replace"));
+  const qApplyAsk = () => (keptIds.size > 0 || namedCount(ppl) > 0 ? setModal("applyQuick") : qApply("replace"));
 
 
   // The zoom follows: the selected person (Jugadoras), where the ball was (Balón), or in the quick review the player of
@@ -3522,6 +3549,12 @@ export function Correction({
                       <Pager page={checkPageNow} pages={checkPages} setPage={setCheckPage} />
                     </>
                   )}
+                  {discarded.length > 0 && (
+                    <button type="button" className="btn btn-ghost mt-2 !px-0 text-xs" onClick={() => setModal("discarded")}>
+                      <ArrowCounterClockwise size={14} />
+                      Descartadas · {discarded.length} (recuperar)
+                    </button>
+                  )}
                   {shortIds.length > 0 && (
                     <button type="button" className="btn btn-ghost mt-2 !px-0 text-xs" onClick={() => setModal("cleanup")}>
                       <BroomIcon size={14} />
@@ -3856,10 +3889,54 @@ export function Correction({
           {cleanupPanel}
         </Modal>
       )}
+      {modal === "discarded" && data && (
+        <Modal title="Personas descartadas" onClose={() => setModal(null)}>
+          <div className="space-y-2 text-sm text-muted">
+            <p className="text-pretty">Estas personas no aparecen en la mesa. «Ir» salta a donde salen; «Recuperar» las devuelve (Ctrl + Z lo deshace).</p>
+            <ul className="max-h-[60vh] space-y-1 overflow-auto">
+              {discarded.map((p) => (
+                <li key={p.id} className="flex items-center gap-2 rounded-lg bg-bg/60 px-3 py-1.5 text-xs">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${p.team === "own" ? "bg-own" : p.team === "opp" ? "bg-opp" : "bg-faint"}`} />
+                  <span className="tc min-w-0 flex-1 truncate">
+                    {p.player_id || `#${p.id}`} · {fmtT(p.first / data.fps)}–{fmtT(p.last / data.fps)} · {((p.frames.length * data.stride) / data.fps).toFixed(0)} s
+                  </span>
+                  <button type="button" className={btn} onClick={() => (setModal(null), seekFrame(p.first))}>
+                    Ir
+                  </button>
+                  <button type="button" className={btnPrimary} onClick={() => setEdits(setRemoved(edits, p.id, false))}>
+                    Recuperar
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Modal>
+      )}
       {modal === "applyQuick" && data && (
         <Modal title="Aplicar la revisión rápida" onClose={() => setModal(null)}>
           <div className="space-y-3 text-sm text-muted">
-            <p className="text-pretty">Ya hay {checkedIds.size} jugadora(s) verificadas en la mesa.</p>
+            <details className="rounded-lg bg-bg/60 px-3 py-2 text-[11px]" open>
+              <summary className="cursor-pointer text-faint">Estado de cada nombre (revisión → mesa)</summary>
+              <ul className="mt-1.5 max-h-48 space-y-0.5 overflow-auto tc">
+                {[...new Set([...reviewNames, ...ppl.flatMap((p) => (p.player_id ? [p.player_id] : [])), ...discarded.flatMap((p) => (p.player_id ? [p.player_id] : []))])]
+                  .sort()
+                  .map((n) => {
+                    const boxesInReview = qModel ? [...qModel.nameOf.values()].filter((v) => v === n).length : 0;
+                    const inTable = ppl.filter((p) => p.player_id === n);
+                    const hidden = discarded.filter((p) => p.player_id === n);
+                    return (
+                      <li key={n} className={reviewNames.has(n) && inTable.length === 0 ? "text-warn" : ""}>
+                        «{n}» · revisión: {reviewNames.has(n) ? `${boxesInReview} cajas` : "no está"} · mesa:{" "}
+                        {inTable.length ? inTable.map((p) => `${p.frames.length} cajas${p.done ? " (verificada)" : ""}`).join(" + ") : "no sale"}
+                        {hidden.length ? ` · descartada: ${hidden.length}` : ""}
+                      </li>
+                    );
+                  })}
+              </ul>
+            </details>
+            <p className="text-pretty">
+              Ya hay {keptIds.size} jugadora(s) en la mesa (verificadas o nombradas desde Anclas) que la revisión rápida no toca.
+            </p>
             <button type="button" className={`${btnPrimary} w-full !justify-start`} onClick={() => qApply("add")}>
               <Check size={15} />
               Agregar lo nuevo: las verificadas se quedan como están
@@ -3867,6 +3944,14 @@ export function Correction({
             <p className="-mt-1 text-[11px] text-pretty text-faint">
               Los tramos que la revisión rápida da a cada jugadora pasan a ella, salvo los de las verificadas, que no se tocan (ni se les quita ni se
               les agrega nada). Tus cortes, uniones y marcas a mano se conservan.
+            </p>
+            <button type="button" className={`${btn} w-full !justify-start`} disabled={missingInTable.length === 0} onClick={() => qApply("force")}>
+              <Check size={15} />
+              Forzar solo las que faltan en la mesa{missingInTable.length ? `: ${missingInTable.join(", ")}` : " (no falta ninguna)"}
+            </button>
+            <p className="-mt-1 text-[11px] text-pretty text-faint">
+              Para los nombres de la revisión que nadie lleva en la mesa: sus cajas pasan a ellos sin importar protecciones, y si estaban descartadas
+              vuelven. No toca a nadie más.
             </p>
             <button type="button" className={`${btn} w-full !justify-start hover:text-danger`} onClick={() => qApply("replace")}>
               <ArrowCounterClockwise size={15} />

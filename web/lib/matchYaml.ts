@@ -150,6 +150,22 @@ export function readVideoMask(text: string, videoId: string): Rect[] {
   }
 }
 
+// The fps written for a video in match.yaml (null if the video or the line is not there).
+export function readVideoFps(text: string, videoId: string): number | null {
+  const lines = text.split(/\r?\n/);
+  const b = videoBlock(lines, videoId);
+  if (!b) return null;
+  const l = lines.slice(b[0] + 1, b[1]).find((x) => /^\s+fps:/.test(x));
+  const n = l ? Number(l.slice(l.indexOf(":") + 1).replace(/#.*/, "").trim()) : NaN;
+  return n > 0 ? n : null;
+}
+
+// The masks of every video of a match.yaml that has one: to reuse them in another match of the same broadcast.
+export function videoMasks(text: string): { videoId: string; rects: Rect[] }[] {
+  const ids = [...text.matchAll(/^\s*-\s*video_id:\s*["']?(\w+)["']?/gm)].map((m) => m[1]);
+  return ids.map((videoId) => ({ videoId, rects: readVideoMask(text, videoId) })).filter((x) => x.rects.length > 0);
+}
+
 // Writes (or removes, with no rectangles) the mask line inside the video's block; null if the video is not there.
 export function writeVideoMask(text: string, videoId: string, rects: Rect[]): string | null {
   const eol = text.includes("\r\n") ? "\r\n" : "\n";

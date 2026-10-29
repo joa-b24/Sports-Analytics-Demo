@@ -16,7 +16,9 @@ const KIT_COLOR: Record<JerseyKey, string> = { own: COLORS.own, own_gk: COLORS.o
 const NO_COLORS: JerseyColors = { own: "", opp: "", ref: "", own_gk: "", opp_gk: "" };
 
 // Median colour of a 9 x 9 patch of the video under a click, or null (and why) when it is grass rather than a shirt.
-export function sampleShirt(v: HTMLVideoElement, clientX: number, clientY: number): { hex: string } | { error: string } {
+// `allowGreen`: a goalkeeper kit may well be green, so nothing is taken for grass (the analyst clicks the torso). Any
+// other kit is only rejected when the colour is a dull green: a neon one is far brighter and more vivid than grass.
+export function sampleShirt(v: HTMLVideoElement, clientX: number, clientY: number, allowGreen = false): { hex: string } | { error: string } {
   const r = v.getBoundingClientRect();
   const x = Math.round(((clientX - r.left) / r.width) * v.videoWidth);
   const y = Math.round(((clientY - r.top) / r.height) * v.videoHeight);
@@ -29,7 +31,8 @@ export function sampleShirt(v: HTMLVideoElement, clientX: number, clientY: numbe
   const med = [0, 1, 2].map((c) => Array.from({ length: 81 }, (_, i) => px[i * 4 + c]).sort((a, b) => a - b)[40]);
   const hex = `#${med.map((n) => n.toString(16).padStart(2, "0")).join("")}`;
   const lab = hexToLab(hex);
-  if (lab && lab[1] < 120 && lab[2] > 132) return { error: "Ese punto parece césped, no una camiseta: clic en el centro del torso." };
+  const vivid = lab ? lab[0] >= 205 || Math.hypot(lab[1] - 128, lab[2] - 128) >= 85 : false;
+  if (!allowGreen && !vivid && lab && lab[1] < 120 && lab[2] > 132) return { error: "Ese punto parece césped, no una camiseta: clic en el centro del torso." };
   return { hex };
 }
 

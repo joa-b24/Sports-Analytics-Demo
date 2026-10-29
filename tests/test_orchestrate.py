@@ -258,3 +258,23 @@ def test_estado_en_curso_bloquea_segundo_lanzamiento(repo, fake):
     assert orc.main(["tracking", "--match", "m1"]) == 0       # es este mismo proceso: no cuenta como otro
     (rev / "pipeline_tracking.json").write_text(json.dumps({"state": "running", "pid": 999999999}), encoding="utf-8")
     assert orc.main(["tracking", "--match", "m1", "--resume"]) == 0   # pid muerto: estado viejo, se ignora
+
+
+def test_el_pid_del_lanzador_no_cuenta_como_otro_tracking(repo, fake):
+    # En Windows la app anota el pid del python.exe del entorno virtual, que es el padre del Python que corre esto.
+    import os
+    rev = repo / "matches" / "m1" / "tracking" / "revision"
+    rev.mkdir(parents=True)
+    (rev / "pipeline_tracking.json").write_text(json.dumps({"state": "running", "pid": os.getppid()}), encoding="utf-8")
+    assert orc.main(["tracking", "--match", "m1"]) == 0
+
+
+def test_otro_tracking_vivo_si_bloquea(repo, fake, monkeypatch):
+    import os
+    rev = repo / "matches" / "m1" / "tracking" / "revision"
+    rev.mkdir(parents=True)
+    other = os.getpid() + 7
+    (rev / "pipeline_tracking.json").write_text(json.dumps({"state": "running", "pid": other}), encoding="utf-8")
+    monkeypatch.setattr(orc, "pid_alive", lambda pid: pid == other)
+    with pytest.raises(SystemExit):
+        orc.main(["tracking", "--match", "m1"])

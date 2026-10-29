@@ -36,6 +36,8 @@ export interface QuickSummary {
   part: string;
   startS: number;
   endS: number;
+  // Video fps, from the stretch the test processed (frames over seconds); null when the report lacks it.
+  fps: number | null;
   created: string;
   // What process measured in the stretch (absent fields stay null: nothing is made up).
   calibratedShare: number | null;
@@ -88,6 +90,10 @@ export function parseQuickSummary(text: string | null | undefined): QuickSummary
       part: typeof d.part === "string" ? d.part : "",
       startS: num(d.start_s) ?? 0,
       endS: num(d.end_s) ?? 0,
+      fps: (() => {
+        const f0 = num(proc.start_frame), f1 = num(proc.end_frame), s0 = num(proc.start_s), s1 = num(proc.end_s);
+        return f0 !== null && f1 !== null && s0 !== null && s1 !== null && s1 > s0 ? Math.round(((f1 - f0) / (s1 - s0)) * 100) / 100 : null;
+      })(),
       created: typeof d.created === "string" ? d.created : "",
       calibratedShare: num(proc.calibrated_share),
       onPitchMedian: num(proc.on_pitch_median),

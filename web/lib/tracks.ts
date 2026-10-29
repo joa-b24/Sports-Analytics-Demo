@@ -88,7 +88,7 @@ export function labToHex(lab: number[]): string {
 // nearest kit of another team at least TEAM_MARGIN times farther. Otherwise no team.
 export const MAX_COLOR_DISTANCE = 40;
 export const TEAM_MARGIN = 1.3;
-const TEAM_L_WEIGHT = 1;
+export const TEAM_L_WEIGHT = 1;
 
 export const colorDistance = (a: number[], b: number[], lWeight = 0.5) => Math.hypot(lWeight * (a[0] - b[0]), a[1] - b[1], a[2] - b[2]);
 
@@ -721,6 +721,6 @@ export function nearestFrame(file: Pick<TracksFile, "start_frame" | "end_frame" 
 
 // The edits with the referees (by shirt, not set by hand) left out, for what is exported.
 export function withoutReferees(file: TracksFile, edits: TrackEdits, colors?: Partial<JerseyColors>): TrackEdits {
-  const refs = people(file, edits, colors).filter((p) => p.team === "ref" && !p.teamByHand).map((p) => p.id);
+  const refs = people(file, edits, colors).filter((p) => p.team === "ref" && !p.teamByHand && !p.player_id).map((p) => p.id);
   return refs.length ? setRemovedMany(edits, refs) : edits;
 }

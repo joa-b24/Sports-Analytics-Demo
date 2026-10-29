@@ -58,7 +58,8 @@ export function FilePicker({
     const own = files.filter((f) => !f.dir && re.test(f.name)).map((f) => f.name).sort(byNumber);
     const extra: string[] = [];
     for (const sd of subKey ? subKey.split("|") : []) {
-      if (!files.some((f) => f.dir && f.name === sd)) continue;
+      // A nested path («revision/quick») needs its first folder to be there.
+      if (!files.some((f) => f.dir && f.name === sd.split("/")[0])) continue;
       const inner = (await listLocal(`${dir}/${sd}`)) ?? [];
       extra.push(...inner.filter((f) => !f.dir && re.test(f.name)).map((f) => `${sd}/${f.name}`).sort(byNumber));
     }

@@ -582,7 +582,10 @@ def guard_running(rev_dir: Path, command: str) -> None:
         d = json.loads(f.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
-    if d.get("state") == "running" and d.get("pid") != os.getpid() and pid_alive(int(d.get("pid") or 0)):
+    # En Windows el python.exe del entorno virtual es un lanzador que arranca al Python real como hijo: la app anota el
+    # pid del lanzador (el padre de este proceso), que no es otro tracking sino quien lo lanzó.
+    mine = {os.getpid(), os.getppid()}
+    if d.get("state") == "running" and d.get("pid") not in mine and pid_alive(int(d.get("pid") or 0)):
         raise SystemExit(f"Ya hay un {command} corriendo (pid {d['pid']}). Espera a que termine o ciérralo.")
 
 

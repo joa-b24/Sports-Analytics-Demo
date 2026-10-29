@@ -280,6 +280,33 @@ export function quickModel(file: TracksFile, base: TrackEdits, labels: QuickLabe
   return { nameOf, segments, cuts, conflicts };
 }
 
+// What became of the labels of each name: how many sit on a box that is left out (dropped) or not in the file, and
+// whether the model ended up with a named piece for it (a conflict leaves a name without pieces).
+export interface LabelHealth {
+  name: string;
+  labels: number;
+  onDropped: number;
+  onMissing: number;
+  pieces: number;
+  conflict: boolean;
+}
+export function labelHealth(file: TracksFile, base: TrackEdits, labels: QuickLabel[], model: QuickModel): LabelHealth[] {
+  const drop = droppedSet(base);
+  const frames = new Map(file.frames.map((fr) => [fr.frame, fr.boxes]));
+  const by = new Map<string, LabelHealth>();
+  for (const l of labels) {
+    if (l.name === NOBODY) continue;
+    const h = by.get(l.name) ?? { name: l.name, labels: 0, onDropped: 0, onMissing: 0, pieces: 0, conflict: model.conflicts.some((c) => c.name === l.name) };
+    h.labels += 1;
+    const b = frames.get(l.frame)?.find((x) => x[0] === l.track);
+    if (!b) h.onMissing += 1;
+    else if (isDropped(drop, b, l.frame)) h.onDropped += 1;
+    by.set(l.name, h);
+  }
+  for (const sg of model.segments) if (sg.name && by.has(sg.name)) (by.get(sg.name) as LabelHealth).pieces += 1;
+  return [...by.values()];
+}
+
 // The model as edits of the correction table: cuts, joins by name, names and teams. Starts from `base` (whose cuts
 // and joins it keeps); everything can be undone in the table.
 export function applyQuick(file: TracksFile, base: TrackEdits, model: QuickModel): TrackEdits {
@@ -444,7 +471,12 @@ export function applyQuickOnto(
   base: TrackEdits,
   model: QuickModel,
   checked: Set<number>,
-): { edits: TrackEdits; moved: number; kept: number } {
+  // Named elsewhere (e.g. Anclas) but not ticked: protected only from stretches the review inferred, not from boxes it
+  // named by hand.
+  soft: Set<number> = new Set(),
+  // Only these names of the review are applied (the forced push of the ones missing in the table).
+  only?: Set<string>,
+): { edits: TrackEdits; moved: number; kept: number; missing: { name: string; why: "nobox" | "protected" }[] } {
   const { obs } = indexOf(file, base);
   let edits = current;
   let moved = 0;
@@ -456,10 +488,15 @@ export function applyQuickOnto(
   const trackFrames = new Map<number, number[]>();
   for (const fr of file.frames) for (const b of fr.boxes) trackFrames.set(b[0], [...(trackFrames.get(b[0]) ?? []), fr.frame]);
   const boxAt = (track: number, frame: number) => file.frames.find((f) => f.frame === frame)?.boxes.find((b) => b[0] === track);
+  const movedNames = new Set<string>();
+  const sawNames = new Set<string>();
+  const keptNames = new Set<string>();
+  const boxedNames = new Set<string>();
   for (const sg of model.segments) {
-    if (!sg.name) continue;
+    if (!sg.name || (only && !only.has(sg.name))) continue;
     const name = sg.name;
     const boxes = (obs.get(sg.id) ?? []).filter((o) => o.frame >= sg.from && o.frame <= sg.to);
+    if (boxes.length) boxedNames.add(name);
     // Stretches of one track with one owner in the table now.
     const byTrack = new Map<number, Obs[]>();
     for (const o of boxes) byTrack.set(o.box[0], [...(byTrack.get(o.box[0]) ?? []), o]);
@@ -473,10 +510,16 @@ export function applyQuickOnto(
       }
       for (const r of runs) {
         const target = idOfName.get(name);
-        if (r.owner === target) continue;
+        if (r.owner === target) {
+          sawNames.add(name);
+          // Already hers but discarded: she comes back.
+          if (edits.removed.includes(target)) edits = { ...edits, removed: edits.removed.filter((x) => x !== target) };
+          continue;
+        }
         // A checked player is left exactly as she is: nothing taken from her, nothing added to her.
-        if (checked.has(r.owner) || (target !== undefined && checked.has(target))) {
+        if (checked.has(r.owner) || (target !== undefined && checked.has(target)) || (sg.labels === 0 && (soft.has(r.owner) || (target !== undefined && soft.has(target))))) {
           kept += 1;
+          keptNames.add(name);
           continue;
         }
         // Cut the stretch out: from its first frame the track is a new identity, after its last it goes back to what
@@ -492,10 +535,22 @@ export function applyQuickOnto(
         if (target === undefined) {
           edits = setPerson(edits, fresh, { player_id: name, ...(sg.team ? { team: sg.team } : {}) });
           idOfName.set(name, fresh);
-        } else edits = merge(edits, target, fresh);
+        } else {
+          edits = merge(edits, target, fresh);
+          // A named person that was discarded would swallow the stretch: the review brings her back.
+          if (edits.removed.includes(target)) edits = { ...edits, removed: edits.removed.filter((x) => x !== target) };
+        }
         moved += 1;
+        movedNames.add(name);
       }
     }
   }
-  return { edits, moved, kept };
+  // Why a name of the review did not reach the table: no box under its segments (dropped or lost), only boxes of
+  // protected people, or nothing in the review carries it.
+  const missing: { name: string; why: "nobox" | "protected" }[] = [];
+  for (const name of new Set(model.segments.flatMap((s) => (s.name ? [s.name] : [])))) {
+    if (movedNames.has(name) || sawNames.has(name)) continue;
+    missing.push({ name, why: boxedNames.has(name) && keptNames.has(name) ? "protected" : "nobox" });
+  }
+  return { edits, moved, kept, missing };
 }

@@ -12,6 +12,9 @@ import { matchVideos } from "./videos";
 // downloaded (python -m sportsan.ingest.download_videos through app/api/run) and, optionally, the creation of a missing
 // folder and the automatic download. Everything is silent when the app does not run on this computer (names = null).
 
+// How long the name of the folder must stay unchanged before the folder is created.
+const CREATE_DELAY_MS = 2500;
+
 export interface VideoDl extends DlView {
   video_id: string;
   label: string;
@@ -64,7 +67,12 @@ export function useVideoDownloads(match: Match | undefined, opts: Opts = {}): Vi
       if (files === null) {
         const root = await listLocal("matches");
         if (root === null) return void (live && setNames(null));
-        if (!root.some((e) => e.name === folder) && cb.current.create && isFolderName(folder) && !attempted.current.has(`folder|${folder}`)) {
+        // Only when there is a video to download, and once the name stops changing: typing the name would otherwise
+        // leave a folder for every valid prefix («..._vs_u», «..._vs_uc»).
+        const hasLink = videos.some((v) => YT_ID.test(v.youtube_id));
+        if (!root.some((e) => e.name === folder) && cb.current.create && hasLink && isFolderName(folder) && !attempted.current.has(`folder|${folder}`)) {
+          await new Promise((r) => setTimeout(r, CREATE_DELAY_MS));
+          if (!live) return;
           attempted.current.add(`folder|${folder}`);
           if (await createMatchFolder(folder, { kind: match.kind, date: match.date, own_team_name: match.focus_team, other_team_name: match.other_team })) {
             cb.current.onCreated?.();

@@ -4,6 +4,7 @@ import { ArrowClockwise, ArrowCounterClockwise, CheckCircle, Circle, ListChecks,
 import { useEffect, useMemo, useRef, useState } from "react";
 import { detectEvents, DETECTED_TYPES, type DetectedEvent } from "@/lib/eventDetect";
 import { TYPE_LABEL } from "@/lib/eventReview";
+import { fmtT } from "@/lib/format";
 import { useFixedParts } from "@/lib/fixed";
 import { listLocal, readLocal, writeLocalInfo } from "@/lib/local";
 import { possessionIntervals } from "@/lib/possession";
@@ -276,8 +277,9 @@ function QuickReport({ report: q, busy, onYes, onNo }: { report: QuickSummary; b
             </caption>
             <thead className="text-faint">
               <tr>
-                <th className="py-1 pr-3 font-normal">Tramo</th>
+                <th className="py-1 pr-3 font-normal">Tramo (min:s)</th>
                 <th className="pr-3 font-normal">Ubicadas</th>
+                <th className="pr-3 font-normal" title="Cuadros que la biblioteca ubicó pero no cuadraban con el movimiento de la cámara">Descartadas</th>
                 <th className="pr-3 font-normal">Vecinas (m)</th>
                 <th className="pr-3 font-normal">Referencias (m)</th>
                 <th className="pr-3 font-normal">Sin calibrar</th>
@@ -287,10 +289,14 @@ function QuickReport({ report: q, busy, onYes, onNo }: { report: QuickSummary; b
             <tbody className="tc">
               {q.rows.map((r, i) => (
                 <tr key={i} className="border-t border-line-soft">
-                  <td className="py-1 pr-3">{i + 1}</td>
+                  <td className="py-1 pr-3">
+                    {i + 1}
+                    {q.fps ? <span className="text-faint"> · {fmtT(r.start / q.fps)}</span> : null}
+                  </td>
                   <td className="pr-3">
                     {r.found}/{r.wanted}
                   </td>
+                  <td className="pr-3">{r.dropped}</td>
                   <td className="pr-3">{r.neighboursM === null ? "sin dato" : r.neighboursM.toFixed(2)}</td>
                   <td className="pr-3">{r.refsM === null ? "sin dato" : r.refsM.toFixed(2)}</td>
                   <td className="pr-3">{r.missing === null ? "sin dato" : `${r.missing}/${r.frames ?? 0}`}</td>
