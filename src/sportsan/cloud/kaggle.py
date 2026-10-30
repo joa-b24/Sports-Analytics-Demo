@@ -38,7 +38,7 @@ import zipfile
 from pathlib import Path
 
 from ..config import MATCHES_DIR, load_config, project_root
-from ..ingest.download_videos import read_registry
+from ..ingest.download_videos import registry_with_yaml
 from ..tracking.overnight import plan_video
 from .kaggle_job import gpu_model_name
 
@@ -75,7 +75,7 @@ def kernel_slug(match: str) -> str:
 
 def pending(root: Path, match: str, only: list[str] | None = None) -> list:
     """Videos del partido a los que `overnight` aún les haría algo (o los pedidos). Cada uno con su plan."""
-    rows = [r for r in read_registry(root / MATCHES_DIR / "videos.csv") if r["match_id"] == match]
+    rows = [r for r in registry_with_yaml(root) if r["match_id"] == match]
     plans = [plan_video(root, match, r["video_id"]) for r in rows]
     if only:
         return [p for p in plans if p.video_id in only]
@@ -130,7 +130,7 @@ def build_data_zip(root: Path, match: str, videos: list[str], dest: Path) -> lis
                 z.write(mdir / rel, f"matches/{match}/{rel}")
                 names.append(rel)
         # Solo las filas de esos videos: overnight recorre videos.csv y los demás saldrían como «sin descargar».
-        rows = [r for r in read_registry(root / MATCHES_DIR / "videos.csv") if r["match_id"] == match and r["video_id"] in videos]
+        rows = [r for r in registry_with_yaml(root) if r["match_id"] == match and r["video_id"] in videos]
         buf = io.StringIO()
         if rows:
             w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()), lineterminator="\n")

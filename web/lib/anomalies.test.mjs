@@ -107,7 +107,10 @@ test("Q: si quitar el siguiente no deja de saltar, se revierte; un salto que se 
   const a = playerAnomalies(f, e)[0];
   assert.equal(a.person, 1);
   const r = quitJump(f, e, a);
-  assert.equal(r.fix, null);
+  // No warning, no question: when neither box settles it, the one after the jump goes anyway (the warning may stay).
+  assert.equal(r.fix.side, "next");
+  assert.equal(r.fix.needsConfirm, false);
+  assert.ok(r.fix.removed > 0);
   assert.deepEqual([r.next, r.prev], ["persists", "persists"]);
   // «Quitar hasta aquí»: her run on the track after the jump goes (2 to the end), one action; the warning is gone.
   const t = trimAtJump(f, e, a, "after");

@@ -5,6 +5,7 @@
 //   ball     the ball would have to fly faster than any shot, or it goes somewhere and comes straight back: a mark on a
 //            ball in the air (taken to the pitch as if it were on the ground, it lands far away) or a wrong detection.
 // Distances are in real meters of the venue: the normalised pitch (105 x 68) is not the real size.
+import { crossesCut, inFrozen } from "./cameraCuts.ts";
 import { pixelToPitch, type BallPoint } from "./parts.ts";
 import { JUMP_MIN_M, JUMP_SPEED_MS, series, type Obs } from "./cuts.ts";
 import type { TracksFile } from "./tracks.ts";
@@ -59,11 +60,14 @@ export function playerAnomalies(file: TracksFile, edits: TrackEdits): Anomaly[] 
   const seenAt = new Map<number, number>();
   type Jump = { person: number; frame: number; meters: number; speed: number; before: Obs; after: Obs };
   const jumps: Jump[] = [];
-  for (const [person, obs] of all) {
+  for (const [person, all0] of all) {
+    // Frozen pictures repeat the last real one: not positions. A step across a marked cut is a limit, not a jump.
+    const obs = edits.cuts?.length ? all0.filter((o) => !inFrozen(edits.cuts, o.frame)) : all0;
     for (const o of obs) seenAt.set(o.frame, (seenAt.get(o.frame) ?? 0) + 1);
     for (let i = 1; i < obs.length; i++) {
       const dt = (obs[i].frame - obs[i - 1].frame) / fps;
       const d = Math.hypot(obs[i].x - obs[i - 1].x, obs[i].y - obs[i - 1].y);
+      if (crossesCut(edits.cuts, obs[i - 1].frame, obs[i].frame)) continue;
       if (dt > 0 && dt <= PAIR_MAX_S && d > JUMP_MIN_M && d / dt > JUMP_SPEED_MS) jumps.push({ person, frame: obs[i].frame, meters: d, speed: d / dt, before: obs[i - 1], after: obs[i] });
     }
   }

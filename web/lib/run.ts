@@ -67,12 +67,12 @@ export function useJobs(match: string | undefined) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match, anyRunning]);
   const { matches } = useStore();
-  const start = async (kind: JobKind, video: string, bandMarginM?: number) => {
+  const start = async (kind: JobKind, video: string, bandMarginM?: number, startS?: number) => {
     if (!match) return;
     // The margin of Detalles técnicos goes to the test and to the whole processing when it is not the default.
     const tech = trackingParamsOf(matchOfFolder(matches, match)).searchMarginM;
     if (bandMarginM === undefined && (kind === "test" || kind === "process") && tech !== TRACKING_DEFAULTS.searchMarginM) bandMarginM = tech;
-    await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind, match, video, ...(bandMarginM !== undefined ? { bandMarginM } : {}) }) });
+    await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind, match, video, ...(bandMarginM !== undefined ? { bandMarginM } : {}), ...(startS !== undefined ? { startS } : {}) }) });
     await refresh();
   };
   const stop = async (id: string) => {

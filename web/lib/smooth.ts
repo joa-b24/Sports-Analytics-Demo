@@ -11,6 +11,9 @@
 //   4. Ends (extrapolateEnds, optional): before a person's first and after her last position in the part she is held
 //      still, only so she does not vanish when drawn. That is INVENTED data, marked "extrapolated", and no measurement
 //      (distance, speed, possession, touches, passes, heat maps, players behind the ball, block) may read it.
+import { crossesCut, inFrozen } from "./cameraCuts.ts";
+import type { CameraCut } from "./types.ts";
+
 export type PointSource = "auto" | "manual" | "interpolated" | "extrapolated";
 
 export const isExtrapolated = (source: string | undefined): boolean => source === "extrapolated";
@@ -41,6 +44,8 @@ export interface SmoothOptions {
   windowS: number;
   // Longest excursion taken out as a wrong position (s); EXCURSION_MAX_S when absent.
   excursionS?: number;
+  // Cuts of the broadcast and frozen pictures (TrackEdits.cuts): nothing is joined, filled or smoothed across them.
+  cuts?: CameraCut[];
 }
 
 export const SMOOTH_DEFAULTS = { maxSpeedMs: 9, maxFillS: 2, windowS: 0.5 };
@@ -57,7 +62,15 @@ export interface SmoothReport {
 function speed(a: TrackPoint, b: TrackPoint, o: SmoothOptions): number {
   const dt = Math.abs(b.frame - a.frame) / o.fps;
   if (dt === 0) return Infinity;
+  if (crossesCut(o.cuts, Math.min(a.frame, b.frame), Math.max(a.frame, b.frame))) return 0;
   return Math.hypot((b.x - a.x) * o.metersPerUnit[0], (b.y - a.y) * o.metersPerUnit[1]) / dt;
+}
+
+// The options for one person: the holes she was told to ignore (TrackEdits.gapIgnoreS, seconds by person id) are filled
+// with a straight line up to that length even if the general limit is shorter (the speed limit still applies).
+export function withGapIgnore<T extends Pick<SmoothOptions, "maxFillS">>(o: T, ignore: Record<string, number> | undefined, id: number): T {
+  const s = ignore?.[id];
+  return s !== undefined && s > o.maxFillS ? { ...o, maxFillS: s } : o;
 }
 
 // The holes of a person that the export will leave empty: longer than maxFillS, or where she reappears too far away
@@ -138,6 +151,7 @@ export function fillGaps(points: TrackPoint[], o: SmoothOptions): { points: Trac
     out.push(p);
     const next = points[i + 1];
     if (!next || next.frame - p.frame <= o.stride * 1.5) return;
+    if (crossesCut(o.cuts, p.frame, next.frame)) return; // a cut is a limit, not a hole: nothing is invented across it
     const dt = (next.frame - p.frame) / o.fps;
     if (dt > o.maxFillS || speed(p, next, o) > o.maxSpeedMs) {
       open++;
@@ -160,7 +174,7 @@ export function smoothRuns(points: TrackPoint[], o: SmoothOptions): TrackPoint[]
   const out: TrackPoint[] = [];
   let start = 0;
   for (let i = 1; i <= points.length; i++) {
-    if (i < points.length && points[i].frame - points[i - 1].frame <= o.stride * 1.5) continue;
+    if (i < points.length && points[i].frame - points[i - 1].frame <= o.stride * 1.5 && !crossesCut(o.cuts, points[i - 1].frame, points[i].frame)) continue;
     const run = points.slice(start, i);
     run.forEach((p, k) => {
       const h = Math.min(half, k, run.length - 1 - k);
@@ -183,7 +197,9 @@ export function smoothRuns(points: TrackPoint[], o: SmoothOptions): TrackPoint[]
 }
 
 export function smoothTrack(points: TrackPoint[], o: SmoothOptions): { points: TrackPoint[]; report: SmoothReport } {
-  const jumps = dropJumps(dedupe(points), o);
+  // Positions inside a frozen picture are repeats, not measurements.
+  const live = o.cuts?.length ? points.filter((p) => p.source === "manual" || !inFrozen(o.cuts, p.frame)) : points;
+  const jumps = dropJumps(dedupe(live), o);
   const gaps = fillGaps(jumps.points, o);
   return { points: smoothRuns(gaps.points, o), report: { outliers: jumps.removed, filled: gaps.filled, openGaps: gaps.open } };
 }

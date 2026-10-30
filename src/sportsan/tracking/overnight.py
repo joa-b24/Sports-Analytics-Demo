@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import MATCHES_DIR, load_config, project_root
-from ..ingest.download_videos import read_registry
+from ..ingest.download_videos import registry_with_yaml
 from ..timebase import load_segments
 
 # Segundos de cálculo por segundo de juego, a 1 de cada 3 cuadros en esta laptop (medido: 35.6 min en 2 h 04 min).
@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
     args = ap.parse_args(argv)
 
     root = project_root()
-    rows = [r for r in read_registry(root / MATCHES_DIR / "videos.csv") if not args.match or r["match_id"] == args.match]
+    rows = [r for r in registry_with_yaml(root) if not args.match or r["match_id"] == args.match]
     rows.sort(key=lambda r: (KIND_ORDER.get(r["kind"], 3), r["match_id"], r["video_id"]))
     plans = [plan_video(root, r["match_id"], r["video_id"]) for r in rows]
     total = sum(p.estimate_s() for p in plans)

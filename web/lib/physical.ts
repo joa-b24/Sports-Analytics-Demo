@@ -1,3 +1,4 @@
+import { crossesCut } from "./cameraCuts.ts";
 import { isExtrapolated, isMeasuredSource } from "./smooth.ts";
 import { PITCH } from "./types.ts";
 import { metersPerUnit, orient, type Oriented } from "./positions.ts";
@@ -53,13 +54,20 @@ function series(parts: Oriented[], team: "own" | "opp"): Map<string, Sample[][]>
     const f = o.file;
     const [mx, my] = metersPerUnit(f);
     const name = new Map(f.people.filter((p) => p.team === team && p.player_id).map((p) => [p.id, p.player_id as string]));
-    const byName = new Map<string, Sample[]>();
+    const byName = new Map<string, Sample[][]>();
     for (const fr of f.frames)
       for (const q of fr.positions) {
         const n = name.get(q.id);
         if (!n) continue;
-        const list = byName.get(n) ?? [];
         if (isExtrapolated(q.source)) continue; // held still outside what was seen: no distance, no speed
+        const runsOf = byName.get(n) ?? [];
+        let list = runsOf[runsOf.length - 1];
+        // A cut of the picture breaks the series: no distance or speed across it.
+        if (!list || crossesCut(f.camera_cuts, Math.round(list[list.length - 1].t * f.fps), fr.frame)) {
+          list = [];
+          runsOf.push(list);
+          byName.set(n, runsOf);
+        }
         const s = { t: fr.frame / f.fps, x: q.x * mx, y: q.y * my, fill: q.source === "interpolated" };
         // Two boxes with the same name in one frame: keep the first (a measured one before a filled one).
         if (list.length && list[list.length - 1].t === s.t) {
@@ -67,9 +75,8 @@ function series(parts: Oriented[], team: "own" | "opp"): Map<string, Sample[][]>
           continue;
         }
         list.push(s);
-        byName.set(n, list);
       }
-    for (const [n, list] of byName) out.set(n, [...(out.get(n) ?? []), list]);
+    for (const [n, lists] of byName) out.set(n, [...(out.get(n) ?? []), ...lists]);
   }
   return out;
 }

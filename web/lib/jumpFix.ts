@@ -40,7 +40,15 @@ export function trackAt(file: TracksFile, edits: TrackEdits, person: number, fra
   return b ? b[0] : null;
 }
 
-export function tryJumpFix(file: TracksFile, edits: TrackEdits, a: Anomaly, side: JumpSide): JumpFix {
+// Q takes out at most this many boxes after the jump: removing the whole stretch up to where she lands again swept away
+// far more than the couple of wrong boxes and made new warnings appear. If more is needed, the warning shows up again.
+export const MAX_JUMP_DROP_BOXES = 2;
+export function jumpDropEnd(a: Anomaly, stride: number): number {
+  return Math.min((a.until ?? a.frame + stride) - 1, a.frame + stride * (MAX_JUMP_DROP_BOXES - 1));
+}
+
+// `force`: take the box out even if the warning stays or a hole is left (the analyst decides), and never ask for a click.
+export function tryJumpFix(file: TracksFile, edits: TrackEdits, a: Anomaly, side: JumpSide, force = false): JumpFix {
   const none = (): JumpFix => ({ status: "none", side, edits, removed: 0, frames: [a.frame, a.frame], needsConfirm: false, tracks: [null, null] });
   if (a.kind !== "player" || a.person === undefined) return none();
   const person = a.person;
@@ -48,9 +56,11 @@ export function tryJumpFix(file: TracksFile, edits: TrackEdits, a: Anomaly, side
   const tracks: [number | null, number | null] = [a.before !== undefined ? trackAt(file, edits, person, a.before) : null, trackAt(file, edits, person, a.frame)];
   let from: number;
   let to: number;
+  let capped = false;
   if (side === "next") {
     from = a.frame;
-    to = (a.until ?? a.frame + stride) - 1;
+    to = jumpDropEnd(a, stride);
+    capped = to < (a.until ?? a.frame + stride) - 1;
   } else {
     if (a.before === undefined) return none();
     from = to = a.before;
@@ -63,14 +73,15 @@ export function tryJumpFix(file: TracksFile, edits: TrackEdits, a: Anomaly, side
   if (removed === 0) return { ...none(), tracks };
   const fail = (status: JumpStatus): JumpFix => ({ status, side, edits, removed: 0, frames: [from, to], needsConfirm: false, tracks });
   // The warning must be gone: no jump left from the same departure point or landing at the same frame.
-  const again = playerAnomalies(file, next).some((x) => x.kind === "player" && x.person === person && ((a.before !== undefined && x.before === a.before) || x.frame === a.frame));
+  // A capped removal may leave the warning at the next box: the analyst presses Q again, one small step at a time.
+  const again = !force && !capped && playerAnomalies(file, next).some((x) => x.kind === "player" && x.person === person && ((a.before !== undefined && x.before === a.before) || x.frame === a.frame));
   if (again) return fail("persists");
   // No new hole: the two boxes that become neighbours must be walkable within what the export fills.
   const obs = series(file, next).get(person) ?? [];
   const p = [...obs].reverse().find((o) => o.frame < from);
   const n = obs.find((o) => o.frame > to);
-  if (p && n && !canBridge(Math.hypot(n.x - p.x, n.y - p.y), (n.frame - p.frame) / file.fps)) return fail("hole");
-  return { status: "ok", side, edits: next, removed, frames: [from, to], needsConfirm: side === "prev" && tracks[0] !== null && tracks[1] !== null && tracks[0] !== tracks[1], tracks };
+  if (!force && p && n && !canBridge(Math.hypot(n.x - p.x, n.y - p.y), (n.frame - p.frame) / file.fps)) return fail("hole");
+  return { status: "ok", side, edits: next, removed, frames: [from, to], needsConfirm: !force && side === "prev" && tracks[0] !== null && tracks[1] !== null && tracks[0] !== tracks[1], tracks };
 }
 
 // Q: the box after the jump; if the warning stays, the one before (which asks for a click when the jump is between two
@@ -79,7 +90,10 @@ export function quitJump(file: TracksFile, edits: TrackEdits, a: Anomaly): { fix
   const n = tryJumpFix(file, edits, a, "next");
   if (n.status === "ok") return { fix: n, next: "ok", prev: "none" };
   const p = tryJumpFix(file, edits, a, "prev");
-  return { fix: p.status === "ok" ? p : null, next: n.status, prev: p.status };
+  if (p.status === "ok") return { fix: { ...p, needsConfirm: false }, next: n.status, prev: "ok" };
+  // Neither settles it: the box after the jump goes anyway, without a warning or a question (Ctrl + Z undoes it).
+  const f = tryJumpFix(file, edits, a, "next", true);
+  return { fix: f.status === "ok" ? f : null, next: n.status, prev: p.status };
 }
 
 export const TRIM_GAP_S = 2;

@@ -33,6 +33,8 @@ export interface FixedFile {
   ball: { frame: number; x: number; y: number; source: string; aerial?: boolean }[];
   // Stretches marked «no se ve» / «fuera» by hand (parts.ts ballStateRanges). Absent in files saved before 2026-10-27: all visible.
   ball_states?: BallStateRange[];
+  // Cuts of the broadcast / frozen pictures marked by hand (cameraCuts.ts). Absent in older files: none.
+  camera_cuts?: { from: number; to: number; kind: "cut" | "freeze" }[];
   // `view`: what the camera saw in that frame, as a polygon of the normalised pitch (parts.ts viewPolygon). Absent in
   // files saved before 2026-10-20.
   frames: { frame: number; positions: FixedPosition[]; view?: [number, number][] }[];

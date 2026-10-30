@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { downloadArgv, validateDownload } from "@/lib/downloads";
+import { fmtHms } from "@/lib/segments";
 
 // Runs the project's Python jobs from the app when it runs on this computer (npm run dev, or the desktop app): the
 // short tracking test, the full processing, sending to Kaggle and bringing its results back. Only these jobs, with a
@@ -21,8 +22,9 @@ const enabled = () => process.env.NODE_ENV !== "production" || process.env.SPORT
 
 type JobKind = "test" | "process" | "kaggle" | "kaggle_pull" | "download" | "clip";
 const PROFILES = ["charla", "whatsapp"];
-const ARGS: Record<JobKind, (match: string, video: string, bandMarginM?: number, youtubeId?: string, clip?: { editId: string; profile: string }) => string[]> = {
-  test: (m, v, b) => ["-m", "sportsan.tracking.process", "--match", m, "--video", v, "--test", ...(b !== undefined ? ["--band-margin", String(b)] : [])],
+const ARGS: Record<JobKind, (match: string, video: string, bandMarginM?: number, youtubeId?: string, clip?: { editId: string; profile: string }, startS?: number) => string[]> = {
+  // With startS the test runs on that stretch (45 s of range, of which process takes the first 30 s) instead of the first one of segments.csv.
+  test: (m, v, b, _y, _c, s) => ["-m", "sportsan.tracking.process", "--match", m, "--video", v, "--test", ...(s !== undefined ? ["--start", fmtHms(s), "--end", fmtHms(s + 45)] : []), ...(b !== undefined ? ["--band-margin", String(b)] : [])],
   // overnight has no --band-margin: with the margin of Detalles técnicos the same steps run through the pipeline command.
   process: (m, _v, b) => (b !== undefined ? ["-m", "sportsan.tracking.pipeline", "tracking", "--match", m, "--resume", "--band-margin", String(b)] : ["-m", "sportsan.tracking.overnight", "--match", m]),
   kaggle: (m, v) => ["-m", "sportsan.cloud.kaggle", "run", "tracking", "--match", m, "--videos", v, "--no-wait"],
@@ -94,13 +96,16 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   if (!enabled()) return notFound();
-  const body = (await req.json().catch(() => null)) as { kind?: string; match?: string; video?: string; bandMarginM?: unknown; youtubeId?: unknown; editId?: unknown; profile?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as { kind?: string; match?: string; video?: string; bandMarginM?: unknown; startS?: unknown; youtubeId?: unknown; editId?: unknown; profile?: unknown } | null;
   const kind = body?.kind as JobKind | undefined;
   const match = body?.match ?? "";
   const video = body?.video ?? "v1";
   // Search strip margin of the test job (Detalles técnicos): meters, 0 to 15.
   const band = body?.bandMarginM;
   if (band !== undefined && (!(kind === "test" || kind === "process") || typeof band !== "number" || !Number.isFinite(band) || band < 0 || band > 15)) return new Response("Margen no válido", { status: 400 });
+  // Where the test starts (seconds of the video): only for the test.
+  const startS = body?.startS;
+  if (startS !== undefined && (kind !== "test" || typeof startS !== "number" || !Number.isFinite(startS) || startS < 0 || startS > 172800)) return new Response("Inicio no válido", { status: 400 });
   const editId = typeof body?.editId === "string" ? body.editId : "";
   const profile = typeof body?.profile === "string" ? body.profile : "charla";
   if (!kind || !(kind in ARGS) || !/^[\w.-]+$/.test(match) || !(kind === "clip" ? /^[\w.-]+$/.test(editId) && PROFILES.includes(profile) : /^v\d+$/.test(video))) return new Response("Trabajo no válido", { status: 400 });
@@ -116,7 +121,7 @@ export async function POST(req: Request) {
 
   const id = `${kind}-${match}-${Date.now().toString(36)}`;
   const job: Job = { id, kind, match, video: kind === "clip" ? `${editId}_${profile}` : video, state: "running", started: Date.now(), ended: null, code: null, lines: [], proc: null };
-  const proc = spawn(python(), ARGS[kind](match, video, band as number | undefined, typeof body?.youtubeId === "string" ? body.youtubeId : undefined, { editId, profile }), {
+  const proc = spawn(python(), ARGS[kind](match, video, band as number | undefined, typeof body?.youtubeId === "string" ? body.youtubeId : undefined, { editId, profile }, startS as number | undefined), {
     cwd: ROOT,
     env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", PYTHONUNBUFFERED: "1", TQDM_MININTERVAL: "2" },
     windowsHide: true,

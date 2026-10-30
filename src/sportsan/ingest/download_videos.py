@@ -82,6 +82,34 @@ def read_registry(path: Path) -> list[dict]:
     return rows
 
 
+def registry_with_yaml(root: Path) -> list[dict]:
+    """videos.csv más los videos de cada match.yaml que no estén ahí. Un partido que crea la app solo tiene match.yaml:
+    sin esto, overnight y Kaggle dirían \"no hay videos pendientes\" para él."""
+    import yaml
+
+    registry = root / MATCHES_DIR / "videos.csv"
+    rows = read_registry(registry) if registry.exists() else []
+    known = {(r["match_id"], r["video_id"]) for r in rows}
+    for ypath in sorted((root / MATCHES_DIR).glob("*/match.yaml")):
+        try:
+            data = yaml.safe_load(ypath.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            continue
+        mid = ypath.parent.name
+        for v in data.get("videos") or []:
+            vid = str((v or {}).get("video_id") or "")
+            if not vid or (mid, vid) in known:
+                continue
+            yt = str(v.get("youtube_id") or "")
+            vals = {"match_id": mid, "kind": str(data.get("kind") or "own"), "date": str(data.get("date") or ""),
+                    "own_team": str(data.get("own_team_name") or ""), "other_team": str(data.get("other_team_name") or ""),
+                    "video_id": vid, "period": str(v.get("period") or ""), "label": str(v.get("label") or ""),
+                    "url": f"https://www.youtube.com/watch?v={yt}" if yt else "", "note": ""}
+            rows.append({c: vals[c] for c in COLUMNS})
+            known.add((mid, vid))
+    return rows
+
+
 def video_entry(row: dict, fps: float | None) -> str:
     """Bloque YAML de un video para la lista `videos` de match.yaml."""
     lines = [f"  - video_id: {row['video_id']}"]

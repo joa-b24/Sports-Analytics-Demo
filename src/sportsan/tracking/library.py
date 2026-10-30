@@ -290,13 +290,23 @@ def localize(xy_q: np.ndarray, des_q: np.ndarray, lib: Library, hint: int | None
     return Location(H, best.inliers, best.index, len(used), float(np.nanmean(spread)) if np.isfinite(spread).any() else None)
 
 
-def build_library(video: str | Path, track: dict, min_shift_px: float = 150.0, work_width: int = 960, progress=None, mask: list | None = None) -> Library:
-    """Biblioteca a partir de un tramo calibrado (el JSON de `propagate`)."""
+def with_extra_references(chosen: list[tuple[int, np.ndarray]], extra: list[dict] | None) -> list[tuple[int, np.ndarray]]:
+    """Suma a las referencias de un tramo propagado las de unas anclas sueltas (de otros momentos del video): todas
+    cuentan, sin el filtro de movimiento. Un cuadro que ya está no se repite. Salen ordenadas por cuadro."""
+    have = {f for f, _ in chosen}
+    more = [(int(f["frame"]), np.array(f["H"], dtype=float).reshape(3, 3)) for f in (extra or []) if f.get("H") and int(f["frame"]) not in have]
+    return sorted(chosen + more, key=lambda c: c[0])
+
+
+def build_library(video: str | Path, track: dict, min_shift_px: float = 150.0, work_width: int = 960, progress=None, mask: list | None = None,
+                  extra: list[dict] | None = None) -> Library:
+    """Biblioteca a partir de un tramo calibrado (el JSON de `propagate`). `extra`: cuadros calibrados sueltos (las
+    anclas de otros momentos) que entran siempre como referencia."""
     import cv2
 
     w, h = int(track["image_w"]), int(track["image_h"])
     calibrated = [(int(f["frame"]), np.array(f["H"], dtype=float).reshape(3, 3)) for f in track["frames"] if f.get("H")]
-    chosen = [calibrated[i] for i in select_keyframes(calibrated, w, h, min_shift_px)]
+    chosen = with_extra_references([calibrated[i] for i in select_keyframes(calibrated, w, h, min_shift_px)], extra)
     if not chosen:
         raise ValueError("El tramo no tiene cuadros calibrados")
     cap = cv2.VideoCapture(str(video))
@@ -329,7 +339,7 @@ def build_library(video: str | Path, track: dict, min_shift_px: float = 150.0, w
         "image_h": h,
         "work_width": work_width,
         "venue": track.get("venue") or {},
-        "source_frames": [int(track["start_frame"]), int(track["end_frame"])],
+        "source_frames": [min(int(track["start_frame"]), min(frames)), max(int(track["end_frame"]), max(frames))],
         # Lo que no se mira (marcador, logo): quien ubique cuadros con esta biblioteca lo tapa igual.
         "mask": [list(map(float, r)) for r in (mask or [])],
     }
@@ -392,9 +402,25 @@ def track_from_anchors(data: dict, fps: float, min_points: int = 6) -> tuple[dic
 def _cmd_build(args) -> None:
     from ..config import load_config, project_root
 
-    if bool(args.track) == bool(args.anchors):
-        raise SystemExit("Da --track (calib_*.json de propagate) o --anchors (anchors_*.json de la app), uno de los dos.")
-    if args.anchors:
+    if not args.track and not args.anchors:
+        raise SystemExit("Da --track (calib_*.json de propagate), --anchors (anchors_*.json de la app) o las dos: con las dos, el tramo propagado "
+                         "más las anclas de otros momentos como referencias sueltas.")
+    extra = None
+    if args.anchors and args.track:
+        from .propagate import read_anchors
+
+        data = read_anchors(args.anchors)
+        track = json.loads(Path(args.track).read_text(encoding="utf-8"))
+        if track.get("kind") != "calib_track":
+            raise SystemExit(f"{args.track} no es una calibración propagada (se espera el JSON de sportsan.tracking.propagate).")
+        cfg = load_config(match=args.match or track["match_id"], video=args.video or track["video_id"])
+        atrack, notes = track_from_anchors(data, float(cfg["video_fps"]), args.min_points)
+        for n in notes:
+            print(f"  {n}")
+        extra = atrack["frames"]
+        min_shift = args.min_shift_px
+        print(f"  {len(extra)} ancla(s) buena(s) de otros momentos entran como referencias sueltas")
+    elif args.anchors:
         from .propagate import read_anchors
 
         data = read_anchors(args.anchors)
@@ -414,7 +440,7 @@ def _cmd_build(args) -> None:
     root = project_root()
     if cfg.get("mask"):
         print(f"  tapado (mask de match.yaml): {len(cfg['mask'])} rectángulo(s)")
-    lib = build_library(root / cfg["paths"]["raw_video"], track, min_shift, mask=cfg.get("mask"), progress=lambda i, t: print(f"  referencia {i}/{t}", end="\r"))
+    lib = build_library(root / cfg["paths"]["raw_video"], track, min_shift, mask=cfg.get("mask"), progress=lambda i, t: print(f"  referencia {i}/{t}", end="\r"), extra=extra)
     out = Path(args.out) if args.out else root / cfg["paths"]["tracking_dir"] / f"library_{cfg['video_id']}.npz"
     out.parent.mkdir(parents=True, exist_ok=True)
     lib.save(out)
@@ -550,7 +576,8 @@ def main(argv: list[str] | None = None) -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="construye la biblioteca desde un tramo calibrado")
     b.add_argument("--track", help="calib_*.json escrito por sportsan.tracking.propagate")
-    b.add_argument("--anchors", help="anchors_*.json de la app: cada ancla buena es una referencia, sin propagar (líneas que solo se ven a ratos)")
+    b.add_argument("--anchors", help="anchors_*.json de la app: cada ancla buena es una referencia, sin propagar (líneas que solo se ven a ratos). "
+                                     "Junto con --track, suma las anclas de otros momentos al tramo propagado")
     b.add_argument("--min-points", type=int, default=6, help="con --anchors: puntos mínimos de un ancla para ser referencia")
     b.add_argument("--match")
     b.add_argument("--video")

@@ -153,3 +153,16 @@ def test_mascara_tapa_los_rectangulos_con_margen():
     assert m[30, 100] == 0 and m[10, 100] == 255 and m[30, 200] == 255
     assert mask_image([], (10, 10), 1.0) is None
     assert in_mask([[100, 50, 300, 90]], 150, 60) and not in_mask([[100, 50, 300, 90]], 350, 60)
+
+
+def test_referencias_sueltas_se_suman_al_tramo_propagado():
+    from sportsan.tracking.library import with_extra_references
+
+    chosen = [(100, camera(0)), (200, camera(5))]
+    extra = [{"frame": 200, "H": camera(9).reshape(-1).tolist()},      # ya estaba: no se repite
+             {"frame": 50, "H": camera(2).reshape(-1).tolist()},       # otro momento: entra, ordenada
+             {"frame": 999, "H": None}]                                  # sin calibración: no cuenta
+    out = with_extra_references(chosen, extra)
+    assert [f for f, _ in out] == [50, 100, 200]
+    assert np.allclose(out[2][1], camera(5))                             # lo del tramo manda
+    assert with_extra_references(chosen, None) == chosen

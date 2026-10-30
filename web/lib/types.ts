@@ -442,6 +442,14 @@ export interface AutoAccepted {
   prev: number;
 }
 
+// A break of the picture: a hard cut of the broadcast (`to` = `from` - 1, nothing in between) or a frozen stretch (positions
+// from `from` to `to` are repeats of the last real picture and are left out). Frames of the processed part.
+export interface CameraCut {
+  from: number;
+  to: number;
+  kind: "cut" | "freeze";
+}
+
 export interface TrackEdits {
   // `${match_id}|${video_id}|${start_frame}_${end_frame}` of the tracks file.
   key: string;
@@ -480,6 +488,12 @@ export interface TrackEdits {
   ballReview?: { every: number; seen: number[] };
   // Impossible movements the analyst looked at and found fine (anomalyKey of lib/anomalies.ts).
   anomalyOk?: string[];
+  // Holes of a person shorter than this many seconds are not offered for review (by person id): for players far away who look
+  // tiny whose straight-line path is fine. Absent = the general limit.
+  gapIgnoreS?: Record<string, number>;
+  // Cuts of the broadcast / frozen picture marked by hand (lib/cameraCuts.ts). They are limits, not movement: nothing is joined,
+  // filled or measured across them.
+  cuts?: CameraCut[];
   // Events suggested from the ball (lib/autoEvents.ts) rejected here, by suggestion id.
   autoRejected?: string[];
   // Anchors mode (lib/anchors.ts): doubts of links_<part>.json already resolved, by doubtKey. Absent in older edits.

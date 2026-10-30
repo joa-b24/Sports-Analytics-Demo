@@ -1,5 +1,5 @@
 import { BALL_FILL_S, autoBall, ballPath, ballStateRanges, eventBall, manualBall, measuredPaths, metersPerUnit, viewPolygon, type BallAuto } from "./parts.ts";
-import { SMOOTH_DEFAULTS, extrapolateEnds, smoothTrack, type SmoothReport, type TrackPoint } from "./smooth.ts";
+import { SMOOTH_DEFAULTS, extrapolateEnds, smoothTrack, withGapIgnore, type SmoothReport, type TrackPoint } from "./smooth.ts";
 import { people, type JerseyColors, type TracksFile } from "./tracks.ts";
 import type { MatchEvent, TrackEdits } from "./types.ts";
 
@@ -58,8 +58,8 @@ export function buildFixed(file: TracksFile, edits: TrackEdits, opts: FixedOptio
   const cfg = opts.smooth;
   const cleaned = new Map<number, { points: TrackPoint[]; report: SmoothReport }>();
   if (cfg) {
-    const o = { fps: file.fps, stride: file.stride, metersPerUnit: metersPerUnit(file), ...cfg };
-    for (const [id, pts] of paths) cleaned.set(id, smoothTrack(pts, o));
+    const o = { fps: file.fps, stride: file.stride, metersPerUnit: metersPerUnit(file), ...cfg, cuts: edits.cuts };
+    for (const [id, pts] of paths) cleaned.set(id, smoothTrack(pts, withGapIgnore(o, edits.gapIgnoreS, id)));
   }
   const totals = [...cleaned.values()].reduce(
     (t, c) => ({ outliers: t.outliers + c.report.outliers, filled: t.filled + c.report.filled, openGaps: t.openGaps + c.report.openGaps }),
@@ -108,6 +108,8 @@ export function buildFixed(file: TracksFile, edits: TrackEdits, opts: FixedOptio
     // «No se ve» / «fuera» stretches marked by hand: frames [from, to) (to null: to the end of the part). Inside «out» there
     // is no ball: the ball is dead until the next visible mark. Always present (empty: everything visible).
     ball_states: ballStates,
+    // Cuts of the broadcast / frozen pictures marked by hand: limits, nothing is measured across them (lib/cameraCuts.ts).
+    camera_cuts: edits.cuts ?? [],
     // Positions in the normalised pitch. source: "auto", "manual", "interpolated" (never a measurement) or "extrapolated" (held still outside what was seen: invented, measures skip it). `raw` is the
     // measured position when smoothing moved it. `view`: what the camera saw in each frame, on the pitch.
     frames: file.frames.map((fr) => {

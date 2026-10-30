@@ -59,3 +59,28 @@ def test_select_rows_por_video_y_por_enlace_de_la_app():
         select_rows([], "m", "v1", "corto")
     with pytest.raises(SystemExit):
         select_rows([], None, "v1", "OIvhk-vNs5c")
+
+
+def test_registro_con_los_videos_de_match_yaml(tmp_path, monkeypatch):
+    # Un partido creado por la app solo tiene match.yaml: overnight y Kaggle lo ven igual que a los de videos.csv.
+    from sportsan.ingest import download_videos as dv
+
+    m = tmp_path / "matches"
+    (m / "2026_10_23_a_vs_b").mkdir(parents=True)
+    (m / "2026_10_23_a_vs_b" / "match.yaml").write_text(
+        'match_id: 2026_10_23_a_vs_b\nkind: own\ndate: "2026-10-23"\nown_team_name: "A"\nother_team_name: "B"\n'
+        'videos:\n  - video_id: v1\n    youtube_id: "PuvKiL-vL2s"\n    file: video/v1.mp4\n    fps: 60\n'
+        '  - video_id: v2\n    file: video/v2.mp4\n',
+        encoding="utf-8",
+    )
+    (m / "otro").mkdir()
+    (m / "otro" / "match.yaml").write_text("videos:\n  - video_id: v1\n", encoding="utf-8")
+    (m / "videos.csv").write_text(",".join(dv.COLUMNS) + "\notro,rival,,X,Y,v1,,Todo,https://youtu.be/AAAAAAAAAAA,\n", encoding="utf-8")
+    monkeypatch.setattr(dv, "MATCHES_DIR", "matches")
+    rows = dv.registry_with_yaml(tmp_path)
+    got = {(r["match_id"], r["video_id"]): r for r in rows}
+    assert set(got) == {("otro", "v1"), ("2026_10_23_a_vs_b", "v1"), ("2026_10_23_a_vs_b", "v2")}
+    assert got[("otro", "v1")]["url"] == "https://youtu.be/AAAAAAAAAAA"   # lo de videos.csv manda y no se duplica
+    nuevo = got[("2026_10_23_a_vs_b", "v1")]
+    assert nuevo["kind"] == "own" and nuevo["own_team"] == "A" and nuevo["url"].endswith("PuvKiL-vL2s")
+    assert list(nuevo) == dv.COLUMNS

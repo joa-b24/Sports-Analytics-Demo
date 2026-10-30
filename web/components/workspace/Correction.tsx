@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowRight, ArrowUp, SignOut, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, WarningCircle, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard, Anchor, Table } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowRight, ArrowUp, SignOut, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, WarningCircle, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard, Anchor, Table, VideoCamera } from "@phosphor-icons/react";
 import { Pager } from "@/components/Paged";
 import { VideoMissingNotice } from "@/components/match/VideoDownload";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,7 +22,7 @@ import { SpeedControl } from "@/components/SpeedControl";
 import { downloadText, fmtT, isTyping } from "@/lib/format";
 import { viewPolygon, BALL_FILL_S, autoBall, ballCoverage, ballPath, ballStateAtFrame, ballStateRanges, type BallStateName, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, metersPerUnit, pitchToPixel, pixelToPitch, type BallAuto, type Part } from "@/lib/parts";
 import { anomalyKey, ballAnomalies, playerAnomalies, type Anomaly } from "@/lib/anomalies";
-import { quitJump, tryJumpFix, trimAtJump, type JumpFix, type JumpStatus } from "@/lib/jumpFix";
+import { jumpDropEnd, MAX_JUMP_DROP_BOXES, quitJump, tryJumpFix, trimAtJump, type JumpFix } from "@/lib/jumpFix";
 import { applyHint, applyTeamCuts, cutHints, type CutHint } from "@/lib/cuts";
 import { candidatesFor, dropRange, personTimeline, rejectSuggestion, separateRange, type Suggestion } from "@/lib/suggestions";
 import { buildLabels, labelsName } from "@/lib/labels";
@@ -33,7 +33,7 @@ import { feetLine, feetPath, parseFeet, type FeetFile } from "@/lib/feetFix";
 import { clearFit, fitAt, fitCount, fitKeys, fitMarks, newFitId, removeKey, setKey } from "@/lib/feetKeys";
 import { localFile, listLocal, localVideo, localVideoProxy, readLocal, tracksParts, writeLocal } from "@/lib/local";
 import { parseHms } from "@/lib/segments";
-import { SMOOTH_DEFAULTS, smoothTrack, type SmoothOptions, type SmoothReport, type TrackPoint } from "@/lib/smooth";
+import { SMOOTH_DEFAULTS, smoothTrack, withGapIgnore, type SmoothOptions, type SmoothReport, type TrackPoint } from "@/lib/smooth";
 import { getPref, mutate, setPref, uid, useHydrated, usePref, useStore } from "@/lib/store";
 import {
   applyAbsorb,
@@ -74,7 +74,8 @@ import {
   type TeamCode,
   type TracksFile,
 } from "@/lib/tracks";
-import { type MatchEvent, type RivalPlayer, type TrackEdits } from "@/lib/types";
+import { type CameraCut, type MatchEvent, type RivalPlayer, type TrackEdits } from "@/lib/types";
+import { addCut, frozenRuns, removeCut } from "@/lib/cameraCuts";
 import { autoEvents, pending as pendingAuto, reviewedStretches, AUTO, type Suggestion as AutoSuggestion } from "@/lib/autoEvents";
 import type { FixedFile } from "@/lib/positions";
 import { matchVideos, periodAt } from "@/lib/videos";
@@ -257,6 +258,8 @@ export function Correction({
   const [dropOver, setDropOver] = useState<number | null>(null);
   // The impossible jump of the selected player being reviewed (its person and first frame).
   const [anomAt, setAnomAt] = useState<{ person: number; frame: number } | null>(null);
+  // A cut of the picture being looked at: suggested (to mark or discard) or already marked (to remove).
+  const [cutFocus, setCutFocus] = useState<{ cut: CameraCut; marked: boolean } | null>(null);
   // «Quitar saltos» (Q): the previous box asks for a click when the jump is between two tracks; and the warnings of jumps of the
   // part when the first one was taken out (the count before), to show how many are left.
   const [jumpAsk, setJumpAsk] = useState<{ person: number; frame: number; fix: JumpFix } | null>(null);
@@ -356,7 +359,7 @@ export function Correction({
   // Quick review: the player all of the current one's names are moved to (fixing a mix-up).
   const [qMoveTo, setQMoveTo] = useState("");
   // Secondary work opens in a dialog: kit colours, quick cleaning of short pieces, export.
-  const [modal, setModal] = useState<null | "kits" | "cleanup" | "export" | "reset" | "ballEvents" | "applyQuick" | "anomalies" | "discarded">(null);
+  const [modal, setModal] = useState<null | "kits" | "cleanup" | "export" | "reset" | "ballEvents" | "applyQuick" | "anomalies" | "discarded" | "process">(null);
   // A candidate being checked on the video ("does she go on as …?").
   const [peek, setPeek] = useState<Suggestion | null>(null);
   // Rows of the list drawn (the list of a long part has thousands of pieces).
@@ -550,9 +553,10 @@ export function Correction({
         });
         setPickKit(null);
         setCropping(false);
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        undoRef.current();
+        // Holding the keys repeats the event: one press, one step.
+        if (!e.repeat) undoRef.current();
       }
       else if (e.key === "u" && viewRef.current === "players") setMode((m) => (m === "merge" ? null : "merge"));
       else if (e.key === "p" && viewRef.current === "players") setMode((m) => (m === "manual" ? null : "manual"));
@@ -1411,7 +1415,6 @@ export function Correction({
   // Warnings of jumps of the whole part, now and before the first one was taken out with these tools.
   const jumpNow = anomalies.filter((a) => a.kind === "player").length;
   const captureJumpBase = () => setJumpBase((b) => (b && b.key === edits.key ? b : { key: edits.key, n: jumpNow }));
-  const JUMP_WHY: Record<JumpStatus, string> = { ok: "", persists: "el aviso sigue", hole: "dejaría un hueco que el guardado no rellena", none: "no hay cuadro que quitar" };
   const jumpDone = (a: Anomaly, fix: JumpFix) => {
     captureJumpBase();
     setJumpAsk(null);
@@ -1422,8 +1425,7 @@ export function Correction({
   const anomDrop = (a: Anomaly) => {
     if (!data || a.person === undefined) return;
     const r = quitJump(data, edits, a);
-    if (!r.fix) return setMsg(`Ningún cuadro lo resuelve (siguiente: ${JUMP_WHY[r.next]}; previo: ${JUMP_WHY[r.prev]}). Prueba «Hasta aquí» o «Ajustar pies».`);
-    if (r.fix.needsConfirm) return setJumpAsk({ person: a.person, frame: a.frame, fix: r.fix });
+    if (!r.fix) return;
     jumpDone(a, r.fix);
   };
   // «Quitar hasta aquí» ([ and ]): her run on the track before / after the jump, for the jumps one box does not settle.
@@ -1439,8 +1441,8 @@ export function Correction({
   const anomDropAll = () => {
     if (!data || selAnoms.length === 0) return;
     let next = edits;
-    for (const a of selAnoms) if (a.person !== undefined) next = dropRange(next, data, a.person, a.frame, (a.until ?? a.frame + stride) - 1);
-    const n = selAnoms.reduce((t, a) => t + anomFrames(a), 0);
+    for (const a of selAnoms) if (a.person !== undefined) next = dropRange(next, data, a.person, a.frame, jumpDropEnd(a, stride));
+    const n = selAnoms.reduce((t, a) => t + Math.min(anomFrames(a), MAX_JUMP_DROP_BOXES), 0);
     setEdits(next);
     setAnomAt(null);
     setMode(null);
@@ -1450,12 +1452,73 @@ export function Correction({
   // warning without a hole; a click first when the jump is between two tracks.
   const anomDropPrev = (a: Anomaly) => {
     if (!data || a.person === undefined || a.before === undefined) return;
-    const fix = tryJumpFix(data, edits, a, "prev");
-    if (fix.status !== "ok") return setMsg(`El cuadro previo no lo resuelve: ${JUMP_WHY[fix.status]}. Prueba «Hasta aquí» o «Ajustar pies».`);
-    if (fix.needsConfirm) return setJumpAsk({ person: a.person, frame: a.frame, fix });
+    const fix = tryJumpFix(data, edits, a, "prev", true);
+    if (fix.status !== "ok") return;
     jumpDone(a, fix);
   };
   const anomOk = (a: Anomaly) => anomDone(a, { ...edits, anomalyOk: [...new Set([...(edits.anomalyOk ?? []), anomalyKey(a)])] });
+  // ---------------------------------------------------------------- cuts of the broadcast and frozen pictures
+  // Marked from a jump under review (or from a suggestion): a limit of the part, never movement. Nothing is joined, filled,
+  // smoothed or measured across it, and the jumps over it stop being warnings. The video is not cut or processed apart.
+  const frozenAll = useMemo(
+    () =>
+      data
+        ? frozenRuns(
+            data.frames.map((fr) => ({
+              frame: fr.frame,
+              at: new Map(fr.boxes.filter((b) => b[9] !== null && b[10] !== null).map((b) => [b[0], [b[9] as number, b[10] as number] as [number, number]])),
+            })),
+          )
+        : [],
+    [data],
+  );
+  const cutKey = (c: CameraCut) => `corte::${c.from}`;
+  const cutSugs = useMemo(() => {
+    if (!data) return [];
+    const marked = edits.cuts ?? [];
+    const ok = new Set(edits.anomalyOk ?? []);
+    const all: CameraCut[] = [
+      ...anomalies.filter((a) => a.kind === "camera").map((a): CameraCut => ({ from: a.frame, to: a.frame - 1, kind: "cut" })),
+      ...frozenAll.map(([from, to]): CameraCut => ({ from, to, kind: "freeze" })),
+    ];
+    return all.filter((c) => !ok.has(cutKey(c)) && !marked.some((m) => c.from <= m.to + stride && c.to >= m.from - stride)).sort((a, b) => a.from - b.from);
+  }, [data, edits.cuts, edits.anomalyOk, anomalies, frozenAll, stride]);
+  const markCut = (cut: CameraCut, then?: () => void) => {
+    setEdits({ ...edits, cuts: addCut(edits.cuts, cut) });
+    setCutFocus(null);
+    setMsg(`${cut.kind === "freeze" ? "Congelado" : "Corte"} marcado en ${fmtT(cut.from / fps)}: es un límite, no se une, rellena ni mide nada a través de él. Ctrl + Z lo deshace.`);
+    then?.();
+  };
+  // From a jump of one player: a freeze if a frozen stretch ends right before it, otherwise a cut at the jump.
+  const anomCut = (a: Anomaly, kind: "cut" | "freeze") => {
+    const run = kind === "freeze" ? frozenAll.find(([, t]) => t < a.frame && a.frame - t <= stride * 2) : undefined;
+    const cut: CameraCut = run ? { from: run[0], to: run[1], kind: "freeze" } : { from: a.frame, to: a.frame - 1, kind: "cut" };
+    if (kind === "freeze" && !run) setMsg("No encontré un tramo congelado justo antes del salto: se marcó como corte.");
+    anomDone(a, { ...edits, cuts: addCut(edits.cuts, cut) });
+  };
+  const cutGo = (c: CameraCut, marked: boolean) => {
+    setCutFocus({ cut: c, marked });
+    setAnomAt(null);
+    seekFrame(Math.max(data?.start_frame ?? 0, c.from - stride));
+  };
+  const cutStep = () => {
+    if (cutSugs.length === 0) return;
+    cutGo(cutSugs.find((c) => c.from > frame) ?? cutSugs[0], false);
+  };
+  const cutStepMarked = () => {
+    const m = edits.cuts ?? [];
+    if (m.length === 0) return;
+    cutGo(m.find((c) => c.from > frame) ?? m[0], true);
+  };
+  const cutDiscard = (c: CameraCut) => {
+    writeEdits({ ...edits, anomalyOk: [...new Set([...(edits.anomalyOk ?? []), cutKey(c)])] });
+    setCutFocus(null);
+  };
+  const cutUnmark = (c: CameraCut) => {
+    setEdits({ ...edits, cuts: removeCut(edits.cuts, c.from) });
+    setCutFocus(null);
+    setMsg("Marca quitada: los saltos de ahí vuelven a avisar. Ctrl + Z la devuelve.");
+  };
   // ---------------------------------------------------------------- feet on key frames (P)
   // Window of the strip: the jump with 1 s around it, or 2 s around where the stretch started.
   const fitOn = mode === "manual" && sel !== null && fit?.identity === sel ? fit : null;
@@ -1488,7 +1551,8 @@ export function Correction({
     fitKeysRef.current = (e: KeyboardEvent) => {
       if (mode !== "manual" || sel === null || isTyping(e.target) || !data) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-        undo();
+        // This handler stops the event, so the general one of the table never sees it: the undo is done here, once.
+        if (!e.repeat) undo();
         setFit(null);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (!fitOn) setMsg("Aún no hay claves: haz clic en sus pies sobre el video.");
@@ -1521,8 +1585,9 @@ export function Correction({
       const k = e.key.toLowerCase();
       if ((k === "q" || e.code === "KeyQ") && e.altKey && anomCur) anomDropPrev(anomCur);
       else if (e.altKey) return;
-      else if (k === "q" && anomCur) anomDrop(anomCur);
+      else if (k === "q" && anomCur && !e.repeat) anomDrop(anomCur);
       else if (k === "enter" && anomCur && mode === null) anomOk(anomCur);
+      else if (k === "t" && anomCur) anomCut(anomCur, e.shiftKey ? "freeze" : "cut");
       else if (e.key === "[" && anomCur) anomTrim(anomCur, "before");
       else if (e.key === "]" && anomCur) anomTrim(anomCur, "after");
       else if (k === "a") anomStep(e.shiftKey ? -1 : 1);
@@ -1700,13 +1765,14 @@ export function Correction({
         // Speeds are judged in real meters, not in units of the normalised pitch.
         metersPerUnit: metersPerUnit(data),
         ...smoothCfg,
+        cuts: edits.cuts,
       }
     : null;
   // Cleaning every person is slow on a long part: done when the export dialog is open (for its totals) and on export.
   const cleanAll = () => {
     const out = new Map<number, { points: TrackPoint[]; report: SmoothReport }>();
     if (!smoothOpt) return out;
-    for (const [id, pts] of paths) out.set(id, smoothTrack(pts, smoothOpt));
+    for (const [id, pts] of paths) out.set(id, smoothTrack(pts, withGapIgnore(smoothOpt, edits.gapIgnoreS, id)));
     return out;
   };
   const cleaned = useMemo(
@@ -1715,9 +1781,9 @@ export function Correction({
     [paths, data, smoothCfg, modal],
   );
   const selCleaned = useMemo(
-    () => (smoothOpt && sel !== null && paths.get(sel) ? smoothTrack(paths.get(sel) as TrackPoint[], smoothOpt) : null),
+    () => (smoothOpt && sel !== null && paths.get(sel) ? smoothTrack(paths.get(sel) as TrackPoint[], withGapIgnore(smoothOpt, edits.gapIgnoreS, sel)) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- smoothOpt is rebuilt on every render from these values
-    [paths, data, smoothCfg, sel],
+    [paths, data, smoothCfg, sel, edits.gapIgnoreS],
   );
   // The players with a name, cleaned as they will be saved: what the pitch shows in «Con nombre». Only theirs (a
   // dozen paths), so it is quick to work out.
@@ -1727,12 +1793,12 @@ export function Correction({
     for (const p of ppl) {
       const pts = p.player_id ? paths.get(p.id) : undefined;
       if (!pts) continue;
-      const clean = smoothOpt && smoothOn ? smoothTrack(pts, smoothOpt).points : pts;
+      const clean = smoothOpt && smoothOn ? smoothTrack(pts, withGapIgnore(smoothOpt, edits.gapIgnoreS, p.id)).points : pts;
       out.set(p.id, new Map(clean.map((q) => [q.frame, q])));
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- smoothOpt is rebuilt on every render from these values
-  }, [pitchShow, ppl, paths, data, smoothCfg, smoothOn]);
+  }, [pitchShow, ppl, paths, data, smoothCfg, smoothOn, edits.gapIgnoreS]);
   const totals = [...cleaned.values()].reduce(
     (t, c) => ({ outliers: t.outliers + c.report.outliers, filled: t.filled + c.report.filled, openGaps: t.openGaps + c.report.openGaps }),
     { outliers: 0, filled: 0, openGaps: 0 },
@@ -1741,7 +1807,15 @@ export function Correction({
   // Holes that the export will leave empty (shorter ones are filled by the smoothing): what is worth fixing by hand.
   // Holes worth a look: where she was lost in the middle of the image, for more than FIX_GAP_S or reappearing too far
   // to have got there. Holes at the edge of the image (she left the frame) are off camera: nothing to fix there.
-  const gapsOf = (p: Person) => (data ? p.gaps.filter((g) => (g[1] - g[0]) / fps > FIX_GAP_S && !offCamera(data, edits, p.id, g)) : []);
+  // A person can have her own, longer limit (edits.gapIgnoreS): holes shorter than that are left alone.
+  const gapLimitOf = (p: Person) => Math.max(FIX_GAP_S, edits.gapIgnoreS?.[p.id] ?? 0);
+  const gapsOf = (p: Person) => (data ? p.gaps.filter((g) => (g[1] - g[0]) / fps > gapLimitOf(p) && !offCamera(data, edits, p.id, g)) : []);
+  const setGapIgnore = (p: Person, s: number) => {
+    const rest = { ...(edits.gapIgnoreS ?? {}) };
+    if (Number.isFinite(s) && s > 0) rest[p.id] = Math.min(30, s);
+    else delete rest[p.id];
+    writeEdits({ ...edits, gapIgnoreS: Object.keys(rest).length ? rest : undefined });
+  };
   const selGaps = selected ? gapsOf(selected) : [];
   const selOffCamera = selected && data ? selected.gaps.filter((g) => (g[1] - g[0]) / fps >= 0.5 && offCamera(data, edits, selected.id, g)) : [];
   // The next open hole of the selected person after the current frame (from the start again after the last one).
@@ -3533,8 +3607,33 @@ export function Correction({
                         ) : (
                           <Badge icon={<Check size={13} weight="bold" />} tone="ok" title="Sin huecos por revisar: los de fuera de cuadro se rellenan al guardar" />
                         )}
+                        {(cutSugs.length > 0 || (edits.cuts ?? []).length > 0) && (
+                          <Badge
+                            icon={<VideoCamera size={13} />}
+                            n={cutSugs.length > 0 ? cutSugs.length : (edits.cuts ?? []).length}
+                            tone={cutSugs.length > 0 ? "danger" : "plain"}
+                            title={cutSugs.length > 0 ? `${cutSugs.length} corte(s) o congelado(s) sugerido(s) (salto de muchas jugadoras a la vez, o cuadro repetido); ${(edits.cuts ?? []).length} ya marcado(s): ir al siguiente sugerido` : `${(edits.cuts ?? []).length} corte(s) marcado(s): ir al siguiente`}
+                            onClick={cutSugs.length > 0 ? cutStep : cutStepMarked}
+                          />
+                        )}
                         {selOffCamera.length > 0 && (
                           <Badge icon={<EyeSlash size={13} />} n={selOffCamera.length} tone="plain" title={`${selOffCamera.length} hueco(s) donde salió de cuadro: gris en la línea; se rellenan al guardar`} />
+                        )}
+                        {selected && (
+                          <label className="tc inline-flex items-center gap-1 text-[11px] text-faint" title={`Ignorar los huecos de menos de X segundos de esta jugadora (para quien se ve muy chica y va en línea recta). Hoy se revisan los de más de ${gapLimitOf(selected)} s; vacío o ${FIX_GAP_S} = el límite general`}>
+                            ignorar &lt;
+                            <input
+                              type="number"
+                              min={FIX_GAP_S}
+                              max={30}
+                              step={0.5}
+                              className="w-12 rounded border border-line bg-transparent px-1 py-0.5 text-ink"
+                              value={edits.gapIgnoreS?.[selected.id] ?? ""}
+                              placeholder={String(FIX_GAP_S)}
+                              onChange={(e) => setGapIgnore(selected, e.target.value === "" ? 0 : Number(e.target.value))}
+                            />
+                            s
+                          </label>
                         )}
                       </span>
                     </div>
@@ -3853,6 +3952,11 @@ export function Correction({
                     <MenuItem icon={<Stack size={15} />} onClick={() => (close(), setModal("export"))}>
                       Exportar…
                     </MenuItem>
+                    {embedded && folder && (
+                      <MenuItem icon={<Play size={15} />} onClick={() => (close(), setModal("process"))}>
+                        Procesar lo que falta / Kaggle…
+                      </MenuItem>
+                    )}
                     <MenuItem icon={<ArrowCounterClockwise size={15} />} onClick={() => (close(), setModal("reset"))}>
                       Restablecer…
                     </MenuItem>
@@ -4044,6 +4148,11 @@ export function Correction({
               Todo: también los nombres de la revisión rápida y las marcas del balón
             </button>
           </div>
+        </Modal>
+      )}
+      {modal === "process" && embedded && folder && (
+        <Modal title="Procesar lo que falta" onClose={() => setModal(null)} wide>
+          <ProcessPanel folder={folder} video={video} onOpen={openRel} onRefresh={relist} />
         </Modal>
       )}
       {modal === "export" && data && (
@@ -4532,6 +4641,41 @@ export function Correction({
                     <ArrowsOut size={16} />
                   </IconButton>
                 </div>
+                {cutFocus && (
+                  <Notice
+                    tone={cutFocus.marked ? "accent" : "danger"}
+                    icon={<VideoCamera size={16} weight="fill" />}
+                    title={cutFocus.marked ? "Corte marcado: un límite del tramo" : "Sugerencia: la imagen se rompe aquí"}
+                    actions={
+                      <>
+                        {cutFocus.marked ? (
+                          <button type="button" className={btn} onClick={() => cutUnmark(cutFocus.cut)}>
+                            Quitar la marca
+                          </button>
+                        ) : (
+                          <>
+                            <button type="button" className={btnPrimary} onClick={() => markCut(cutFocus.cut)}>
+                              Marcar {cutFocus.cut.kind === "freeze" ? "congelado" : "corte"}
+                            </button>
+                            <button type="button" className={btn} onClick={() => cutDiscard(cutFocus.cut)} title="No es un corte: no vuelve a sugerirse">
+                              No es
+                            </button>
+                            <button type="button" className={btn} onClick={cutStep} title="Siguiente sugerencia">
+                              Siguiente
+                            </button>
+                          </>
+                        )}
+                        <IconButton label="Cerrar" onClick={() => setCutFocus(null)}>
+                          <X size={14} />
+                        </IconButton>
+                      </>
+                    }
+                  >
+                    {cutFocus.cut.kind === "freeze"
+                      ? `Cuadro congelado de ${fmtT(cutFocus.cut.from / fps)} a ${fmtT(cutFocus.cut.to / fps)}: las posiciones se repiten. Al marcarlo se descartan y pasa a ser un límite.`
+                      : `${cutFocus.marked ? "Corte de cámara" : "Muchas personas saltan a la vez"} en ${fmtT(cutFocus.cut.from / fps)}. Es un límite: no se une, rellena ni mide a través de él.`}
+                  </Notice>
+                )}
                 {anomOn && selected && (
                   <Notice
                     tone="danger"
@@ -4545,7 +4689,7 @@ export function Correction({
                       <>
                         {anomCur && (
                           <>
-                            <button type="button" className={btn} onClick={() => anomDrop(anomCur)} title={`Q: quita ${anomFrames(anomCur) === 1 ? "el cuadro siguiente" : `${anomFrames(anomCur)} cuadros`} al salto; si el aviso sigue, prueba el previo (con un clic si el salto es entre dos trozos). Solo se aplica si no deja un hueco que el guardado no rellene (2 s, 9 m/s). Al guardar se rellena con una recta`}>
+                            <button type="button" className={btn} onClick={() => anomDrop(anomCur)} title={`Q: quita ${Math.min(anomFrames(anomCur), MAX_JUMP_DROP_BOXES) === 1 ? "el cuadro siguiente" : `${Math.min(anomFrames(anomCur), MAX_JUMP_DROP_BOXES)} cuadros`} al salto (si hace falta más, el aviso vuelve a salir); si el aviso sigue, prueba el previo (con un clic si el salto es entre dos trozos). Solo se aplica si no deja un hueco que el guardado no rellene (2 s, 9 m/s). Al guardar se rellena con una recta`}>
                               <Eraser size={14} /> Quitar {anomFrames(anomCur)} <kbd className="kbd">Q</kbd>
                             </button>
                             <button type="button" className={btn} disabled={anomCur.before === undefined} onClick={() => anomCur.before !== undefined && anomDropPrev(anomCur)} title="Quitar el anterior: muchas veces el que está mal es el cuadro de antes del salto (Alt + Q)">
@@ -4559,6 +4703,12 @@ export function Correction({
                             </button>
                             <button type="button" className={`btn ${mode === "manual" ? "btn-primary" : ""}`} onClick={() => (mode === "manual" ? setMode(null) : anomFix(anomCur))} title="Ajustar pies (P): clic en sus pies en dos o más cuadros clave del salto; entre ellos se corrige solo el borde inferior de la caja">
                               <HandPointing size={14} /> <span className="hidden min-[1500px]:inline">Ajustar pies</span> <kbd className="kbd">P</kbd>
+                            </button>
+                            <button type="button" className={btn} onClick={() => anomCut(anomCur, "cut")} title="Corte de cámara (T): la transmisión cambió de golpe aquí. Se marca como límite del tramo, sin cortar ni procesar el video aparte: no se une, rellena ni mide nada a través de él, y los saltos que lo cruzan dejan de avisar">
+                              <VideoCamera size={14} /> <span className="hidden min-[1500px]:inline">Corte</span> <kbd className="kbd">T</kbd>
+                            </button>
+                            <button type="button" className={btn} onClick={() => anomCut(anomCur, "freeze")} title="Congelado (Mayús + T): el cuadro estuvo quieto antes de este salto. Se marca el tramo repetido (se descartan sus posiciones) y el salto de después como límite">
+                              <Pause size={14} /> <span className="hidden min-[1700px]:inline">Congelado</span> <kbd className="kbd">⇧T</kbd>
                             </button>
                             <button type="button" className={btnPrimary} onClick={() => anomOk(anomCur)} title="Está bien así (por ejemplo, una corrida real): no vuelve a marcarse (Enter)">
                               <Check size={14} /> Bien <kbd className="kbd">Enter</kbd>

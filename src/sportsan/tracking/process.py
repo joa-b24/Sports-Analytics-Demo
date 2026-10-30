@@ -610,7 +610,16 @@ def main(argv: list[str] | None = None) -> None:
         result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error, post)
         per = (time.time() - t0) / max(1, len(frames))
         path = write_outputs(test_dir, meta, probe, stride, frames, result)
-        summary = test_summary(result, frames, per, total_frames, stride, fps)
+        # Con --start/--end (la prueba en un tramo elegido) el plan es el de segments.csv, no esos pocos segundos.
+        plan_frames = total_frames
+        if args.start and args.end:
+            seg_file = root / cfg["paths"]["segments_csv"]
+            if seg_file.exists():
+                segs_all = load_segments(seg_file, cfg["video_id"])
+                plan_ranges = [(r.start_s, r.end_s) for r in segs_all[segs_all["tipo"] == "juego"].itertuples()]
+                if plan_ranges:
+                    plan_frames = sum(c.end - c.start for c in plan_chunks(plan_ranges, fps, args.chunk))
+        summary = test_summary(result, frames, per, plan_frames, stride, fps)
         summary.update({"part": path.name, "start_s": probe.start / fps, "end_s": probe.end / fps, "model": model_path.name, "tiles": tiles,
                         "band": meta["band"], "conf": conf, "stride": stride, "created": time.strftime("%Y-%m-%d %H:%M")})
         (test_dir / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")

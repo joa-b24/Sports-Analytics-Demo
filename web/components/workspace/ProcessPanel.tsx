@@ -8,6 +8,7 @@ import { VideoMissingNotice } from "@/components/match/VideoDownload";
 import { videoFileOf } from "@/lib/downloads";
 import { fmtT } from "@/lib/format";
 import { readVideoFps } from "@/lib/matchYaml";
+import { parseHms } from "@/lib/segments";
 import { listLocal, readLocal, writeLocal } from "@/lib/local";
 import { TRACKING_DEFAULTS } from "@/lib/techTracking";
 import { useTrackingTech } from "@/lib/useTech";
@@ -167,10 +168,14 @@ export function ProcessPanel({ folder, video, onOpen, onRefresh }: Props) {
   };
   const local = enabled === true;
   const verdict = test ? testVerdict(test) : null;
+  // Where the test of 30 s starts (min:s or h:mm:ss); empty = the first stretch of play of segments.csv.
+  const [testFrom, setTestFrom] = useState("");
+  const testStartS = testFrom.trim() === "" ? undefined : (parseHms(testFrom) ?? Number.NaN);
+  const testFromBad = testStartS !== undefined && !Number.isFinite(testStartS);
 
   const action = (kind: JobKind, label: string, icon: React.ReactNode, primary = false) =>
     local ? (
-      <button type="button" className={`btn ${primary ? "btn-primary" : ""}`} onClick={() => void start(kind, video, kind === "test" && tech.searchMarginM !== TRACKING_DEFAULTS.searchMarginM ? tech.searchMarginM : undefined)} disabled={latest(kind)?.state === "running" || (videoOk === false && kind !== "kaggle_pull")} title={videoOk === false && kind !== "kaggle_pull" ? "Falta el video: descárgalo primero" : undefined}>
+      <button type="button" className={`btn ${primary ? "btn-primary" : ""}`} onClick={() => void start(kind, video, kind === "test" && tech.searchMarginM !== TRACKING_DEFAULTS.searchMarginM ? tech.searchMarginM : undefined, kind === "test" ? testStartS : undefined)} disabled={latest(kind)?.state === "running" || (kind === "test" && testFromBad) || (videoOk === false && kind !== "kaggle_pull")} title={videoOk === false && kind !== "kaggle_pull" ? "Falta el video: descárgalo primero" : undefined}>
         {icon}
         {label}
       </button>
@@ -308,7 +313,14 @@ ${postLine(post)}`}</Command>
           <div className="rounded-lg bg-bg/60 p-4">
             <h3 className="cond text-sm font-extrabold text-ink uppercase">Prueba de 30 s</h3>
             <p className="mt-1 text-xs text-muted">Antes de procesar todo: cuántas jugadoras ve el detector con estos ajustes.</p>
-            <div className="mt-3">{action("test", "Probar 30 s", <Flask size={15} />)}</div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {action("test", "Probar 30 s", <Flask size={15} />)}
+              <label className="flex items-center gap-1.5 text-xs text-muted" title="Minuto del video donde empieza la prueba (min:s o h:mm:ss). Elige un momento donde salgan las porteras y las árbitras. Vacío: el primer tramo de juego.">
+                desde
+                <input className="tc w-24 rounded-md bg-raised px-1.5 py-1 text-xs text-ink" placeholder="min:s" value={testFrom} onChange={(e) => setTestFrom(e.target.value)} aria-invalid={testFromBad} />
+              </label>
+              {testFromBad && <span className="text-xs text-warn">Escribe min:s o h:mm:ss</span>}
+            </div>
             {testJob && <JobLine job={testJob} onStop={() => void stop(testJob.id)} />}
             {test && (
               <div className="mt-4">
@@ -330,7 +342,7 @@ ${postLine(post)}`}</Command>
                   <p className={`mt-3 text-xs ${verdict.tone === "ok" ? "text-ok" : verdict.tone === "warn" ? "text-warn" : "text-danger"}`}>{verdict.text}</p>
                 )}
                 <p className="mt-1 text-[11px] text-faint">
-                  {test.created} · {test.model}
+                  {test.created} · del {fmtT(test.start_s)} al {fmtT(test.end_s)} del video · {test.model}
                   {test.tiles > 1 ? ` · ${test.tiles} cortes` : ""} · confianza {test.conf} · 1 de cada {test.stride}
                 </p>
                 <button type="button" className="btn btn-ghost mt-2 !px-0" onClick={() => onOpen(`prueba/${test.part}`)}>
