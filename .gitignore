@@ -60,3 +60,6 @@ matches/*/possession_review_*.json
 matches/*/passes_review_*.json
 matches/*/events_auto_*.json
 matches/*/events_review_*.json
+
+# acceso remoto temporal
+tools/
