@@ -167,3 +167,21 @@ test("el balón que va y viene en menos de 2 s es un duelo, ganado por quien se 
   assert.deepEqual(lost.options[0].events.map((e) => `${e.type}:${e.team}`), ["duel:own", "loss:own", "recovery:opp"]);
   assert.equal(lost.options[0].events[0].outcome, "lost");
 });
+
+test("saque de banda: el evento se pone 2 s antes de que el balón reaparezca, sin pasar de la salida", () => {
+  // Sale en el cuadro 33 y reaparece 30 cuadros después (1 s... se prolonga): el evento cae antes que la marca de regreso.
+  const steps = [...hold(10, [50, 60], 1), { ball: [50, 66], players: [] }, { ball: [50, 69.5], players: [] }, ...none(40), ...hold(5, [52, 68], 2)];
+  const s = run(steps).find((x) => x.rule === "out_touchline");
+  assert.equal(firstEvent(s).frame, s.frame - 2 * 30);
+  // Reaparece enseguida: no antes de la salida.
+  const short = [...hold(10, [50, 60], 1), { ball: [50, 66], players: [] }, { ball: [50, 69.5], players: [] }, ...none(2), ...hold(5, [52, 68], 2)];
+  const q = run(short).find((x) => x.rule === "out_touchline");
+  assert.ok(firstEvent(q).frame >= 12 * 3 - 3 && firstEvent(q).frame <= q.frame);
+});
+
+test("cambios de equipo separados por más de 1 s son pérdida y recuperación, no una disputa", () => {
+  const steps = [...hold(5, [50, 30], 1), ...hold(25, [51, 30], 2), ...hold(25, [52, 30], 1), ...hold(10, [55, 30], 2)];
+  const s = run(steps);
+  assert.equal(s.filter((x) => x.rule === "duel").length, 0);
+  assert.ok(s.filter((x) => x.rule === "turnover").length >= 2);
+});

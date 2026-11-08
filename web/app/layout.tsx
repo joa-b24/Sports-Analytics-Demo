@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
-import { Archivo, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { Shell } from "@/components/Shell";
 import { THEME_BOOT } from "@/lib/teamColors";
 import "./globals.css";
 
 // One family: Archivo at normal width for reading and condensed (font-stretch 75%) for figures, the score and
 // section heads. A mono only for code and file names.
-const archivo = Archivo({ variable: "--font-archivo", subsets: ["latin"], axes: ["wdth"] });
-const jetbrains = JetBrains_Mono({ variable: "--font-jetbrains", subsets: ["latin"] });
+// Self-hosted (app/fonts, latin subset, variable): next/font/google needs internet and failed on this laptop.
+const archivo = localFont({ src: "./fonts/Archivo-latin.woff2", variable: "--font-archivo", weight: "100 900", style: "normal", display: "swap", declarations: [{ prop: "font-stretch", value: "62% 125%" }] });
+const jetbrains = localFont({ src: "./fonts/JetBrainsMono-latin.woff2", variable: "--font-jetbrains", weight: "100 800", style: "normal", display: "swap" });
 
 export const metadata: Metadata = {
   title: "Rendimiento · Fútbol",

@@ -163,7 +163,8 @@ def main(job: dict) -> int:
     out.mkdir(parents=True, exist_ok=True)
     code, timed_out = (0, False)
     if not job.get("dry"):
-        code, timed_out = run_with_budget([sys.executable, "-m", "sportsan.tracking.overnight", "--match", match], root,
+        code, timed_out = run_with_budget([sys.executable, "-m", "sportsan.tracking.overnight", "--match", match,
+                                           *(["--workers", str(job["workers"])] if int(job.get("workers", 1)) > 1 else [])], root,
                                           float(job.get("hours", 10.5)), out / "overnight.log")
     new = changed(before, snapshot(tdir))
     dest = out / match / "tracking"

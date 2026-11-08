@@ -30,7 +30,7 @@ export interface FixedFile {
   // Real size of the venue (m). Absent in files saved before 2026-10-16: then the loader takes it from match.yaml.
   venue?: { length_m: number; width_m: number } | null;
   people: { id: number; team: FixedTeam; player_id: string | null; tracks: number[] }[];
-  ball: { frame: number; x: number; y: number; source: string; aerial?: boolean }[];
+  ball: { frame: number; x: number; y: number; source: string; aerial?: boolean; air?: boolean; lift?: number }[];
   // Stretches marked «no se ve» / «fuera» by hand (parts.ts ballStateRanges). Absent in files saved before 2026-10-27: all visible.
   ball_states?: BallStateRange[];
   // Cuts of the broadcast / frozen pictures marked by hand (cameraCuts.ts). Absent in older files: none.
@@ -761,7 +761,7 @@ export interface Dot {
 // Measured positions at a moment of the video (t_video), joined linearly between the two processed frames around
 // it, with the analysed team attacking right. Ball too when it is known there. Null outside the part. People held still
 // outside what was seen (extrapolated) are left out unless the caller draws them (`withExtrapolated`, flagged `extrapolated`).
-export function positionsAt(o: Oriented, t: number, opts: { withExtrapolated?: boolean } = {}): { players: Dot[]; ball: [number, number] | null; view: [number, number][] | null } | null {
+export function positionsAt(o: Oriented, t: number, opts: { withExtrapolated?: boolean } = {}): { players: Dot[]; ball: [number, number] | null; ballLift: number; view: [number, number][] | null } | null {
   const f = o.file;
   const at = t * f.fps;
   if (at < f.start_frame || at > f.end_frame || f.frames.length === 0) return null;
@@ -784,7 +784,9 @@ export function positionsAt(o: Oriented, t: number, opts: { withExtrapolated?: b
   const ball = ba && bb ? orient(o, ba.x + (bb.x - ba.x) * w, ba.y + (bb.y - ba.y) * w) : null;
   const near = w < 0.5 ? a : b;
   const view = near.view ? near.view.map(([x, y]) => orient(o, x, y)) : null;
-  return { players, ball, view };
+  // Height of the ball in a flight (m, an estimate for the animation); 0 on the ground.
+  const ballLift = ba && bb ? (ba.lift ?? 0) + ((bb.lift ?? 0) - (ba.lift ?? 0)) * w : 0;
+  return { players, ball, ballLift, view };
 }
 
 // The part that covers a stretch of a video, if any.

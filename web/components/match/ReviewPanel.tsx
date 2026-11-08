@@ -1,8 +1,8 @@
 "use client";
 
 import { detailsFor, outcomePatch } from "@/lib/tagging";
-import { ArrowClockwise, CaretLeft, CaretRight, Minus, Plus, SoccerBall, Target } from "@phosphor-icons/react";
-import { useEffect, useRef } from "react";
+import { ArrowClockwise, CaretLeft, CaretRight, Minus, Plus, SoccerBall, Target, Trash } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
 import { Pitch, toMeters } from "@/components/Pitch";
 import { Select } from "@/components/Select";
 import { Card, btn, input } from "@/components/Shell";
@@ -35,6 +35,8 @@ export function ReviewPanel({
   current,
   setCurrent,
   update,
+  remove,
+  restore,
   playClip,
   time,
   players,
@@ -52,6 +54,9 @@ export function ReviewPanel({
   current: string | null;
   setCurrent: (id: string | null) => void;
   update: (id: string, patch: Partial<MatchEvent>) => void;
+  // Deletes an event; restore puts it back (the undo of the delete).
+  remove: (id: string) => void;
+  restore: (ev: MatchEvent) => void;
   playClip: (t0: number, t1: number) => void;
   // Playhead (s).
   time: number;
@@ -66,6 +71,33 @@ export function ReviewPanel({
   const i = Math.max(0, list.findIndex((e) => e.event_id === current));
   const e = list[i] ?? null;
   const svgRef = useRef<SVGSVGElement>(null);
+  // The last event deleted from here, kept so that it can be put back.
+  const [deleted, setDeleted] = useState<MatchEvent | null>(null);
+  const erase = () => {
+    if (!e) return;
+    const next = list[i + 1] ?? list[i - 1];
+    setDeleted(e);
+    remove(e.event_id);
+    if (next) setCurrent(next.event_id);
+  };
+  const undoBar = deleted && (
+    <div className="mt-2 flex items-center gap-2 rounded-xl bg-bg/60 px-3 py-1.5 text-xs text-muted" role="status">
+      <span className="min-w-0 flex-1 truncate">
+        Evento borrado: {EVENT_LABELS[deleted.type]} · {fmtT(deleted.t_video)}
+      </span>
+      <button
+        type="button"
+        className="link"
+        onClick={() => {
+          restore(deleted);
+          setCurrent(deleted.event_id);
+          setDeleted(null);
+        }}
+      >
+        Deshacer
+      </button>
+    </div>
+  );
 
   // Each time another event is opened, its moment is played once.
   const replay = () => e && playClip(Math.max(0, e.t_video - 3), e.t_video + 1.5);
@@ -137,6 +169,7 @@ export function ReviewPanel({
         <p className="text-sm text-muted">
           {pass === 2 ? "No hay eventos con estos filtros." : "No hay tiros, centros, córners, tiros libres ni penales con estos filtros."}
         </p>
+        {undoBar}
       </Card>
     );
   }
@@ -163,7 +196,11 @@ export function ReviewPanel({
           <ArrowClockwise size={14} />
           <kbd className="kbd">R</kbd>
         </button>
+        <button type="button" className={`${btn} h-8 w-8 !p-0 hover:!border-danger hover:text-danger`} aria-label="Borrar este evento" title="Borrar este evento (se puede deshacer)" onClick={erase}>
+          <Trash size={14} />
+        </button>
       </div>
+      {undoBar}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Select variant="field" label="Tipo de evento" value={e.type} options={TYPE_OPTIONS} onChange={(t) => t && update(e.event_id, retype(e, t))} />

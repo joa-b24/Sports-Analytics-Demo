@@ -277,7 +277,7 @@ def kernel_meta(ref: str, sources: list[str], gpu: bool = True) -> dict:
 
 # ------------------------------------------------------------------------------------------------- comandos
 
-def run_tracking(match: str, videos: list[str] | None, dry: bool, wait: bool, hours: float, gpu: str, force: bool) -> None:
+def run_tracking(match: str, videos: list[str] | None, dry: bool, wait: bool, hours: float, gpu: str, force: bool, workers: int = 1) -> None:
     root = project_root()
     load_config(match=match)  # que el partido exista y su match.yaml se lea
     plans = pending(root, match, videos)
@@ -310,6 +310,8 @@ def run_tracking(match: str, videos: list[str] | None, dry: bool, wait: bool, ho
         ultra = "8.4.175"
     job = {"match_id": match, "code_slug": CODE_SLUG, "data_slug": data_slug(match),
            "videos": {v: video_slug(match, v) for v in vids}, "hours": hours, "ultralytics": ultra}
+    if workers > 1:
+        job["workers"] = workers   # partes en paralelo dentro de cada video (overnight --workers); 1 = como siempre
     (kernel_dir / "job.py").write_text(job_script(job), encoding="utf-8")
     kref = f"{user}/{kernel_slug(match)}"
     sources = [f"{user}/{CODE_SLUG}", f"{user}/{data_slug(match)}", *video_refs.values()]
@@ -406,6 +408,7 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--hours", type=float, default=DEFAULT_HOURS, help="tope de tiempo en Kaggle (la sesión dura como mucho 12 h)")
     r.add_argument("--gpu", default=DEFAULT_GPU, help="NvidiaTeslaT4 (por defecto) o NvidiaTeslaP100")
     r.add_argument("--force", action="store_true", help="vuelve a subir los videos aunque ya estén")
+    r.add_argument("--workers", type=int, default=1, help="partes en paralelo en Kaggle (1 = como siempre); la GPU es una sola, mide antes de subirlo")
     lg = sub.add_parser("login", help="una vez: inicia sesión en Kaggle y guarda tu usuario")
     lg.add_argument("--user", required=True, help="tu usuario de Kaggle (el de la dirección de tu perfil)")
     for name in ("status", "pull", "logs"):
@@ -417,7 +420,7 @@ def main(argv: list[str] | None = None) -> None:
     if a.cmd == "login":
         login(a.user)
     elif a.cmd == "run":
-        run_tracking(a.match, a.videos.split(",") if a.videos else None, a.dry_run, not a.no_wait, a.hours, a.gpu, a.force)
+        run_tracking(a.match, a.videos.split(",") if a.videos else None, a.dry_run, not a.no_wait, a.hours, a.gpu, a.force, a.workers)
     elif a.cmd == "status":
         st = kernel_status(f"{username()}/{kernel_slug(a.match)}")
         print(st)

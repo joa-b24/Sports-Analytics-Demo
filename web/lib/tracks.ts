@@ -676,7 +676,7 @@ export function setBall(edits: TrackEdits, frame: number, px: number, py: number
   const states = (edits.ballStates ?? []).filter((s) => s.frame !== frame);
   return {
     ...edits,
-    ball: [...(edits.ball ?? []).filter((b) => b.frame !== frame), { frame, px, py, ...(old?.aerial ? { aerial: true } : {}) }].sort((a, b) => a.frame - b.frame),
+    ball: [...(edits.ball ?? []).filter((b) => b.frame !== frame), { frame, px, py, ...(old?.aerial ? { aerial: true } : {}), ...(old?.air ? { air: true } : {}) }].sort((a, b) => a.frame - b.frame),
     ...(edits.ballStates ? { ballStates: states } : {}),
   };
 }
@@ -698,6 +698,14 @@ export function toggleAerial(edits: TrackEdits, frame: number): TrackEdits | nul
   if (!m) return null;
   const { aerial: _a, ...rest } = m; // eslint-disable-line @typescript-eslint/no-unused-vars
   return { ...edits, ball: (edits.ball ?? []).map((b) => (b.frame === frame ? (m.aerial ? rest : { ...rest, aerial: true }) : b)) };
+}
+
+// Flags (or unflags) the mark of `frame` as «en el aire»: the click is on the ball itself while it flies. Null without a mark.
+export function toggleAir(edits: TrackEdits, frame: number): TrackEdits | null {
+  const m = (edits.ball ?? []).find((b) => b.frame === frame);
+  if (!m) return null;
+  const { air: _a, ...rest } = m; // eslint-disable-line @typescript-eslint/no-unused-vars
+  return { ...edits, ball: (edits.ball ?? []).map((b) => (b.frame === frame ? (m.air ? rest : { ...rest, air: true }) : b)) };
 }
 
 export function removeBall(edits: TrackEdits, frame: number): TrackEdits {

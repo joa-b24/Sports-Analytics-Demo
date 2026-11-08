@@ -28,6 +28,11 @@ export function AutoSuggestions({
   onSeek,
   onAccept,
   onReject,
+  sureCount,
+  doubtfulCount,
+  onAcceptAll,
+  undoCount,
+  onUndoAll,
 }: {
   // Pending suggestions of this part, in time order.
   list: Suggestion[];
@@ -40,6 +45,13 @@ export function AutoSuggestions({
   onSeek: (frame: number) => void;
   onAccept: (s: Suggestion, option: number) => void;
   onReject: (s: Suggestion) => void;
+  // Pending suggestions of high confidence (the ones «Aceptar todas» adds) and the ones marked «revisar» (it leaves them).
+  sureCount: number;
+  doubtfulCount: number;
+  onAcceptAll: () => void;
+  // Events added by the last «Aceptar todas»; 0 when there is nothing to undo.
+  undoCount: number;
+  onUndoAll: () => void;
 }) {
   const next = list.filter((s) => s !== active && s.frame > frame).slice(0, NEXT_SHOWN);
   const later = list.filter((s) => s.frame > frame).length - next.length - (active && active.frame > frame ? 1 : 0);
@@ -60,6 +72,27 @@ export function AutoSuggestions({
         <p className="mt-2 text-pretty text-faint">{blocked}</p>
       ) : (
         <>
+          {(sureCount > 0 || undoCount > 0) && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {sureCount > 0 && (
+                <button
+                  type="button"
+                  className="btn !py-1 text-xs"
+                  onClick={onAcceptAll}
+                  title="Añade la primera opción de cada sugerencia pendiente que no está marcada «revisar». Se puede deshacer de una vez."
+                >
+                  <Check size={12} weight="bold" />
+                  {doubtfulCount > 0 ? `Aceptar las ${sureCount} seguras` : `Aceptar todas (${sureCount})`}
+                </button>
+              )}
+              {undoCount > 0 && (
+                <button type="button" className="btn !py-1 text-xs" onClick={onUndoAll} title="Quita los eventos que añadió el último «Aceptar»">
+                  Deshacer ({undoCount})
+                </button>
+              )}
+              {sureCount > 0 && doubtfulCount > 0 && <span className="text-faint">{doubtfulCount} «revisar» quedan para ti</span>}
+            </div>
+          )}
           {active ? (
             <div className="mt-2 rounded-xl bg-bg/60 p-2.5 shadow-[inset_0_0_0_1px_var(--color-line)]">
               <div className="flex items-center gap-2">

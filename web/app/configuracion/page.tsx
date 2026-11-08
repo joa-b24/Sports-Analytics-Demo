@@ -10,7 +10,7 @@ import { LABEL_STYLES } from "@/components/PlayerMark";
 import { RosterCard } from "@/components/RosterCard";
 import { TEAM_SECTIONS } from "@/lib/features";
 import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
-import { DEFAULT_OPP, DEFAULT_OWN, TEAM_COLORS } from "@/lib/teamColors";
+import { DEFAULT_BALL, DEFAULT_OPP, DEFAULT_OWN, TEAM_COLORS } from "@/lib/teamColors";
 import { PITCH, type VenueSpec } from "@/lib/types";
 import { BUILTIN_SPECS, allVenues } from "@/lib/venue";
 import { referenceGroups } from "@/lib/venueFit";
@@ -81,6 +81,7 @@ function Appearance() {
   const theme = usePref("theme", "dark");
   const ownColor = usePref("ownColor", DEFAULT_OWN);
   const oppColor = usePref("oppColor", DEFAULT_OPP);
+  const ballColor = usePref("ballColor", DEFAULT_BALL);
   const labelStyle = usePref("labelStyle", "oval");
 
   return (
@@ -129,13 +130,14 @@ function Appearance() {
         </div>
       </Card>
 
-      <Card title="Colores de los equipos" className="lg:col-span-2">
+      <Card title="Colores de los equipos y del balón" className="lg:col-span-2">
         <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_16rem]">
           <div className="space-y-4">
             {(
               [
                 ["ownColor", "Nuestro equipo", ownColor, oppColor],
                 ["oppColor", "Rival", oppColor, ownColor],
+                ["ballColor", "Línea del balón (mesa de corrección)", ballColor, ""],
               ] as const
             ).map(([key, title, value, other]) => (
               <div key={key}>

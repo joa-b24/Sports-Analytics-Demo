@@ -16,6 +16,8 @@ export const TEAM_COLORS = [
 
 export const DEFAULT_OWN = "azul";
 export const DEFAULT_OPP = "naranja";
+// Color of the ball's line of time in the correction desk (a choice of the same palette).
+export const DEFAULT_BALL = "amarillo";
 
 export const teamColor = (id: string, fallback: string) =>
   TEAM_COLORS.find((c) => c.id === id) ?? (TEAM_COLORS.find((c) => c.id === fallback) as (typeof TEAM_COLORS)[number]);
@@ -24,4 +26,4 @@ export const teamColor = (id: string, fallback: string) =>
 // self-contained: it only reads the preferences saved by setPref.
 export const THEME_BOOT = `(function(){try{var p=JSON.parse(localStorage.getItem("sportsan:ui")||"{}");var c=${JSON.stringify(
   Object.fromEntries(TEAM_COLORS.map((c) => [c.id, [c.value, c.on]])),
-)};var r=document.documentElement;if(p.theme==="light")r.dataset.theme="light";var o=c[p.ownColor||"${DEFAULT_OWN}"],x=c[p.oppColor||"${DEFAULT_OPP}"];if(o){r.style.setProperty("--color-own",o[0]);r.style.setProperty("--on-own",o[1]);}if(x){r.style.setProperty("--color-opp",x[0]);r.style.setProperty("--on-opp",x[1]);}}catch(e){}})();`;
+)};var r=document.documentElement;if(p.theme==="light")r.dataset.theme="light";var o=c[p.ownColor||"${DEFAULT_OWN}"],x=c[p.oppColor||"${DEFAULT_OPP}"];if(o){r.style.setProperty("--color-own",o[0]);r.style.setProperty("--on-own",o[1]);}if(x){r.style.setProperty("--color-opp",x[0]);r.style.setProperty("--on-opp",x[1]);}var b=c[p.ballColor||"${DEFAULT_BALL}"];if(b){r.style.setProperty("--color-ball-track",b[0]);r.style.setProperty("--on-ball-track",b[1]);}}catch(e){}})();`;

@@ -470,7 +470,9 @@ export interface TrackEdits {
   // Ball marked by hand on the video (pixels), one per frame. Absent in older edits.
   // `aerial`: the mark is the projection (shadow) on the ground of a ball in the air, not the ball itself: nobody touches
   // it there (docs/pautas_marcado_balon.md).
-  ball?: { frame: number; px: number; py: number; aerial?: boolean }[];
+  // `air`: the mark is on the ball itself while it flies (not on its shadow). It has no position on the pitch of its own: it
+  // is placed between the marks on the ground that come before and after it (lib/parts.ts manualBall); without both it stays NaN.
+  ball?: { frame: number; px: number; py: number; aerial?: boolean; air?: boolean }[];
   // The ball is not visible from this frame (state "hidden": in play but out of frame or covered; «no se ve») or is
   // out of the pitch with the game stopped (state "out": «fuera»), until the next ball mark or state mark. A hand mark in
   // `ball` is the third state, «visible». Absent in older edits (everything visible).

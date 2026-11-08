@@ -69,3 +69,19 @@ test("marks clicked one by one stay, and the interpolated ones go to meters with
   // Pixel (370, 322): x = 37 - 2.6 m, y = 32.2 m.
   assert.ok(Math.abs(p26.x - 34.4) < 1e-6 && Math.abs(p26.y - 32.2) < 1e-6);
 });
+
+test("keys more than 2 s apart are not interpolated; clearFeetNear removes only ±2 s", async () => {
+  const { clearFeetNear } = await import("./feetKeys.ts");
+  const e = applyFit(file, E(), 1, 1, [{ frame: 5, px: 150, py: 310 }, { frame: 55, px: 650, py: 330 }]);
+  // 50 frames = 1.67 s at 30 fps is still within the gap: interpolated.
+  assert.ok(at(e, 30));
+  const far = { ...file, fps: 20 }; // 50 frames = 2.5 s > 2 s
+  const e2 = applyFit(far, E(), 1, 1, [{ frame: 5, px: 150, py: 310 }, { frame: 55, px: 650, py: 330 }]);
+  assert.equal(at(e2, 30), undefined);
+  const c = clearFeetNear(e, 1, 5, 30);
+  assert.equal(at(c, 5), undefined);
+  assert.equal(c.manual.length, 0); // everything lies within 2 s (60 frames) of frame 5
+  const kept = clearFeetNear(e, 1, 5, 10); // 1 s = 10 frames at 10 fps: frame 55 stays
+  assert.equal(at(kept, 55)?.key, true);
+  assert.equal(at(kept, 5), undefined);
+});

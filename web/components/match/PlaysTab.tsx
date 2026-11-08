@@ -437,7 +437,18 @@ export function PlaysTab({
                           )}
                         </g>
                       ))}
-                    {measured.ball && <circle cx={measured.ball[0]} cy={measured.ball[1]} r={1} fill={COLORS.ball} stroke="var(--color-bg)" strokeWidth={0.3} />}
+                    {measured.ball && (
+                      <g pointerEvents="none">
+                        {/* In flight: the shadow stays on the ground and the ball rises above it (height estimated, only to be seen). */}
+                        {measured.ballLift > 0.05 && (
+                          <>
+                            <ellipse cx={measured.ball[0]} cy={measured.ball[1]} rx={1.1} ry={0.55} fill="var(--color-bg)" opacity={0.55} />
+                            <line x1={measured.ball[0]} y1={measured.ball[1]} x2={measured.ball[0]} y2={measured.ball[1] - measured.ballLift} stroke="var(--color-warn)" strokeWidth={0.2} strokeDasharray="0.6 0.5" />
+                          </>
+                        )}
+                        <circle cx={measured.ball[0]} cy={measured.ball[1] - measured.ballLift} r={1 + Math.min(0.5, measured.ballLift * 0.06)} fill={COLORS.ball} stroke={measured.ballLift > 0.05 ? "var(--color-warn)" : "var(--color-bg)"} strokeWidth={0.3} />
+                      </g>
+                    )}
                   </>
                 )}
                 {!measuredOn &&

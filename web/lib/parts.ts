@@ -80,7 +80,15 @@ export interface BallPoint {
   source: BallSource;
   // The mark is the ground projection of a ball in the air: nobody touches it there.
   aerial?: boolean;
+  // The ball is flying here (a mark «en el aire» or the stretch of a flight between two marks on the ground). Plain
+  // interpolation is NOT flight: only a stretch with at least one air mark at an end is.
+  air?: boolean;
+  // Height of the ball above the ground (m) drawn for a flight, an estimate for the animation (never a measurement).
+  lift?: number;
 }
+
+// Longest flight (s) whose marks in the air are placed between two marks on the ground.
+export const AIR_MAX_S = 8;
 
 // State of the ball over time, from the marks of the analyst. «visible» is the default (a hand mark, the tracker, an
 // event); «hidden» (no se ve): in play but not seen, so the path is interpolated and no touch is measured on it; «out»
@@ -98,6 +106,11 @@ export function ballStateRanges(edits: Pick<TrackEdits, "ball" | "ballStates">):
   return [...(edits.ballStates ?? [])]
     .sort((a, b) => a.frame - b.frame)
     .map((s) => ({ from: s.frame, to: marks.find((m) => m > s.frame) ?? null, state: s.state }));
+}
+// Stretches of «no se ve» / «fuera» that were closed by a later mark (the ball came back): reviewed, so they are not
+// missing. A state still open (nothing after it) is not counted: marking it would otherwise complete the rest of the part.
+export function closedStateStretches(edits: Pick<TrackEdits, "ball" | "ballStates">): [number, number][] {
+  return ballStateRanges(edits).flatMap((r) => (r.to !== null && r.to > r.from ? [[r.from, r.to] as [number, number]] : []));
 }
 const inRange = (r: BallStateRange, frame: number) => frame >= r.from && (r.to === null || frame < r.to);
 
@@ -138,12 +151,31 @@ export function eventBall(file: TracksFile, events: MatchEvent[], ownAttacksRigh
 // Ball marks made by hand on the video of a part, on the pitch. Marks on frames without calibration are left out.
 export function manualBall(file: TracksFile, edits: TrackEdits): BallPoint[] {
   const H = new Map(file.frames.map((fr) => [fr.frame, fr.H]));
-  const out: BallPoint[] = [];
-  for (const m of edits.ball ?? []) {
+  const marks = [...(edits.ball ?? [])].sort((a, b) => a.frame - b.frame);
+  const ground: BallPoint[] = [];
+  for (const m of marks) {
+    if (m.air) continue;
     const p = pixelToPitch(file, H.get(m.frame), m.px, m.py);
-    if (p) out.push({ frame: m.frame, x: p[0], y: p[1], source: "manual", ...(m.aerial ? { aerial: true } : {}) });
+    if (p) ground.push({ frame: m.frame, x: p[0], y: p[1], source: "manual", ...(m.aerial ? { aerial: true } : {}) });
+  }
+  const out: BallPoint[] = [...ground];
+  // A mark in the air has no position on the pitch of its own: it is placed between the marks on the ground before and
+  // after it, in time. Without both, or with them more than AIR_MAX_S apart, its position is NaN and it is left out.
+  for (const m of marks) {
+    if (!m.air) continue;
+    const a = [...ground].reverse().find((g) => g.frame < m.frame);
+    const b = ground.find((g) => g.frame > m.frame);
+    if (!a || !b || (b.frame - a.frame) / file.fps > AIR_MAX_S) continue;
+    const k = (m.frame - a.frame) / (b.frame - a.frame);
+    out.push({ frame: m.frame, x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, source: "manual", aerial: true, air: true });
   }
   return out.sort((a, b) => a.frame - b.frame);
+}
+
+// Frames of the marks in the air that have no position (no mark on the ground before or after): they stay NaN.
+export function airWithoutGround(file: TracksFile, edits: TrackEdits): number[] {
+  const placed = new Set(manualBall(file, edits).map((p) => p.frame));
+  return (edits.ball ?? []).filter((m) => m.air && !placed.has(m.frame)).map((m) => m.frame);
 }
 
 // What the ball tracker wrote for a part (ball_auto_<video>_<ini>_<fin>.json): pixels of the frames where it is sure,
@@ -290,7 +322,37 @@ export function ballPath(known: BallPoint[], fps: number, stride: number, maxFil
       out.push({ frame: f, x: p.x + (next.x - p.x) * k, y: p.y + (next.y - p.y) * k, source: "interpolated" });
     }
   });
-  return out;
+  return withFlight(out);
+}
+
+// Marks the stretches of flight: between a point on the ground and the next one on the ground, with at least one air mark
+// at an end of some step. The points inside get `air` and an estimated `lift` (a parabola: a pass rises about a tenth
+// of its length, 1 to 8 m). A stretch of plain interpolation without an air mark is NOT flight.
+function withFlight(path: BallPoint[]): BallPoint[] {
+  const known = path.map((p, i) => i).filter((i) => path[i].source !== "interpolated");
+  const res = path.map((p) => ({ ...p }));
+  for (let k = 0; k + 1 < known.length; k++) {
+    const i0 = known[k];
+    const i1 = known[k + 1];
+    if (!path[i0].air && !path[i1].air) continue;
+    // Extend to the ground marks that bound a run of air marks.
+    let a = k;
+    while (a > 0 && path[known[a]].air) a--;
+    let b = k + 1;
+    while (b < known.length - 1 && path[known[b]].air) b++;
+    const p0 = path[known[a]];
+    const p1 = path[known[b]];
+    const span = p1.frame - p0.frame;
+    if (span <= 0) continue;
+    const h = Math.max(1, Math.min(8, 0.1 * Math.hypot(p1.x - p0.x, p1.y - p0.y)));
+    for (let i = i0; i <= i1; i++) {
+      if (i === known[a] || i === known[b]) continue;
+      const t = (path[i].frame - p0.frame) / span;
+      res[i].air = true;
+      res[i].lift = Math.round(4 * h * t * (1 - t) * 100) / 100;
+    }
+  }
+  return res;
 }
 
 // ---------------------------------------------------------------- several parts in one file
@@ -532,6 +594,8 @@ export function ballCoverage(o: {
   outHalf: number;
   fillS?: number;
   links?: { from: number; to: number }[];
+  // Closed «no se ve» / «fuera» stretches (closedStateStretches): reviewed, left out of the count like `out`.
+  closed?: [number, number][];
 }): { share: number; missing: [number, number][] } {
   const fill = (o.fillS ?? BALL_FILL_S) * o.fps;
   const merge = (list: [number, number][]) => {
@@ -562,8 +626,7 @@ export function ballCoverage(o: {
     }),
   );
   const outs = merge(
-    o.out
-      .map((f) => [f - o.outHalf, f + o.outHalf] as [number, number])
+    [...o.out.map((f) => [f - o.outHalf, f + o.outHalf] as [number, number]), ...(o.closed ?? [])]
       .flatMap((x) => {
         const c = clip(x);
         return c ? [c] : [];

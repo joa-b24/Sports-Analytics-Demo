@@ -57,6 +57,8 @@ const WRITABLE = [
   /^config\/roster\.json$/,
   // Answers of a review sample (sportsan.tracking.links_review / jumps_review, page /revision).
   /^matches\/[\w.-]+\/tracking\/revision\/[\w.-]+\/respuestas\.json$/,
+  // Examples of the ball marked by the analyst to retrain the classifier (page /revision/ejemplos, sportsan.tracking.ball_examples).
+  /^matches\/[\w.-]+\/tracking\/revision\/balon\/ejemplos\.json$/,
   // «Guardar todo» of a match (lib/saveMatch.ts): its events as CSV and a backup of its browser data.
   /^matches\/[\w.-]+\/(events\/)?events_[\w.-]+\.csv$/,
   BACKUP,

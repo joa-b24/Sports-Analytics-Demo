@@ -477,6 +477,8 @@ export function TagTab({ match, videoId, defaultPeriod, periodAt, events, segmen
             current={reviewing?.event_id ?? null}
             setCurrent={setCurrent}
             update={update}
+            remove={remove}
+            restore={(ev) => mutate((s) => ({ ...s, events: s.events.some((o) => o.event_id === ev.event_id) ? s.events : [...s.events, ev] }))}
             playClip={playClip}
             time={time}
             players={players}

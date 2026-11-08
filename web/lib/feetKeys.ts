@@ -12,6 +12,8 @@ import type { TrackEdits } from "./types.ts";
 
 export const HOLD_S = 0.5;
 export const RAMP_S = 0.2;
+export const MAX_GAP_S = 2;
+export const REMOVE_S = 2;
 
 type Manual = TrackEdits["manual"][number];
 export interface FeetKey {
@@ -52,7 +54,23 @@ export function fitAt(edits: TrackEdits, identity: number, frame: number): numbe
 
 // Δ for every processed frame of the stretch: interpolated between keys, held (and faded) outside them.
 // Keys without a box in their frame have no Δ and do not count.
+// Hard limit: two keys more than MAX_GAP_S apart are never interpolated (each side is held HOLD_S and fades), so a
+// stray key far away cannot drag the feet over minutes of video.
 export function feetOffsets(file: TracksFile, edits: TrackEdits, identity: number, keys: FeetKey[]): Map<number, [number, number]> {
+  const maxGap = MAX_GAP_S * file.fps;
+  const sorted = [...keys].sort((a, b) => a.frame - b.frame);
+  const groups: FeetKey[][] = [];
+  for (const k of sorted) {
+    const g = groups[groups.length - 1];
+    if (g && k.frame - g[g.length - 1].frame <= maxGap) g.push(k);
+    else groups.push([k]);
+  }
+  const out = new Map<number, [number, number]>();
+  for (const g of groups) for (const [f, d] of groupOffsets(file, edits, identity, g)) out.set(f, d);
+  return out;
+}
+
+function groupOffsets(file: TracksFile, edits: TrackEdits, identity: number, keys: FeetKey[]): Map<number, [number, number]> {
   const out = new Map<number, [number, number]>();
   const known = keys
     .map((k) => {
@@ -123,6 +141,16 @@ export const clearFit = (edits: TrackEdits, identity: number, fit: number): Trac
   ...edits,
   manual: edits.manual.filter((m) => !(m.identity === identity && m.fit === fit)),
 });
+
+// Takes off the feet marks of one person within REMOVE_S seconds before and after `frame` (never more, even if the
+// stretch is longer). Marks outside that window, other people and marks clicked one by one (no stretch) stay.
+export const clearFeetNear = (edits: TrackEdits, identity: number, frame: number, fps: number): TrackEdits => {
+  const r = REMOVE_S * fps;
+  return {
+    ...edits,
+    manual: edits.manual.filter((m) => !(m.identity === identity && m.fit !== undefined && Math.abs(m.frame - frame) <= r)),
+  };
+};
 
 export function fitCount(edits: TrackEdits, identity: number, fit: number): { keys: number; adjusted: number } {
   const all = fitMarks(edits, identity, fit);

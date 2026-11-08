@@ -12,7 +12,7 @@
 //  4. pieces with the same name are one person, unless they are seen at the same time in different places.
 // The name "-" says "nobody of interest" (a duplicate box, somebody off the pitch): it stops a name from spreading.
 import { droppedSet, freshIdentity, identityOf, isDropped, merge, samePlayer, setPerson, splitPerson, type DetBox, type Person, type TeamCode, type TracksFile } from "./tracks.ts";
-import { ballCoverage } from "./parts.ts";
+import { ballCoverage, closedStateStretches } from "./parts.ts";
 import type { TrackEdits } from "./types.ts";
 
 export const NOBODY = "-";
@@ -432,7 +432,7 @@ export interface PartSpan {
   fps: number;
 }
 export function partStatus(
-  edits: Pick<TrackEdits, "quick" | "ballReview"> & Partial<Pick<TrackEdits, "people" | "ball" | "ballLinks">>,
+  edits: Pick<TrackEdits, "quick" | "ballReview"> & Partial<Pick<TrackEdits, "people" | "ball" | "ballLinks" | "ballStates">>,
   part: PartSpan & { stride?: number },
   // Frames with a ball besides the hand marks (tagged events), when known: the same count as the ball strip.
   extraBall: number[] = [],
@@ -445,7 +445,7 @@ export function partStatus(
   const marks = [...(edits.ball ?? []).map((b) => b.frame), ...extraBall];
   const halfStep = (every * part.fps) / 2;
   const out = (edits.ballReview?.seen ?? []).filter((f) => !marks.some((m) => Math.abs(m - f) <= halfStep));
-  const ball = ballCoverage({ marks, out, from: part.start_frame, to: part.end_frame, fps: part.fps, stride: part.stride ?? 3, outHalf: halfStep, links: edits.ballLinks }).share;
+  const ball = ballCoverage({ marks, out, from: part.start_frame, to: part.end_frame, fps: part.fps, stride: part.stride ?? 3, outHalf: halfStep, links: edits.ballLinks, closed: closedStateStretches(edits) }).share;
   return { quick, players, ball, complete: players >= PLAYERS_DONE && ball >= BALL_DONE_SHARE };
 }
 

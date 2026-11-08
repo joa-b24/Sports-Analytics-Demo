@@ -37,6 +37,9 @@
   --color-own: #3a66ff;
   --color-opp: #ff9a4d;
   --color-ball: #f3f3f1;
+  /* Línea de tiempo del balón en la mesa de corrección (Configuración › Apariencia lo cambia). */
+  --color-ball-track: #f5c518;
+  --on-ball-track: #151100;
 
   --font-sans: var(--font-archivo), system-ui, sans-serif;
   --font-display: var(--font-archivo), system-ui, sans-serif;

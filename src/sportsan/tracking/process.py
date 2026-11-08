@@ -527,6 +527,8 @@ def main(argv: list[str] | None = None) -> None:
                     help=f"prueba de {TEST_S} s antes del proceso completo: escribe la parte en tracking/prueba/ con un summary.json (cuántas personas ve por cuadro, tiempo estimado) sin tocar lo hecho")
     ap.add_argument("--force", action="store_true", help="vuelve a procesar las partes ya hechas")
     ap.add_argument("--out-dir", help="carpeta de salida (por defecto, tracking/ del partido); para pruebas que no toquen lo hecho")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="partes en paralelo (procesos). 1 (por defecto) = como siempre. Se recorta a un tope seguro por hilos y memoria (tracking/parallel.py)")
     args = ap.parse_args(argv)
 
     cfg = load_config(match=args.match, video=args.video)
@@ -638,7 +640,40 @@ def main(argv: list[str] | None = None) -> None:
     print(f"  hechas: {len(chunks) - len(pending)} de {len(chunks)}; faltan {len(pending)}. Se puede cortar con Ctrl+C y volver a lanzar.")
     spent, processed = 0.0, 0
     colors_shown = bool(refs)
+    workers = 1
+    if args.workers > 1 and len(pending) > 1 and not (args.benchmark or args.test):
+        from .parallel import safe_workers
+
+        workers = min(safe_workers(args.workers), len(pending))
     try:
+        if workers > 1:
+            from .parallel import ProgressLog, map_chunks
+
+            cap.release()   # cada proceso abre su propio video
+            by_range = {(c.start, c.end): c for c in pending}
+            spec = {"model_path": str(model_path), "lib_path": str(lib_path), "video_path": str(root / cfg["paths"]["raw_video"]), "stride": stride,
+                    "every": every, "conf": conf, "tracker": args.tracker, "tiles": tiles, "band": band, "mask": cfg.get("mask") or None,
+                    "band_margin": args.band_margin, "refs": refs, "fps": fps, "max_error": args.max_error, "post": post, "out_dir": str(out_dir), "meta": meta}
+            log = ProgressLog(f"{cfg['match_id']} {cfg['video_id']} ({workers} procesos)", sum(c.end - c.start for c in pending), out_dir / "process_progress.log")
+            print(f"  {workers} procesos en paralelo sobre {len(pending)} partes.")
+            for n, res in enumerate(map_chunks(pending, spec, workers), 1):
+                chunk = by_range[res["chunk"]]
+                if not res["frames"]:
+                    print(f"  parte {chunk.name}: sin cuadros (¿fin del video?)")
+                    log.step(chunk.end - chunk.start)
+                    continue
+                q = res["quality"]
+                index["chunks"] = [c for c in index["chunks"] if c["name"] != chunk.name] + [
+                    {"name": chunk.name, "file": res["path"], "start_frame": chunk.start, "end_frame": chunk.end, "start_s": round(chunk.start / fps, 1), "end_s": round(chunk.end / fps, 1), **q}
+                ]
+                index["chunks"].sort(key=lambda c: c["start_frame"])
+                index_path.write_text(json.dumps(index, indent=1), encoding="utf-8")
+                t = chunk.start / fps
+                log.step(chunk.end - chunk.start, f"parte {n}/{len(pending)} en {int(t // 60)}:{int(t % 60):02d} · {q['on_pitch_median']:.0f} en la cancha -> {q['identities']} identidades · calibrado {q['calibrated_share'] * 100:.0f} % · {res['seconds']:.0f} s")
+                if not colors_shown and res["colors"]:
+                    colors_shown = True
+                    print("      colores de camiseta más frecuentes: " + ", ".join(f"{c} ({k} tracks)" for c, k in res["colors"]))
+            pending = []
         for n, chunk in enumerate(pending, 1):
             t0 = time.time()
             after = sum(c.end - c.start for c in pending[n:]) // stride

@@ -84,6 +84,10 @@ export const AUTO = {
   cornerM: 3.5,
   centreM: 5,
   penaltySpotM: 2,
+  // The throw-in is tagged this long (s) before the ball is first seen back on the pitch (never before it went out):
+  // measured against the hand-tagged throw-ins of 2026_09_25_tec_ccm_vs_anahuac, the analyst's tag falls about 2 s
+  // before the first clear mark (scripts/eval_auto_events.mjs).
+  throwInLeadS: 2,
   // A stoppage restarts about where the ball was lost (m).
   stoppageM: 8,
   // After a restart the ball has to move this far from its spot (m) before it can go out again: while it waits for
@@ -98,8 +102,10 @@ export const AUTO = {
   crossMaxS: 4,
   crossInwardM: 4,
   crossLateralM: 6,
-  // Changes of team in possession less than this apart (s) are one dispute: a duel.
-  duelS: 2,
+  // Changes of team in possession less than this apart (s) are one dispute: a duel. (1 s instead of 2: measured on the
+  // hand-tagged loss/recovery of 2026_09_25_tec_ccm_vs_anahuac it finds 18/22 of them instead of 12/15 with better
+  // precision; the duels themselves cannot be measured, the analyst tagged almost none.)
+  duelS: 1,
   // A suggestion within this time (s) of an event of the same type and team already tagged is left out.
   duplicateS: 4,
 } as const;
@@ -242,7 +248,8 @@ export function autoEvents(input: AutoInput): Suggestion[] {
     const team = last ? other(last.team) : (first?.team ?? null);
     const at = norm({ x: restart.x, y: restart.y < W / 2 ? 0 : W });
     const why = last ? `Salió por la banda tras un toque ${of(last.team)}.` : "Salió por la banda (sin toque claro antes).";
-    const ev = (t: Side): AutoEvent => ({ type: "throw_in", team: t, frame: restart.frame, ...at });
+    const frame = Math.max(exit.frame, Math.round(restart.frame - AUTO.throwInLeadS * fps));
+    const ev = (t: Side): AutoEvent => ({ type: "throw_in", team: t, frame, ...at });
     return {
       id: `out_touchline:${exit.frame}`,
       rule: "out_touchline",

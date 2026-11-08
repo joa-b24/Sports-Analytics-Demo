@@ -9,6 +9,7 @@ import {
   Crosshair,
   Database,
   FilmSlate,
+  Flask,
   GearSix,
   House,
   ListDashes,
@@ -21,7 +22,8 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { revealRef } from "@/components/motion";
-import { setPref, usePref, useStore } from "@/lib/store";
+import { setPref, usePref, useStore, useStoreReady } from "@/lib/store";
+import { StorageNotice } from "@/components/StorageNotice";
 import type { Match, MatchEvent } from "@/lib/types";
 import { useThemeSync } from "@/lib/theme";
 import { useRosterFromFile } from "@/components/RosterCard";
@@ -146,6 +148,7 @@ function Sidebar() {
   ];
   const end: NavItem[] = [
     { href: "/datos", label: "Datos", icon: Database, active: at("/datos") },
+    { href: "/laboratorio", label: "Laboratorio", icon: Flask, active: at("/laboratorio") },
     { href: "/configuracion", label: "Configuración", icon: GearSix, active: at("/configuracion") },
   ];
 
@@ -213,9 +216,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
   useThemeSync();
   const path = usePathname();
   const focus = useFocusMode();
+  const storeReady = useStoreReady();
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
+      <StorageNotice />
       <EdgeReveal edge="left" enabled={focus}>
         <Suspense fallback={<aside className="shrink-0 border-r border-line md:h-screen md:w-14" />}>
           <Sidebar />
@@ -224,7 +229,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
       <main className="relative min-w-0 flex-1 px-4 pt-5 pb-16 md:px-8 print:p-0">
         {/* Keyed by route so each screen starts from the top state. */}
-        <div key={path}>{children}</div>
+        <div key={path}>{storeReady ? children : null}</div>
       </main>
     </div>
   );

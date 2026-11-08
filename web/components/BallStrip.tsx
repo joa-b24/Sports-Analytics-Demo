@@ -38,6 +38,7 @@ export function BallStrip({
   onSeek,
   out = [],
   outHalf = 0,
+  closed = [],
   step,
   links = [],
   legend = true,
@@ -54,6 +55,8 @@ export function BallStrip({
   // to each side: they are not counted as missing.
   out?: number[];
   outHalf?: number;
+  // «No se ve» / «fuera» stretches closed by a later mark: reviewed, also not missing.
+  closed?: [number, number][];
   // The review step (frames): two positions at most this apart are "joined". Default: one second.
   step?: number;
   // Lines drawn by hand (and holds), from one mark to another.
@@ -91,9 +94,9 @@ export function BallStrip({
     // Joined by the automatic fill (a gap longer than one step): an interpolation too.
     else if (inside.some((q) => q.source === "interpolated" && q.frame > p.frame && q.frame < n.frame)) yellow.push([p.frame, n.frame]);
   });
-  const outRuns = merge(out.map((f) => [Math.max(from, f - outHalf), Math.min(to, f + outHalf)] as [number, number]).filter(([a, b]) => b > a));
+  const outRuns = merge([...out.map((f) => [f - outHalf, f + outHalf] as [number, number]), ...closed].map(([a, b]) => [Math.max(from, a), Math.min(to, b)] as [number, number]).filter(([a, b]) => b > a));
   // The same measure as the status of the part: where the time in play is without a ball.
-  const cov = ballCoverage({ marks: inside.map((p) => p.frame), out, from, to, fps, stride, outHalf });
+  const cov = ballCoverage({ marks: inside.map((p) => p.frame), out, from, to, fps, stride, outHalf, closed });
 
   const band = (runs: [number, number][], cls: string, title: string, k: string) =>
     merge(runs).map(([a, b]) => (

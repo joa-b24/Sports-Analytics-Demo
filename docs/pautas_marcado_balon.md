@@ -48,6 +48,6 @@ Si el balón salió de la cancha y quieres que no cuente ninguna posesión mient
 
 ## Resumen de teclas
 
-`clic` visible · `u` no se ve · `o` fuera · `y` marca aérea · `k` quieto hasta aquí · `i` recta · `n` donde falta · `Supr` quitar · `Ctrl + Z` deshacer · `Enter` pasar la muestra.
+`clic` visible · `u` no se ve · `o` fuera · `y` marca aérea (sombra) · `v` balón en el aire (marca sobre el balón; su lugar sale de las marcas en el suelo de antes y después, sin ellas queda sin posición) · `[` `]` cuadros de un salto imposible · `k` quieto hasta aquí · `i` recta · `n` donde falta · `Supr` quitar · `Ctrl + Z` deshacer · `Enter` pasar la muestra.
 
 Cómo lo leen los cálculos: `ball_states` y la bandera `aerial` van en `tracks_fixed_*.json` (no cambian el contrato de las tablas). `ballStateAt(parts, video, t)` en `web/lib/parts.ts` devuelve `"visible" | "hidden" | "out" | null`.

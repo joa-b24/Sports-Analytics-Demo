@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autoBall, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, pitchToPixel, pixelToPitch } from "./parts.ts";
+import { autoBall, closedStateStretches, ballCoverage, ballPath, eventBall, hasCorrections, holdBall, joinParts, manualBall, measuredPaths, pitchToPixel, pixelToPitch } from "./parts.ts";
 import { editsKey, emptyEdits, setBall, setPerson, setRemoved } from "./tracks.ts";
 
 const LAB = [100, 128, 128];
@@ -180,4 +180,15 @@ test("lo que ve la cámara: el borde de la imagen llevado a la cancha, sin lo qu
   const ys = poly.map((p) => p[1]);
   assert.deepEqual([Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)], [0, 105, 0, 68]);
   assert.equal(viewPolygon(f, null), null);
+});
+
+test("a «no se ve» / «fuera» stretch counts as reviewed only once a later mark closes it", () => {
+  const base = { ball: [{ frame: 0, px: 0, py: 0 }, { frame: 300, px: 0, py: 0 }], ballStates: [{ frame: 15, state: "hidden" }] };
+  const cov = (edits) => ballCoverage({ marks: edits.ball.map((b) => b.frame), out: [], from: 0, to: 300, fps: 30, stride: 3, outHalf: 15, closed: closedStateStretches(edits) });
+  assert.deepEqual(closedStateStretches(base), [[15, 300]]);
+  assert.equal(cov(base).missing.length, 0);
+  // Still open (nothing after it): not counted, so marking it does not complete the part.
+  const open = { ball: [{ frame: 0, px: 0, py: 0 }], ballStates: [{ frame: 15, state: "out" }] };
+  assert.deepEqual(closedStateStretches(open), []);
+  assert.ok(cov(open).missing.length > 0);
 });

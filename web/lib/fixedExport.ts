@@ -104,7 +104,7 @@ export function buildFixed(file: TracksFile, edits: TrackEdits, opts: FixedOptio
     people: ppl.filter((q) => !refIds.has(q.id)).map((q) => ({ id: q.id, team: q.team, player_id: q.player_id || null, tracks: q.tracks })),
     // Ball on the pitch: "manual", "auto", "event" or "interpolated". `aerial`: the ground projection of a ball in the air
     // (never a touch).
-    ball: ball.map((b) => ({ frame: b.frame, x: r2(b.x), y: r2(b.y), source: b.source, ...(b.aerial ? { aerial: true } : {}) })),
+    ball: ball.map((b) => ({ frame: b.frame, x: r2(b.x), y: r2(b.y), source: b.source, ...(b.aerial ? { aerial: true } : {}), ...(b.air ? { air: true, lift: b.lift ?? 0 } : {}) })),
     // «No se ve» / «fuera» stretches marked by hand: frames [from, to) (to null: to the end of the part). Inside «out» there
     // is no ball: the ball is dead until the next visible mark. Always present (empty: everything visible).
     ball_states: ballStates,
