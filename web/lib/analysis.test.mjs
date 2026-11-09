@@ -8,6 +8,7 @@ import {
   firstPass,
   goalKicks,
   laneOf,
+  momentum,
   playTime,
   recoveryHeight,
   setPieces,
@@ -164,4 +165,28 @@ test("without marked stretches the bins fall back to video minutes and say so", 
   assert.equal(b.basis, "video");
   assert.equal(b.bins.length, 2);
   assert.equal(b.bins[1].opp.shots, 1);
+});
+
+test("momentum: each team's threat in a sliding window, on the clock of the video when no stretches are marked", () => {
+  const events = [
+    ev(0, "shot", "own"), // minute 0: 3
+    ev(30, "box_entry", "own"), // 0.5 min: 2
+    ev(600, "goal", "opp"), // minute 10: 5
+    ev(610, "pass", "own"), // no weight
+  ];
+  const m = momentum(events, [], 4);
+  assert.equal(m.basis, "video");
+  assert.equal(m.points.length, 11);
+  assert.deepEqual(m.points[0], { min: 0, own: 5, opp: 0 });
+  assert.deepEqual(m.points[10], { min: 10, own: 0, opp: 5 });
+  assert.equal(m.points[5].own + m.points[5].opp, 0, "nothing near minute 5 with a 4-minute window");
+});
+
+test("momentum: events outside a play stretch are left out and counted", () => {
+  const segs = [{ segment_id: "s1", start: 0, end: 300, tipo: "juego" }];
+  const events = [ev(60, "shot", "own"), ev(1000, "shot", "opp")];
+  const m = momentum(events, segs, 4);
+  assert.equal(m.basis, "juego");
+  assert.equal(m.skipped, 1);
+  assert.ok(m.points.every((p) => p.opp === 0));
 });

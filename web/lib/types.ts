@@ -1,5 +1,6 @@
 // Mirror of docs/data_contract.md (events) plus the web-only tables (matches, plays, sessions, boards).
 import type { Annotation, ClipEdit } from "./annotations.ts";
+import type { Deck } from "./deck.ts";
 
 export type Team = "own" | "opp" | "ref" | "unk";
 
@@ -556,6 +557,8 @@ export interface State {
   edits: ClipEdit[];
   // Shirt colours by match_id of the match folder, as #rrggbb.
   jerseys: Record<string, { own: string; opp: string; ref: string; own_gk?: string; opp_gk?: string }>;
+  // Presentations of the matches (lib/deck.ts): charts of the analysis saved as slides. Absent before they existed.
+  decks?: Deck[];
   // Comparison of two fills of one part, from a tab that no longer exists: only read by «Empezar de cero» (lib/reset.ts).
   reviews?: PartReview[];
 }

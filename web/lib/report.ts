@@ -36,6 +36,7 @@ import { fmtT, youtubeLink } from "./format.ts";
 import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
 import { possessionParamsOf, techSummary } from "./tech.ts";
 import { trackingParamsOf } from "./techTracking.ts";
+import { anchorPossessionToEvents } from "./possessionEvents.ts";
 import { autoWarning, possessionCellsOf, possessionIntervals, summarizePossession, type PossessionResult, type PossessionSummary } from "./possession.ts";
 import type { Segment } from "./segments.ts";
 import { LANES_5, THIRDS_3, countByType, laneThirdOf, zoneGrid5x3 } from "./stats.ts";
@@ -549,7 +550,8 @@ export function buildReport(input: ReportInput): ReportData {
   const side = (e: MatchEvent) => e.team as Side;
 
   // Possession as intervals (lib/possession.ts): one reading for the coverage, the possession and its warnings.
-  const poss = possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match), undefined, trackingParamsOf(match).ballJumpMs);
+  // Held to the tagged losses and recoveries (lib/possessionEvents.ts): the tracking alone credits whoever is nearest.
+  const poss = anchorPossessionToEvents(possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match), undefined, trackingParamsOf(match).ballJumpMs), raw);
   const level = dataLevel(raw, segmentsByVideo, parts, poss);
   const br = level.sources.ball ? ballReport(parts, segmentsByVideo, raw, possessionCellsOf(poss.samples)) : null;
   const possSummary = br ? summarizePossession(poss.samples) : null;

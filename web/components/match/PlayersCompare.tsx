@@ -16,7 +16,38 @@ type Side = "own" | "opp";
 // Each compared player keeps her colour while she stays picked (identity, never rank); the team is the small bar.
 const SLOTS = ["var(--slot-1)", "var(--slot-2)", "var(--slot-3)", "var(--slot-4)"];
 const GROUPS: Metric["group"][] = ["Ataque", "Con balón", "Defensa", "Físico"];
-const fmt = (v: number) => (Number.isInteger(v) ? v.toLocaleString("es-MX") : v.toLocaleString("es-MX", { maximumFractionDigits: 1 }));
+export const fmt = (v: number) => (Number.isInteger(v) ? v.toLocaleString("es-MX") : v.toLocaleString("es-MX", { maximumFractionDigits: 1 }));
+
+// The data every player view needs: the rows of lib/players (events + tracking), the corrected parts and how to write a name.
+export function usePlayersData(match: Match, events: MatchEvent[], videoIds: string[], segmentsByVideo: Record<string, Segment[]>) {
+  const state = useStore();
+  const fixed = useFixedParts(match.folder, videoIds);
+  const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
+  // Which half each video is (a half can come in several videos); absent = first video 1, others 2.
+  const videoPeriods = useMemo(() => matchVideos(match).map((v, i) => ({ video_id: v.video_id, period: v.period ?? (i === 0 ? 1 : 2) })), [match]);
+  const videoHalves = useMemo(() => {
+    const out: Record<string, HalfWindows> = {};
+    for (const v of matchVideos(match)) {
+      const w = fullWindows(v);
+      if (w) out[v.video_id] = w;
+    }
+    return out;
+  }, [match]);
+  const rows = useMemo(() => playerRows({ events, parts, playByVideo: segmentsByVideo, videoPeriods, videoHalves }), [events, parts, segmentsByVideo, videoPeriods, videoHalves]);
+  // Names to show: dorsal from our squad; a rival "R7" with the name given in the quick review, if any.
+  const label = useMemo(() => {
+    const number = new Map((state.roster ?? []).map((r) => [r.player_id, r.number]));
+    const rival = new Map<string, string>();
+    for (const mid of new Set(parts.map((o) => o.file.match_id)))
+      for (const r of state.rivals?.[mid] ?? []) rival.set(`R${r.number}`, r.name ? `${r.number} ${r.name}` : `Rival ${r.number}`);
+    return (r: PlayerRow) => {
+      if (r.team === "opp") return rival.get(r.id) ?? (/^R\d+$/.test(r.id) ? `Rival ${r.id.slice(1)}` : r.id);
+      const n = number.get(r.id);
+      return n != null ? `${n} · ${r.id}` : r.id;
+    };
+  }, [state.roster, state.rivals, parts]);
+  return { rows, parts, label, fixed };
+}
 
 // Individual performance: up to MAX_COMPARE players of either team, figure by figure, with where each one played.
 // Events count only when tagged with her name; the tracking needs her name in the correction table.
@@ -33,36 +64,11 @@ export function PlayersCompare({
   segmentsByVideo: Record<string, Segment[]>;
   periodNote?: boolean;
 }) {
-  const state = useStore();
-  const fixed = useFixedParts(match.folder, videoIds);
-  const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
-  // Which half each video is (a half can come in several videos); absent = first video 1, others 2.
-  const videoPeriods = useMemo(() => matchVideos(match).map((v, i) => ({ video_id: v.video_id, period: v.period ?? (i === 0 ? 1 : 2) })), [match]);
-  const videoHalves = useMemo(() => {
-    const out: Record<string, HalfWindows> = {};
-    for (const v of matchVideos(match)) {
-      const w = fullWindows(v);
-      if (w) out[v.video_id] = w;
-    }
-    return out;
-  }, [match]);
-  const rows = useMemo(() => playerRows({ events, parts, playByVideo: segmentsByVideo, videoPeriods, videoHalves }), [events, parts, segmentsByVideo, videoPeriods, videoHalves]);
+  const { rows, parts, label, fixed } = usePlayersData(match, events, videoIds, segmentsByVideo);
   const prefKey = `players:${match.match_id}`;
   const saved = usePref(prefKey, "");
   const per10 = usePref("players:per10", "0") === "1";
 
-  // Names to show: dorsal from our squad; a rival "R7" with the name given in the quick review, if any.
-  const label = useMemo(() => {
-    const number = new Map((state.roster ?? []).map((r) => [r.player_id, r.number]));
-    const rival = new Map<string, string>();
-    for (const mid of new Set(parts.map((o) => o.file.match_id)))
-      for (const r of state.rivals?.[mid] ?? []) rival.set(`R${r.number}`, r.name ? `${r.number} ${r.name}` : `Rival ${r.number}`);
-    return (r: PlayerRow) => {
-      if (r.team === "opp") return rival.get(r.id) ?? (/^R\d+$/.test(r.id) ? `Rival ${r.id.slice(1)}` : r.id);
-      const n = number.get(r.id);
-      return n != null ? `${n} · ${r.id}` : r.id;
-    };
-  }, [state.roster, state.rivals, parts]);
 
   // The picked ones, in their slot order; by default the two of ours with most to show.
   const byKey = new Map(rows.map((r) => [r.key, r]));
@@ -221,7 +227,7 @@ function MetricRow({ m, rows, per10 }: { m: Metric; rows: PlayerRow[]; per10: bo
   );
 }
 
-function PlayerHeat({ parts, row, color, name }: { parts: Oriented[]; row: PlayerRow; color: string; name: string }) {
+export function PlayerHeat({ parts, row, color, name }: { parts: Oriented[]; row: PlayerRow; color: string; name: string }) {
   const h = useMemo(() => heatmapSmooth(parts, row.team, row.id), [parts, row.team, row.id]);
   const max = Math.max(...h.seconds, 1e-9);
   const cw = PITCH.length / h.nx;

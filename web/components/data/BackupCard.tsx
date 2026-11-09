@@ -8,7 +8,7 @@ import { EMPTY, mutate, useStore } from "@/lib/store";
 import type { State } from "@/lib/types";
 import { Confirm, DropZone, NoticeLine, type Notice } from "./DropZone";
 
-const LISTS = ["matches", "events", "plays", "sessions", "anchors", "segments", "venues", "trackEdits", "roster", "passes", "boards", "edits"] as const;
+const LISTS = ["matches", "events", "plays", "sessions", "anchors", "segments", "venues", "trackEdits", "roster", "passes", "boards", "edits", "decks"] as const;
 
 const counts = (s: Partial<State>): [string, number][] => [
   ["partidos", s.matches?.length ?? 0],
