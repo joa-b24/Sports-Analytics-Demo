@@ -55,5 +55,7 @@ if (r.status !== 0 || !existsSync(path.join(tmp, "out"))) {
 }
 rmSync(out, { recursive: true, force: true });
 cpSync(path.join(tmp, "out"), out, { recursive: true });
+// Vercel: /partido -> partido.html (Netlify and Cloudflare Pages already do it).
+writeFileSync(path.join(out, "vercel.json"), JSON.stringify({ cleanUrls: true }, null, 2) + "\n");
 cleanTmp();
 console.log(`Listo: ${out}`);

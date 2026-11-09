@@ -67,3 +67,6 @@ tools/
 # app móvil (scripts/build_mobile.mjs)
 web/.mobile-build/
 web/dist-mobile/
+
+# zips para la tablet (a mano)
+tablet/
