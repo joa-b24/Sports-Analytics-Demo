@@ -4,13 +4,14 @@ import { FileZip } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Card, btn, btnPrimary, input } from "@/components/Shell";
 import { Select } from "@/components/Select";
-import { applyZip, dropZip, inspectZip, isFolderName, type ZipInspection } from "@/lib/local";
+import { parseCsv } from "@/lib/format";
+import { applyZip, dropZip, inspectZip, isFolderName, readLocal, type ZipInspection } from "@/lib/local";
 import { mutate, uid, useStore } from "@/lib/store";
-import { formatBytes, matchFromYaml, parseMatchYaml, type MatchYaml } from "@/lib/uploads";
+import { eventsFromCsv, formatBytes, matchFromYaml, parseMatchYaml, type MatchYaml } from "@/lib/uploads";
 import { Confirm, DropZone, NoticeLine, Progress, type Notice } from "./DropZone";
 
 const NEW = "__new";
-const KIND_LABEL: Record<string, string> = { video: "videos", tracking: "archivos de tracking", match: "match.yaml / segments.csv", edits: "ediciones de clips", report: "informe y clips" };
+const KIND_LABEL: Record<string, string> = { video: "videos", tracking: "archivos de tracking", match: "match.yaml, segments.csv y eventos", edits: "ediciones de clips", report: "informe y clips" };
 
 // A .zip with a whole match folder or a reference video: sent once, shown, then unpacked into matches/<folder>/ after
 // the analyst picks where. With a match.yaml it also creates (or completes) the match in this browser.
@@ -72,13 +73,29 @@ export function ZipCard({ local, folders, onFolders }: { local: boolean | null; 
     }
     const out = r.json as { written: { inner: string; size: number }[]; failed: { inner: string; error: string }[]; skipped: { name: string }[] };
     let what = "";
+    let matchId: string | null = target?.match_id ?? null;
     if (zip.meta) {
       const existing = target ?? state.matches.find((m) => m.folder === folder);
       const m = matchFromYaml(zip.meta, folder, existing, uid("m"));
+      matchId = m.match_id;
       mutate((s) => ({ ...s, matches: existing ? s.matches.map((x) => (x.match_id === existing.match_id ? m : x)) : [...s.matches, m] }));
       what = existing ? ` Se completó «${m.name}» con su match.yaml.` : ` Se creó el partido «${m.name}».`;
     } else if (target && !target.folder) {
       mutate((s) => ({ ...s, matches: s.matches.map((x) => (x.match_id === target.match_id ? { ...x, folder } : x)) }));
+    }
+    // The events CSV of the zip becomes the events of the match, but only into a match that has none yet: never mixed in.
+    const evFile = out.written.find((w) => /^events_[\w.-]+\.csv$/.test(w.inner));
+    if (evFile && matchId) {
+      const text = await readLocal(`matches/${folder}/${evFile.inner}`);
+      if (text) {
+        const id = matchId;
+        const parsed = eventsFromCsv(parseCsv(text), id, () => uid("e"));
+        const have = state.events.filter((e) => e.match_id === id).length;
+        if (have === 0 && parsed.events.length > 0) {
+          mutate((s) => ({ ...s, events: [...s.events, ...parsed.events] }));
+          what += ` Se cargaron ${parsed.events.length} eventos.`;
+        } else if (parsed.events.length > 0) what += ` El zip trae ${parsed.events.length} eventos, pero el partido ya tiene ${have}: no se tocaron (añádelos aparte con «Eventos · CSV»).`;
+      }
     }
     setZip(null);
     onFolders();

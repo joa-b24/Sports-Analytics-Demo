@@ -1,6 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { MobileInit } from "@/components/MobileInit";
 import { Shell } from "@/components/Shell";
+import { MOBILE } from "@/lib/mobile";
 import { THEME_BOOT } from "@/lib/teamColors";
 import "./globals.css";
 
@@ -13,7 +15,11 @@ const jetbrains = localFont({ src: "./fonts/JetBrainsMono-latin.woff2", variable
 export const metadata: Metadata = {
   title: "Rendimiento · Fútbol",
   description: "Análisis de rivales, partidos propios y entrenamientos a partir de video y sensores.",
+  // The installable app (mobile build only).
+  ...(MOBILE ? { manifest: "/manifest.webmanifest" } : {}),
 };
+
+export const viewport: Viewport = { themeColor: "#1d4ed8" };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
@@ -23,6 +29,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
       <body className="min-h-full">
+        <MobileInit />
         <Shell>{children}</Shell>
       </body>
     </html>

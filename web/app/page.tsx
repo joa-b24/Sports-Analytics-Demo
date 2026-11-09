@@ -8,6 +8,7 @@ import { MODES, STEP_ICONS, ScoreBug, modeOf } from "@/components/match/MatchHea
 import { CountUp, Reveal, revealRef } from "@/components/motion";
 import { Card, DemoBadge, PageHeader, btnPrimary } from "@/components/Shell";
 import { buildDemo } from "@/lib/demo";
+import { stepVisible } from "@/lib/mobile";
 import { TEAM_SECTIONS } from "@/lib/features";
 import { fmtNum } from "@/lib/format";
 import { faceOff, lastOwnMatch, nextRival, pendingTasks, rivalDossier, type RivalDossier, type Task } from "@/lib/home";
@@ -28,7 +29,7 @@ const LOAD_METRICS: [string, string][] = [
 ];
 
 // The steps a match can finish by itself, in the order of its modes (the board is not tied to one match).
-const STEP_ORDER = MODES.flatMap((m) => m.steps.map(([id, label]) => [id, label] as [StepId, string])).filter(([id]) => (id as string) !== "board");
+const STEP_ORDER = MODES.flatMap((m) => m.steps.map(([id, label]) => [id, label] as [StepId, string])).filter(([id]) => (id as string) !== "board" && stepVisible(id));
 
 const fmtDate = (d: string, year = true) =>
   d ? new Date(`${d}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}) }) : "Sin fecha";

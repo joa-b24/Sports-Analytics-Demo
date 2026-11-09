@@ -4,6 +4,28 @@
 // They only exist while the app runs on this computer; every function here fails softly (null / false) otherwise, and
 // the screens keep their "choose a file" buttons.
 
+import { MOBILE } from "./mobile.ts";
+import { browserFs } from "./mobileFs.ts";
+import { applyZipHere, dropZipHere, inspectZipHere } from "./mobileZip.ts";
+import { uploadTarget } from "./uploads.ts";
+
+// In the phone / tablet build (lib/mobile.ts) there is no server: the same functions read and write the files of the match
+// folders that live in the browser (lib/mobileFs.ts), and a video is an object URL of the file stored there.
+const objectUrls = new Map<string, string>();
+async function hereUrl(rel: string): Promise<string | null> {
+  const fs = browserFs();
+  const at = await fs.mtimeOf(rel);
+  if (at === null) return null;
+  const key = `${rel}@${at}`;
+  const known = objectUrls.get(key);
+  if (known) return known;
+  const blob = await fs.read(rel);
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob);
+  objectUrls.set(key, url);
+  return url;
+}
+
 // Names of match folders: aaaa_mm_dd_<local>_vs_<visitante>, lower case, letters, digits and _ (same rule as
 // sportsan.ingest.rename_match).
 export const FOLDER_RULE = "aaaa_mm_dd_<local>_vs_<visitante>";
@@ -38,6 +60,7 @@ export const localUrl = (rel: string) => base + enc(rel);
 
 // Files of a folder of the repository (for instance "matches/partido_2026_09_25/tracking"); null if not reachable.
 export async function listLocal(rel: string): Promise<LocalEntry[] | null> {
+  if (MOBILE) return browserFs().list(rel);
   try {
     const r = await fetch(`${localUrl(rel)}?list`, { cache: "no-store" });
     return r.ok ? ((await r.json()) as LocalEntry[]) : null;
@@ -58,6 +81,19 @@ export async function readFolderFiles(folder: string): Promise<{ tracking: strin
 // Creates matches/<folder>/ with video/, tracking/ and a minimal match.yaml, without touching anything already there
 // (app/api/local, ?create=folder). false when the app does not run on this computer or the name breaks the convention.
 export async function createMatchFolder(folder: string, meta: { kind?: string; date?: string; own_team_name?: string; other_team_name?: string }): Promise<boolean> {
+  if (MOBILE) {
+    if (!isFolderName(folder)) return false;
+    const fs = browserFs();
+    if (await fs.exists(`matches/${folder}/match.yaml`)) return true;
+    const lines = [
+      `match_id: ${folder}`,
+      ...(meta.kind ? [`kind: ${meta.kind}`] : []),
+      ...(meta.date ? [`date: ${meta.date}`] : []),
+      ...(meta.own_team_name ? [`own_team_name: ${meta.own_team_name}`] : []),
+      ...(meta.other_team_name ? [`other_team_name: ${meta.other_team_name}`] : []),
+    ];
+    return (await fs.write(`matches/${folder}/match.yaml`, `${lines.join("\n")}\n`)) !== null;
+  }
   try {
     const r = await fetch(`${localUrl(`matches/${folder}`)}?create=folder`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(meta) });
     return r.ok;
@@ -67,6 +103,7 @@ export async function createMatchFolder(folder: string, meta: { kind?: string; d
 }
 
 export async function readLocal(rel: string): Promise<string | null> {
+  if (MOBILE) return browserFs().readText(rel);
   try {
     const r = await fetch(localUrl(rel), { cache: "no-store" });
     return r.ok ? await r.text() : null;
@@ -77,6 +114,10 @@ export async function readLocal(rel: string): Promise<string | null> {
 
 // The same file as a File, for the screens that already take one from a file input.
 export async function localFile(rel: string): Promise<File | null> {
+  if (MOBILE) {
+    const blob = await browserFs().read(rel);
+    return blob ? new File([blob], rel.split("/").pop() ?? rel) : null;
+  }
   try {
     const r = await fetch(localUrl(rel), { cache: "no-store" });
     return r.ok ? new File([await r.blob()], rel.split("/").pop() ?? rel) : null;
@@ -86,6 +127,7 @@ export async function localFile(rel: string): Promise<File | null> {
 }
 
 export async function writeLocal(rel: string, text: string): Promise<boolean> {
+  if (MOBILE) return (await browserFs().write(rel, text)) !== null;
   try {
     const r = await fetch(localUrl(rel), { method: "PUT", body: text });
     return r.ok;
@@ -96,6 +138,14 @@ export async function writeLocal(rel: string, text: string): Promise<boolean> {
 
 // Like writeLocal, with when the file was written on disk (ms) and why it failed.
 export async function writeLocalInfo(rel: string, text: string): Promise<{ ok: boolean; mtime: number | null; error?: string }> {
+  if (MOBILE) {
+    try {
+      const at = await browserFs().write(rel, text);
+      return at === null ? { ok: false, mtime: null, error: "ruta no válida" } : { ok: true, mtime: at };
+    } catch (e) {
+      return { ok: false, mtime: null, error: e instanceof Error ? e.message : "no se pudo guardar en el dispositivo" };
+    }
+  }
   try {
     const r = await fetch(localUrl(rel), { method: "PUT", body: text });
     if (!r.ok) return { ok: false, mtime: null, error: r.status === 404 ? "la app no corre en esta computadora" : (await r.text()) || `error ${r.status}` };
@@ -108,6 +158,10 @@ export async function writeLocalInfo(rel: string, text: string): Promise<{ ok: b
 
 // Only old backups of a match can be deleted (app/api/local).
 export async function deleteLocal(rel: string): Promise<boolean> {
+  if (MOBILE) {
+    await browserFs().remove(rel);
+    return true;
+  }
   try {
     return (await fetch(localUrl(rel), { method: "DELETE" })).ok;
   } catch {
@@ -117,6 +171,10 @@ export async function deleteLocal(rel: string): Promise<boolean> {
 
 // URL of the video of `videoId` in a match folder (video/<videoId>.<ext>), or null if it is not there.
 export async function localVideo(folder: string, videoId: string): Promise<string | null> {
+  if (MOBILE) {
+    const here = (await browserFs().list(`matches/${folder}/video`))?.find((f) => !f.dir && f.name.startsWith(`${videoId}.`) && /\.(mp4|webm|mkv|mov)$/i.test(f.name));
+    return here ? hereUrl(`matches/${folder}/video/${here.name}`) : null;
+  }
   const files = await listLocal(`matches/${folder}/video`);
   const hit = files?.find((f) => !f.dir && f.name.startsWith(`${videoId}.`) && /\.(mp4|webm|mkv|mov)$/i.test(f.name));
   return hit ? localUrl(`matches/${folder}/video/${hit.name}`) : null;
@@ -127,6 +185,7 @@ export async function localVideo(folder: string, videoId: string): Promise<strin
 // Seeking the original decodes up to one GOP (a keyframe every ~5.8 s in the real videos = 174 frames of 1080p) from the
 // keyframe before each jump; the copy decodes at most 14.
 export async function localVideoProxy(folder: string, videoId: string): Promise<string | null> {
+  if (MOBILE) return hereUrl(`matches/${folder}/video/${videoId}_proxy.mp4`);
   const files = await listLocal(`matches/${folder}/video`);
   const hit = files?.find((f) => !f.dir && f.name === `${videoId}_proxy.mp4`);
   return hit ? localUrl(`matches/${folder}/video/${hit.name}`) : null;
@@ -138,6 +197,7 @@ export const tracksParts = (files: LocalEntry[] | null, videoId: string) =>
 
 // Whether the repository is reachable (the app runs on this computer): the uploads of Datos only work then.
 export async function localAvailable(): Promise<boolean> {
+  if (MOBILE) return true;
   return (await listLocal("matches")) !== null;
 }
 
@@ -171,8 +231,24 @@ function send(method: string, url: string, body: Blob | null, onProgress?: (sent
   });
 }
 
+// The mobile build "uploads" into the browser's file store, with the same rules as the server (lib/uploads.ts).
+async function storeHere(rel: string, file: Blob, opts: { overwrite?: boolean; onProgress?: (sent: number, total: number) => void }): Promise<UploadResult & { status: number }> {
+  if (!uploadTarget(rel)) return { ok: false, status: 400, error: "Ese archivo no es de la carpeta de un partido" };
+  const fs = browserFs();
+  if (!opts.overwrite && (await fs.exists(rel))) return { ok: false, status: 409, exists: true };
+  try {
+    opts.onProgress?.(0, file.size);
+    await fs.write(rel, file);
+    opts.onProgress?.(file.size, file.size);
+    return { ok: true, status: 200 };
+  } catch (e) {
+    return { ok: false, status: 500, error: e instanceof Error ? e.message : "no se pudo guardar en el dispositivo (¿falta espacio?)" };
+  }
+}
+
 // Uploads a file to a path of a match folder (lib/uploads.ts says which ones), never replacing one without overwrite.
 export function uploadLocal(rel: string, file: Blob, opts: { overwrite?: boolean; onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {}) {
+  if (MOBILE) return storeHere(rel, file, opts);
   return send("POST", `${localUrl(rel)}${opts.overwrite ? "?overwrite=1" : ""}`, file, opts.onProgress, opts.signal);
 }
 
@@ -185,14 +261,20 @@ export interface ZipInspection {
 
 // Step 1 of a zip: sends it and gets back what it contains (nothing is written into matches/ yet).
 export function inspectZip(file: Blob, onProgress?: (sent: number, total: number) => void, signal?: AbortSignal) {
+  if (MOBILE) return inspectZipHere(browserFs(), file);
   return send("POST", "/api/unzip", file, onProgress, signal);
 }
 
 // Step 2: unpacks it into matches/<folder>/. A 409 lists the files that are already there.
 export function applyZip(token: string, folder: string, overwrite: boolean) {
+  if (MOBILE) return applyZipHere(browserFs(), token, folder, overwrite);
   return send("POST", `/api/unzip?token=${token}&folder=${encodeURIComponent(folder)}${overwrite ? "&overwrite=1" : ""}`, null);
 }
 
 export function dropZip(token: string) {
+  if (MOBILE) {
+    dropZipHere(token);
+    return Promise.resolve(null);
+  }
   return fetch(`/api/unzip?token=${token}`, { method: "DELETE" }).catch(() => null);
 }

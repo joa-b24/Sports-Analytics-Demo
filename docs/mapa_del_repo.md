@@ -380,6 +380,25 @@ Así lee y escribe videos, tracking y `segments.csv` como `npm run dev`. Los dat
 | `npm install` y luego `npm run dist` | `demo/desktop/` | Copia el servidor y genera `dist/Rendimiento Setup <versión>.exe` (instalador) y `dist/Rendimiento <versión>.exe` (portable) |
 | `npm start` | `demo/desktop/` | Abre la app de escritorio sin empaquetar |
 
+### 5.8 La app para celular y tablet (Android, PWA)
+
+Es la misma app de `web/` compilada como sitio estático, sin servidor: **no necesita la laptop encendida** una vez cargado el
+partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y funciona sin internet después de abrirla una vez
+(`public/sw.js`). iOS no se soporta.
+
+- Bandera `NEXT_PUBLIC_MOBILE=1` (`web/lib/mobile.ts`). Con `NEXT_PUBLIC_MOBILE_FULL=1` también se ven Calibración, Tramos,
+  Tracking y Balón (para mirar y corregir los archivos del zip); por defecto Captura solo muestra «Eventos».
+- Todos los archivos de `matches/<partido>/` viven en el navegador (IndexedDB `sportsan-files`, `web/lib/mobileFs.ts`);
+  `web/lib/local.ts` los lee y escribe ahí en vez de pedirlos al servidor. El zip del partido se lee en el dispositivo
+  (`web/lib/mobileZip.ts`, fflate) e incluye `events_<partido>.csv`, que entra como los eventos del partido si este no tenía.
+- Nada se procesa en el dispositivo: las llamadas a `/api/run` y `/api/rename` contestan al instante con un aviso
+  (`installMobileGuards`). Detección, tracking y Kaggle se corren en la laptop, un PC dedicado o Kaggle.
+- El video es de YouTube (con internet) o un archivo que se elige en el dispositivo.
+
+| Comando | Desde | Qué hace |
+|---|---|---|
+| `node scripts/build_mobile.mjs [--full]` | `demo/` | Copia `web/` sin `app/api` ni `proxy.ts`, compila con exportación estática y deja `web/dist-mobile/` (subir a un hosting estático con HTTPS) |
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |

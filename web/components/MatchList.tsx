@@ -4,6 +4,7 @@ import { ArrowRight, CalendarBlank, CheckCircle, Folder, MapPin, Plus, Trash, Wa
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { MODES, STEP_ICONS, ScoreBug } from "@/components/match/MatchHeader";
+import { stepVisible } from "@/lib/mobile";
 import { MissingTag } from "@/components/match/VideoDownload";
 import { Modal } from "@/components/Modal";
 import { Reveal } from "@/components/motion";
@@ -29,7 +30,7 @@ const ORDER: MatchKind[] = ["own", "rival", "reference"];
 const KIND_LABEL: Record<MatchKind, string> = { own: "Nuestro", rival: "Rival", reference: "Referencia" };
 
 // The steps a match can finish by itself, in the order of its modes (the board is not tied to one match).
-const STEP_ORDER = MODES.flatMap((m) => m.steps.map(([id, label]) => [id, label] as [StepId, string])).filter(([id]) => (id as string) !== "board");
+const STEP_ORDER = MODES.flatMap((m) => m.steps.map(([id, label]) => [id, label] as [StepId, string])).filter(([id]) => (id as string) !== "board" && stepVisible(id));
 
 const fmtDate = (d: string) =>
   d ? new Date(`${d}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" }) : "Sin fecha";

@@ -29,6 +29,7 @@ import { useThemeSync } from "@/lib/theme";
 import { useRosterFromFile } from "@/components/RosterCard";
 import { useRenamesFromFile } from "@/lib/renames";
 import { TEAM_SECTIONS } from "@/lib/features";
+import { MOBILE } from "@/lib/mobile";
 import { EdgeReveal, useFocusMode } from "@/components/FocusMode";
 
 type NavItem = { href: string; label: string; icon: Icon; locked?: string; disabled?: string; active: boolean };
@@ -148,7 +149,7 @@ function Sidebar() {
   ];
   const end: NavItem[] = [
     { href: "/datos", label: "Datos", icon: Database, active: at("/datos") },
-    { href: "/laboratorio", label: "Laboratorio", icon: Flask, active: at("/laboratorio") },
+    ...(MOBILE ? [] : [{ href: "/laboratorio", label: "Laboratorio", icon: Flask, active: at("/laboratorio") }]),
     { href: "/configuracion", label: "Configuración", icon: GearSix, active: at("/configuracion") },
   ];
 

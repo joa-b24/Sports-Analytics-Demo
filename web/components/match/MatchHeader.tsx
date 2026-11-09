@@ -2,6 +2,7 @@
 
 import { shootoutText } from "@/lib/shootout";
 import { FileText, Monitor, Path, PlayCircle, Scissors, SoccerBall, Strategy, Tag, Target, type Icon } from "@phosphor-icons/react";
+import { stepVisible } from "@/lib/mobile";
 import type { StepId, StepStatus } from "@/lib/steps";
 import type { Match, MatchEvent } from "@/lib/types";
 
@@ -113,7 +114,8 @@ type Props = {
 // One bar: the score, the video, the steps of the mode (each with where it stands) and the match data.
 export function MatchHeader({ match, events, tab, onTab, steps, video, status, badge, children }: Props) {
   const mode = modeOf(tab);
-  const modeSteps = MODES.find((m) => m.id === mode)?.steps ?? [];
+  // The mobile build hides the steps that process video (lib/mobile.ts).
+  const modeSteps = (MODES.find((m) => m.id === mode)?.steps ?? []).filter(([id]) => stepVisible(id));
   const progress = (st: StepStatus) => (st.state === "done" ? 100 : st.state === "partial" ? 50 : 0);
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">

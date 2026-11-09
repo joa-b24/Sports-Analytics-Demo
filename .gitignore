@@ -63,3 +63,7 @@ matches/*/events_review_*.json
 
 # acceso remoto temporal
 tools/
+
+# app móvil (scripts/build_mobile.mjs)
+web/.mobile-build/
+web/dist-mobile/
