@@ -142,3 +142,35 @@ def test_franja_de_la_cancha_desde_la_calibracion():
     assert pitch_band(-3 * H, 100, 60, 1920, 2000) == (y0, y1)  # la misma calibración con otro signo
     assert pitch_band(None, 100, 60, 1920, 1080) is None
 
+
+
+def test_franja_con_margen_propio():
+    import numpy as np
+
+    from sportsan.tracking.process import BAND_MARGIN_M, BAND_TOP_PX, pitch_band
+
+    H = np.linalg.inv(np.array([[10.0, 0, 0], [0, 10.0, 500], [0, 0, 1]]))
+    assert pitch_band(H, 100, 60, 1920, 2000, BAND_MARGIN_M) == pitch_band(H, 100, 60, 1920, 2000)  # el defecto no cambia
+    y0, y1 = pitch_band(H, 100, 60, 1920, 2000, 6.0)
+    assert y0 == 500 - 60 - BAND_TOP_PX and y1 == 500 + 660 + 20
+
+
+def test_postprocess_de_match_yaml_con_defectos_de_siempre():
+    from sportsan.tracking.process import FEET_CORRECTION, SMOOTH_H, post_settings
+    from sportsan.tracking.refine import WINDOW_S
+
+    siempre = {"feet": FEET_CORRECTION, "smooth_h": SMOOTH_H, "window_s": WINDOW_S}
+    assert post_settings(None) == siempre and post_settings({}) == siempre
+    assert post_settings({"postprocess": "x"}) == siempre
+    assert post_settings({"postprocess": {"feet": False, "smooth_h": False, "smooth_window_s": 1.5}}) == {"feet": False, "smooth_h": False, "window_s": 1.5}
+    # Valores inválidos o fuera de 0.2-3 s: se ignoran.
+    assert post_settings({"postprocess": {"feet": "no", "smooth_window_s": 9}}) == siempre
+    assert post_settings({"postprocess": {"smooth_window_s": True}}) == siempre
+
+
+def test_refine_usa_la_ventana_pedida():
+    import inspect
+
+    from sportsan.tracking import refine
+
+    assert inspect.signature(refine.refine_tracks).parameters["window_s"].default == refine.WINDOW_S

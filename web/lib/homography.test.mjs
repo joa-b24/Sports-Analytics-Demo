@@ -66,3 +66,11 @@ test("invert undoes apply", () => {
   const back = apply(inv, m);
   assert.ok(Math.hypot(back[0] - 640, back[1] - 512) < 1e-6);
 });
+
+test("calibración entre dos cuadros calibrados: mezcla de las dos, a escala", async () => {
+  const { lerpHomography } = await import("./homography.ts");
+  const A = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const B = [2, 0, 10, 0, 2, 0, 0, 0, 2]; // la misma que [1,0,5, 0,1,0, 0,0,1]
+  assert.deepEqual(lerpHomography(A, B, 0.5), [1, 0, 2.5, 0, 1, 0, 0, 0, 1]);
+  assert.equal(lerpHomography(A, [1, 0, 0, 0, 1, 0, 0, 0, 0], 0.5), null);
+});

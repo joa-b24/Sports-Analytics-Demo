@@ -1,0 +1,20 @@
+match_id: 2026_10_23_ccm_vs_ucg
+kind: own
+date: "2026-10-23"
+own_team_name: "Tec ccm"
+other_team_name: "Ucg"
+analysis_stride: 3
+
+venue:
+  name: "Campo UCG"
+
+# Un partido puede venir en varios videos. t_video es el tiempo dentro de cada video.
+videos:
+  - video_id: v1
+    youtube_id: "PuvKiL-vL2s"
+    file: video/v1.mp4
+    fps: 60
+    mask: [[20, 25, 670, 78], [1138, 36, 1247, 130]]
+
+# Colores de camiseta para asignar equipos en el tracking (elegidos en la app)
+jersey_colors: {own: "#ffffff", own_gk: "#daff02", opp: "#028dff", opp_gk: "#e8021f", ref: "#ff80f7"}

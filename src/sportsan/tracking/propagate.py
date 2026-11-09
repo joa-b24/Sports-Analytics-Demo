@@ -5,6 +5,15 @@ cámara de un cuadro al siguiente y se lleva la homografía de cada ancla a los 
 Entre dos anclas se combinan la propagación hacia adelante y hacia atrás; cuánto discrepan es la
 medida automática de calidad de cada cuadro.
 
+El movimiento se mide de dos formas (2026-10-20). Directa: cada cuadro se empareja con sus dos anclas
+(rasgos SIFT y RANSAC), sin acumular nada; es lo que se usa siempre que hay suficientes coincidencias.
+Cuadro a cuadro (flujo óptico): solo para tapar donde la directa no alcanza. Encadenar el flujo óptico
+de 90 cuadros derivaba 1.5-1.9 m en 3 s con anclas que entre sí calzaban a 0.1-0.2 m.
+
+El cuadro de cada ancla se toma de su `t_video` con el fps del video, no de su `frame`: la app lo
+calculaba con el fps que tuviera cargado (29.97 por defecto), y en videos de 30 fps las anclas quedaban
+~24 cuadros corridas a los 13 minutos.
+
 Convenciones (las del contrato):
 - H: imagen (px) -> sede (metros reales), matriz 3x3.
 - G[k]: imagen del cuadro k (px) -> imagen del cuadro k+1 (px). Entonces H[k+1] = H[k] @ inv(G[k]).
@@ -31,6 +40,9 @@ ANCHORS_SCHEMA_VERSION = 2
 TRACK_SCHEMA_VERSION = 1
 # Menos correspondencias que esto entre dos cuadros: el movimiento no es fiable y la cadena se corta.
 MIN_INLIERS = 40
+# Emparejamiento directo con un ancla: coincidencias mínimas (y qué parte de las candidatas) para usarlo.
+DIRECT_MIN_INLIERS = 60
+DIRECT_MIN_RATIO = 0.3
 
 
 # ---------------------------------------------------------------- geometría (numpy puro)
@@ -151,6 +163,41 @@ def _chain_backward(H1: np.ndarray, motions: dict[int, np.ndarray | None], start
     return out
 
 
+def _from_anchor(
+    Ha: np.ndarray, a: int, direct_a: dict[int, np.ndarray | None], motions: dict[int, np.ndarray | None], targets: range,
+    steps: dict[int, int] | None = None,
+) -> dict[int, np.ndarray]:
+    """H de cada cuadro de `targets` (en orden, alejándose del ancla a) partiendo de Ha.
+
+    Donde hay emparejamiento directo con el ancla (direct_a[k]: imagen de a -> imagen de k) se usa tal cual; donde no,
+    se avanza un cuadro con el flujo óptico desde el anterior. Se detiene donde no hay ninguno de los dos. En `steps`
+    deja, por cuadro, cuántos pasos de flujo lleva desde el último cuadro exacto (lo que puede haber derivado).
+    """
+    out = {a: Ha}
+    H = Ha
+    prev = a
+    run = 0
+    if steps is not None:
+        steps[a] = 0
+    for k in targets:
+        G = direct_a.get(k)
+        if G is not None:
+            H = Ha @ np.linalg.inv(G)
+            run = 0
+        else:
+            step = motions.get(prev) if k > prev else motions.get(k)
+            if step is None:
+                break
+            H = H @ np.linalg.inv(step) if k > prev else H @ step
+            run += 1
+        H = H / H[2, 2]
+        out[k] = H
+        if steps is not None:
+            steps[k] = run
+        prev = k
+    return out
+
+
 def propagate(
     anchors: dict[int, np.ndarray],
     motions: dict[int, np.ndarray | None],
@@ -159,29 +206,39 @@ def propagate(
     grid_m: np.ndarray,
     image_w: int,
     image_h: int,
+    direct: dict[int, dict[int, np.ndarray | None]] | None = None,
 ) -> list[FrameCalib]:
     """Calibración de cada cuadro de [start, end] a partir de las anclas y del movimiento entre cuadros.
 
     anchors: cuadro -> H del ancla. motions: k -> G[k] (o None si no se pudo estimar).
+    direct: ancla -> {cuadro: imagen del ancla -> imagen del cuadro}, el emparejamiento directo; donde falta, flujo.
     """
     frames = sorted(f for f in anchors if start <= f <= end)
     if not frames:
         raise ValueError("No hay anclas dentro del rango pedido")
     result: dict[int, FrameCalib] = {}
+    d = direct or {}
 
     # Antes de la primera ancla y después de la última: una sola dirección, sin medida de discrepancia.
-    for k, H in _chain_backward(anchors[frames[0]], motions, start, frames[0]).items():
+    first, last = frames[0], frames[-1]
+    for k, H in _from_anchor(anchors[first], first, d.get(first, {}), motions, range(first - 1, start - 1, -1)).items():
         result[k] = FrameCalib(k, H, "propagated")
-    for k, H in _chain_forward(anchors[frames[-1]], motions, frames[-1], end).items():
+    for k, H in _from_anchor(anchors[last], last, d.get(last, {}), motions, range(last + 1, end + 1)).items():
         result[k] = FrameCalib(k, H, "propagated")
 
     for a, b in zip(frames, frames[1:]):
-        fwd = _chain_forward(anchors[a], motions, a, b)
-        bwd = _chain_backward(anchors[b], motions, a, b)
+        sf: dict[int, int] = {}
+        sb: dict[int, int] = {}
+        fwd = _from_anchor(anchors[a], a, d.get(a, {}), motions, range(a + 1, b + 1), sf)
+        bwd = _from_anchor(anchors[b], b, d.get(b, {}), motions, range(b - 1, a - 1, -1), sb)
         for k in range(a + 1, b):
             Hf, Hb = fwd.get(k), bwd.get(k)
             if Hf is not None and Hb is not None:
-                H, dis = blend(Hf, Hb, (k - a) / (b - a), grid_m, image_w, image_h)
+                # Cada lado pesa según lo poco que pudo derivar: los pasos de flujo desde su último cuadro exacto. Con
+                # emparejamiento directo en los dos (o en ninguno), por la distancia a cada ancla, como antes.
+                nf, nb = sf.get(k, 0), sb.get(k, 0)
+                weight_b = nf / (nf + nb) if (d and nf + nb > 0) else (k - a) / (b - a)
+                H, dis = blend(Hf, Hb, weight_b, grid_m, image_w, image_h)
                 result[k] = FrameCalib(k, H, "propagated", dis)
             elif Hf is not None or Hb is not None:
                 result[k] = FrameCalib(k, Hf if Hf is not None else Hb, "propagated")
@@ -199,6 +256,7 @@ def leave_one_out(
     grid_m: np.ndarray,
     image_w: int,
     image_h: int,
+    direct: dict[int, dict[int, np.ndarray | None]] | None = None,
 ) -> list[dict]:
     """Comprobación con anclas de control: se quita cada ancla interior y se mide a cuántos metros
     quedan sus puntos según la propagación entre sus dos vecinas. Es la estimación honesta del error.
@@ -211,7 +269,7 @@ def leave_one_out(
     for prev, mid, nxt in zip(frames, frames[1:], frames[2:]):
         if fits[prev] is None or fits[nxt] is None:
             continue
-        calib = propagate({prev: fits[prev], nxt: fits[nxt]}, motions, prev, nxt, grid_m, image_w, image_h)
+        calib = propagate({prev: fits[prev], nxt: fits[nxt]}, motions, prev, nxt, grid_m, image_w, image_h, direct)
         H = calib[mid - prev].H
         if H is None:
             out.append({"frame": mid, "from": [prev, nxt], "error_mean_m": None, "error_max_m": None})
@@ -254,6 +312,13 @@ def read_anchors(path: str | Path) -> dict:
     return data
 
 
+def anchor_frame(anchor: dict, fps: float) -> int:
+    """Cuadro de un ancla en el video: su t_video (lo que se veía en pantalla) con el fps del video. El `frame` guardado
+    depende del fps que tenía la app al marcarla."""
+    t = anchor.get("t_video")
+    return int(round(float(t) * fps)) if t is not None else int(anchor["frame"])
+
+
 def anchor_arrays(anchor: dict) -> tuple[np.ndarray, np.ndarray]:
     px = np.array([[p["px"], p["py"]] for p in anchor["points"]], dtype=float)
     meters = np.array([[p["x_m"], p["y_m"]] for p in anchor["points"]], dtype=float)
@@ -282,11 +347,12 @@ def track_to_json(meta: dict, calib: list[FrameCalib], check: list[dict]) -> dic
 
 # ---------------------------------------------------------------- video (OpenCV)
 
-def estimate_motion(prev_gray, gray, scale: float) -> tuple[np.ndarray | None, int]:
-    """Homografía del cuadro anterior al actual, en píxeles del video original. (None, n) si no es fiable."""
+def estimate_motion(prev_gray, gray, scale: float, mask=None) -> tuple[np.ndarray | None, int]:
+    """Homografía del cuadro anterior al actual, en píxeles del video original. (None, n) si no es fiable.
+    `mask`: zonas que no se miran (library.mask_image), como el marcador, que no se mueve con la cámara."""
     import cv2
 
-    p0 = cv2.goodFeaturesToTrack(prev_gray, maxCorners=1500, qualityLevel=0.01, minDistance=8)
+    p0 = cv2.goodFeaturesToTrack(prev_gray, maxCorners=1500, qualityLevel=0.01, minDistance=8, mask=mask)
     if p0 is None or len(p0) < MIN_INLIERS:
         return None, 0
     p1, st1, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, p0, None, winSize=(21, 21), maxLevel=3)
@@ -304,7 +370,85 @@ def estimate_motion(prev_gray, gray, scale: float) -> tuple[np.ndarray | None, i
     return np.linalg.inv(S) @ G @ S, n
 
 
-def video_motions(video: str | Path, start: int, end: int, work_width: int = 960, progress=None) -> tuple[dict[int, np.ndarray | None], tuple[int, int]]:
+def direct_matches(
+    video: str | Path, anchor_frames: list[int], start: int, end: int, work_width: int = 1280, progress=None, mask: list | None = None
+) -> dict[int, dict[int, np.ndarray | None]]:
+    """Emparejamiento directo de cada cuadro de [start, end] con sus dos anclas (la anterior y la siguiente), y de cada
+    ancla con sus vecinas de dos en dos (para las anclas de control). ancla -> {cuadro: imagen del ancla -> imagen del
+    cuadro, en píxeles del video original}; None donde no hay suficientes coincidencias."""
+    import cv2
+
+    cap = cv2.VideoCapture(str(video))
+    if not cap.isOpened():
+        raise FileNotFoundError(f"No se pudo abrir el video: {video}")
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    scale = min(1.0, work_width / w)
+    S = np.diag([scale, scale, 1.0])
+    sift = cv2.SIFT_create(3000)
+    matcher = cv2.BFMatcher()
+
+    def gray(frame):
+        if scale < 1.0:
+            frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    from .library import mask_image
+
+    hide = None
+
+    def detect(g):
+        nonlocal hide
+        if hide is None and mask:
+            hide = mask_image(mask, g.shape, scale)
+        return sift.detectAndCompute(g, hide)
+
+    feats = {}
+    for f in anchor_frames:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+        ok, frame = cap.read()
+        feats[f] = detect(gray(frame)) if ok else (None, None)
+
+    def match(fa, fk) -> np.ndarray | None:
+        (ka, da), (kk, dk) = fa, fk
+        if da is None or dk is None or len(ka) < DIRECT_MIN_INLIERS or len(kk) < DIRECT_MIN_INLIERS:
+            return None
+        pairs = matcher.knnMatch(da, dk, k=2)
+        good = [m for m, *rest in pairs if rest and m.distance < 0.75 * rest[0].distance]
+        if len(good) < DIRECT_MIN_INLIERS:
+            return None
+        pa = np.float32([ka[m.queryIdx].pt for m in good])
+        pk = np.float32([kk[m.trainIdx].pt for m in good])
+        G, inl = cv2.findHomography(pa, pk, cv2.RANSAC, 3.0)
+        n = int(inl.sum()) if inl is not None else 0
+        if G is None or n < DIRECT_MIN_INLIERS or n < DIRECT_MIN_RATIO * len(good):
+            return None
+        return np.linalg.inv(S) @ G @ S
+
+    frames = sorted(anchor_frames)
+    out: dict[int, dict[int, np.ndarray | None]] = {f: {} for f in frames}
+    # Anclas de control: cada ancla interior emparejada con la anterior y la siguiente de sus vecinas.
+    for prev, mid, nxt in zip(frames, frames[1:], frames[2:]):
+        out[prev][mid] = match(feats[prev], feats[mid])
+        out[nxt][mid] = match(feats[nxt], feats[mid])
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+    for k in range(start, end + 1):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if k in feats:
+            continue
+        fk = detect(gray(frame))
+        before = [f for f in frames if f < k][-1:]
+        after = [f for f in frames if f > k][:1]
+        for f in before + after:
+            out[f][k] = match(feats[f], fk)
+        if progress and (k - start) % 25 == 0:
+            progress(k - start, end - start)
+    cap.release()
+    return out
+
+
+def video_motions(video: str | Path, start: int, end: int, work_width: int = 960, progress=None, mask: list | None = None) -> tuple[dict[int, np.ndarray | None], tuple[int, int]]:
     """Movimiento de cámara G[k] para k en [start, end). Lee el video en orden desde `start`."""
     import cv2
 
@@ -323,6 +467,7 @@ def video_motions(video: str | Path, start: int, end: int, work_width: int = 960
             frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+    hide = None
     motions: dict[int, np.ndarray | None] = {}
     prev = grab()
     for k in range(start, end):
@@ -331,7 +476,11 @@ def video_motions(video: str | Path, start: int, end: int, work_width: int = 960
             motions[k] = None
             prev = None
             continue
-        motions[k], _ = estimate_motion(prev, cur, scale)
+        if mask and hide is None:
+            from .library import mask_image
+
+            hide = mask_image(mask, cur.shape, scale)
+        motions[k], _ = estimate_motion(prev, cur, scale, hide)
         prev = cur
         if progress and (k - start) % 50 == 0:
             progress(k - start, end - start)
@@ -353,6 +502,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--end", help="fin del tramo (HH:MM:SS); por defecto, la última ancla")
     ap.add_argument("--out", help="archivo de salida; por defecto, en la carpeta tracking/ del partido")
     ap.add_argument("--work-width", type=int, default=960, help="ancho al que se reduce el video para estimar el movimiento")
+    ap.add_argument("--no-direct", action="store_true", help="solo flujo óptico cuadro a cuadro (lo de antes: más rápido, deriva más)")
     args = ap.parse_args(argv)
 
     data = read_anchors(args.anchors)
@@ -361,7 +511,14 @@ def main(argv: list[str] | None = None) -> None:
     root = project_root()
     video = root / cfg["paths"]["raw_video"]
 
-    points = {int(a["frame"]): anchor_arrays(a) for a in data["anchors"] if len(a["points"]) >= 4}
+    usable = [a for a in data["anchors"] if len(a["points"]) >= 4]
+    shifted = [(int(a["frame"]), anchor_frame(a, fps)) for a in usable if abs(anchor_frame(a, fps) - int(a["frame"])) > 1]
+    if shifted:
+        print(
+            f"Aviso: {len(shifted)} ancla(s) se marcaron con otro fps (p. ej. cuadro {shifted[0][0]} -> {shifted[0][1]}); "
+            f"se usa su tiempo con {fps:g} fps."
+        )
+    points = {anchor_frame(a, fps): anchor_arrays(a) for a in usable}
     anchors = {f: H for f, (px, m) in points.items() if (H := fit_homography(px, m)) is not None}
     if not anchors:
         raise SystemExit("Ningún ancla tiene 4 o más puntos utilizables.")
@@ -377,12 +534,18 @@ def main(argv: list[str] | None = None) -> None:
     if n > 3000:
         print("  Aviso: tramo largo. La propagación está pensada para jugadas de 10 a 20 s; el error crece lejos de las anclas.")
 
-    motions, (w, h) = video_motions(video, start, end, args.work_width, progress=lambda i, t: print(f"  movimiento {i}/{t}", end="\r"))
+    motions, (w, h) = video_motions(video, start, end, args.work_width, mask=cfg.get("mask"), progress=lambda i, t: print(f"  movimiento {i}/{t}", end="\r"))
     lost = sum(1 for g in motions.values() if g is None)
+    direct = None
+    if not args.no_direct:
+        direct = direct_matches(video, sorted(inside), start, end, mask=cfg.get("mask"), progress=lambda i, t: print(f"  emparejando con las anclas {i}/{t}", end="\r"))
+        found = sum(1 for per in direct.values() for g in per.values() if g is not None)
+        tried = sum(len(per) for per in direct.values())
+        print(f"\n  emparejamiento directo con las anclas: {found} de {tried}")
     venue = data.get("venue") or {}
     grid = venue_grid(float(venue.get("length_m", 105)), float(venue.get("width_m", 68)))
-    calib = propagate(inside, motions, start, end, grid, w, h)
-    check = leave_one_out({f: points[f] for f in inside}, motions, grid, w, h)
+    calib = propagate(inside, motions, start, end, grid, w, h, direct)
+    check = leave_one_out({f: points[f] for f in inside}, motions, grid, w, h, direct)
 
     meta = {"match_id": cfg["match_id"], "video_id": cfg["video_id"], "fps": fps, "image_w": w, "image_h": h, "venue": venue}
     out = Path(args.out) if args.out else root / cfg["paths"]["tracking_dir"] / f"calib_{cfg['video_id']}_{start}_{end}.json"

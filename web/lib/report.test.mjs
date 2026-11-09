@@ -82,10 +82,14 @@ test("cada sección pide su fuente: con balón, la posesión ya no dice «requie
 });
 
 test("con balón y nombres: posesión que suma la cobertura, red de pases y toques por jugadora (anonimizables)", () => {
-  // 10 s of play; Ana passes to Bea every second, Bea to Ana; 30 fps, stride 3.
+  // 10 s of play; the ball goes from Ana to Bea and back every 2 s, with 0.6 s in flight (interpolated) in between;
+  // 30 fps, stride 3.
   const people = [{ id: 1, team: "own", player_id: "Ana Uno", tracks: [1] }, { id: 2, team: "own", player_id: "Bea Dos", tracks: [2] }];
   const frames = Array.from({ length: 100 }, (_, i) => ({ frame: i * 3, positions: [{ id: 1, x: 40, y: 20, source: "auto" }, { id: 2, x: 60, y: 40, source: "auto" }] }));
-  const ball = Array.from({ length: 100 }, (_, i) => (Math.floor(i / 10) % 2 === 0 ? { frame: i * 3, x: 40.3, y: 20, source: "manual" } : { frame: i * 3, x: 60.3, y: 40, source: "manual" }));
+  const ball = Array.from({ length: 100 }, (_, i) => {
+    const ana = Math.floor(i / 20) % 2 === 0;
+    return { frame: i * 3, x: ana ? 40.3 : 60.3, y: ana ? 20 : 40, source: i % 20 < 14 ? "manual" : "interpolated" };
+  });
   const parts = [{ ownRight: true, file: { kind: "tracks_fixed", match_id: "m1", video_id: "v1", fps: 30, start_frame: 0, end_frame: 300, stride: 3, people, frames, ball } }];
   const seg = { v1: [{ segment_id: "s01", start: 0, end: 10, tipo: "juego" }] };
   const r = buildReport(input({ events: sample(), parts, segmentsByVideo: seg }));
@@ -93,12 +97,12 @@ test("con balón y nombres: posesión que suma la cobertura, red de pases y toqu
   assert.equal(b.followed_s, 10);
   assert.equal(b.share, 1);
   assert.equal(b.possession.own + b.possession.opp + b.possession.unassigned, b.followed_s);
-  assert.equal(b.passes.own.completed, 9);
+  assert.equal(b.passes.own.completed, 4);
   assert.equal(r.cover.level.level, 4);
-  assert.equal(r.summary.network.passes, 9);
-  assert.deepEqual(r.summary.network.edges, [{ a: "Ana Uno", b: "Bea Dos", count: 9 }]);
-  assert.deepEqual(r.key_players.rows.map((x) => [x.player, x.touches]), [["Ana Uno", 50], ["Bea Dos", 50]]);
-  assert.equal(r.key_players.rows[0].per10, 3000); // 50 touches in 10 s of ball followed
+  assert.equal(r.summary.network.passes, 4);
+  assert.deepEqual(r.summary.network.edges, [{ a: "Ana Uno", b: "Bea Dos", count: 4 }]);
+  assert.deepEqual(r.key_players.rows.map((x) => [x.player, x.touches]), [["Ana Uno", 42], ["Bea Dos", 28]]);
+  assert.equal(r.key_players.rows[0].per10, 2520); // 42 touches in 10 s of ball followed
   assert.equal(r.key_players.print, false);
   const anon = JSON.stringify(buildReport(input({ events: sample(), parts, segmentsByVideo: seg, anonymize: true })));
   assert.ok(!anon.includes("Ana Uno") && !anon.includes("Bea Dos"));
@@ -290,4 +294,24 @@ test("sin nombres: los identificadores de clips y ediciones no se tocan", () => 
   const r = buildReport(input({ events: sample().map((e) => ({ ...e, player_id: e.player_id ?? "ana" })), edits, roster: [{ player_id: "ana", number: 5 }], anonymize: true }));
   assert.equal(r.transitions.own.losses[0].moment.edit.edit_id, "c_ana_x");
   assert.equal(clipList(r).clips.find((c) => c.kind === "transition" && c.edit_id).edit_id, "c_ana_x");
+});
+
+test("tarjetas, fueras de lugar y atajadas solo aparecen si se etiquetaron; cambios y penales en el informe", () => {
+  const plain = buildReport(input({ events: sample() }));
+  assert.equal(plain.summary.rows.some((r) => ["yellow", "red", "offside", "saves"].includes(r.key)), false);
+  const events = [
+    ...sample(),
+    ev(500, "foul", "opp", { detail: "yellow" }),
+    ev(520, "foul", "opp", { detail: "red" }),
+    ev(540, "offside", "own"),
+    ev(560, "shot", "opp", { outcome: "on_target", detail: "saved" }),
+    ev(600, "substitution", "own", { player_id: "Sale", player_in: "Entra", x: null, y: null }),
+  ];
+  const r = buildReport(input({ events, match: match({ shootout: [{ team: "own", player_id: null, result: "goal" }, { team: "opp", player_id: null, result: "missed" }] }) }));
+  const row = (k) => r.summary.rows.find((x) => x.key === k);
+  assert.deepEqual([row("yellow").opp, row("red").opp, row("offside").own], [1, 1, 1]);
+  // La atajada es de nuestra portera: tiro del rival.
+  assert.deepEqual([row("saves").own, row("saves").opp], [1, 0]);
+  assert.deepEqual(r.summary.substitutions.map((s) => [s.out, s.in]), [["Sale", "Entra"]]);
+  assert.deepEqual([r.cover.shootout.own, r.cover.shootout.opp], [1, 0]);
 });

@@ -61,6 +61,9 @@ def _one_frame(x: np.ndarray, y: np.ndarray, team: str, own_attacks_right: bool 
 def frame_shape(tracking: pd.DataFrame, team: str, own_attacks_right: bool | None, min_visible: int = MIN_VISIBLE) -> pd.DataFrame:
     """Una fila por cuadro procesado del equipo `team` (own u opp), con las medidas de arriba y si el cuadro cuenta."""
     d = tracking[(tracking["team"] == team)].dropna(subset=["x", "y"])
+    # Una persona cuenta una sola vez por cuadro (dos cajas con el mismo track_id inflarían n_visible).
+    if "track_id" in d.columns:
+        d = d.drop_duplicates(subset=["segment_id", "frame", "track_id"])
     rows = []
     for (seg, frame, t), g in d.groupby(["segment_id", "frame", "t_video"], sort=True):
         rows.append({"segment_id": seg, "frame": frame, "t_video": t, **_one_frame(g["x"].to_numpy(float), g["y"].to_numpy(float), team, own_attacks_right, min_visible)})
@@ -70,11 +73,13 @@ def frame_shape(tracking: pd.DataFrame, team: str, own_attacks_right: bool | Non
 
 def play_time(t_video: pd.Series | np.ndarray, segments: pd.DataFrame) -> np.ndarray:
     """Segundos de juego transcurridos hasta cada instante, contando solo los tramos `juego` de segments.csv
-    (columnas start_s, end_s, tipo). NaN fuera de los tramos de juego."""
+    (columnas start_s, end_s, tipo). NaN fuera de los tramos de juego. Los tramos sin inicio o fin se ignoran (no
+    contagian NaN a los siguientes)."""
     t = np.asarray(t_video, dtype=float)
     out = np.full(len(t), np.nan)
     played = 0.0
-    for r in segments[segments["tipo"] == "juego"].sort_values("start_s").itertuples():
+    games = segments[segments["tipo"] == "juego"].dropna(subset=["start_s", "end_s"])
+    for r in games.sort_values("start_s").itertuples():
         inside = (t >= r.start_s) & (t < r.end_s)
         out[inside] = played + (t[inside] - r.start_s)
         played += r.end_s - r.start_s

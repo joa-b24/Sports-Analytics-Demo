@@ -77,6 +77,9 @@ def load_config(path: str | Path | None = None, match: str | None = None, video:
     cfg["jersey_colors"] = v.get("jersey_colors") or m.get("jersey_colors") or next((o["jersey_colors"] for o in videos if o.get("jersey_colors")), {})
     # Cómo se detecta en este video (modelo, franja de la cancha y trozos); si no, lo del partido; si no, lo de siempre.
     cfg["detector"] = v.get("detector") or m.get("detector") or {}
+    # Rectángulos de la imagen que no son cancha ni fondo fijo (marcador, logo del canal), en píxeles del video:
+    # [[x0, y0, x1, y1], ...]. Ni la calibración ni la detección miran ahí.
+    cfg["mask"] = v.get("mask") or m.get("mask") or []
     cfg["paths"] = {
         "match_dir": rel.as_posix(),
         "raw_video": (rel / v["file"]).as_posix(),

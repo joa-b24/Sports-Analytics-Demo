@@ -1,0 +1,26 @@
+{
+  "name": "rendimiento",
+  "productName": "Rendimiento",
+  "version": "0.2.0",
+  "description": "Análisis de fútbol con video: la app de web/ como aplicación de escritorio, con acceso a la carpeta del proyecto.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "stage": "node stage.mjs",
+    "start": "node stage.mjs && electron .",
+    "dist": "node stage.mjs && electron-builder --win portable nsis"
+  },
+  "build": {
+    "appId": "mx.tec.ccm.rendimiento",
+    "productName": "Rendimiento",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "package.json"],
+    "extraResources": [{ "from": "server", "to": "server" }],
+    "win": { "target": ["portable", "nsis"] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  }
+}

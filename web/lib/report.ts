@@ -12,6 +12,7 @@
 //
 // In a "rival" match the `own` team of the data is the team being studied (focus_team), not ours: the report always
 // speaks of "equipo analizado" and "contrario".
+import { isMeasuredSource } from "./smooth.ts";
 import {
   SHOT_WINDOW_S,
   boxEntries,
@@ -32,10 +33,15 @@ import {
 } from "./analysis.ts";
 import type { ClipEdit } from "./annotations.ts";
 import { fmtT, youtubeLink } from "./format.ts";
-import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, possessionCells, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
+import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
+import { possessionParamsOf, techSummary } from "./tech.ts";
+import { trackingParamsOf } from "./techTracking.ts";
+import { anchorPossessionToEvents } from "./possessionEvents.ts";
+import { autoWarning, possessionCellsOf, possessionIntervals, summarizePossession, type PossessionResult, type PossessionSummary } from "./possession.ts";
 import type { Segment } from "./segments.ts";
 import { LANES_5, THIRDS_3, countByType, laneThirdOf, zoneGrid5x3 } from "./stats.ts";
-import { EMPTY_REPORT, type ManualResult, type Match, type MatchEvent, type Play, type Report, type RosterPlayer } from "./types.ts";
+import { EMPTY_REPORT, type ManualResult, type Match, type MatchEvent, type Play, type Report, type RosterPlayer, type ShootoutKick } from "./types.ts";
+import { shootoutScore } from "./shootout.ts";
 import { matchTimeline, matchVideos, videoOf } from "./videos.ts";
 
 type Side = "own" | "opp";
@@ -60,6 +66,8 @@ export function normalizeReport(r: Partial<Report> | null | undefined): Report {
     conclusiones: text("conclusiones"),
     jornada: text("jornada"),
     print_touches: src.print_touches === true,
+    focus: src.focus === "opp" ? "opp" : "own",
+    ...(Array.isArray(src.sections) ? { sections: (src.sections as unknown[]).filter((x): x is string => typeof x === "string") } : {}),
     results_manual: results.filter((x): x is ManualResult => !!x && typeof x === "object").map((x) => ({
       date: typeof x.date === "string" ? x.date : "",
       opponent: typeof x.opponent === "string" ? x.opponent : "",
@@ -131,19 +139,18 @@ function addSpan(cells: Set<string>, video: string, t0: number, t1: number, play
   }
 }
 
-export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, Segment[]>, parts: Oriented[]): LevelInfo {
+export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, Segment[]>, parts: Oriented[], poss: PossessionResult = possessionIntervals(parts, segmentsByVideo)): LevelInfo {
   const closed = (v: string) => (segmentsByVideo[v] ?? []).filter((g) => g.tipo === "juego" && g.end !== null);
   const hasPlay = Object.keys(segmentsByVideo).some((v) => closed(v).length > 0);
   const play_s = hasPlay ? Object.keys(segmentsByVideo).reduce((s, v) => s + playInside(closed(v), 0, Infinity), 0) : null;
   const share = (seconds: number) => (play_s ? Math.min(1, seconds / play_s) : null);
 
-  const ballCells = new Map<string, PossessionState>();
+  const ballCells = possessionCellsOf(poss.samples);
   const trackCells = new Set<string>();
   let ownSeen = 0;
   let ownNamed = 0;
   for (const o of parts) {
     const play = hasPlay ? closed(o.file.video_id) : null;
-    possessionCells(o, play, ballCells);
     // Reviewed: exported from the correction table (not built from an uncorrected part) and with players of a team in
     // it. A file exported only for its ball has no reviewed positions.
     const reviewed = !o.file.auto && o.file.frames.length > 0 && o.file.people.some((p) => p.team === "own" || p.team === "opp");
@@ -153,7 +160,7 @@ export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, 
     const own = new Set(o.file.people.filter((p) => p.team === "own").map((p) => p.id));
     for (const fr of o.file.frames)
       for (const q of fr.positions) {
-        if (q.source === "interpolated" || !own.has(q.id)) continue;
+        if (!isMeasuredSource(q.source) || !own.has(q.id)) continue;
         ownSeen++;
         if (named.has(q.id)) ownNamed++;
       }
@@ -372,6 +379,13 @@ export interface BallSummary {
   // Of the play time; null without play stretches.
   share: number | null;
   possession: Record<PossessionState, number>;
+  // The same possession split by ball source (manual / tracker / event / interpolated) and by kind of interval, with the
+  // share on interpolated data (lib/possession.ts summarizePossession).
+  possession_detail: PossessionSummary;
+  // Set when most of the assigned time rests on the tracker's ball, which nobody reviewed: say it where the figure is shown.
+  possession_warning: string | null;
+  // The technical parameters the possession was computed with (lib/tech.ts): the defaults, or what was changed.
+  possession_params: string;
   passes: Record<Side, TeamPasses>;
   // Changes of team read from the ball: confirmed by a tagged loss within 2 s, or only inferred; and tagged losses where
   // the ball was followed that no change matches.
@@ -408,6 +422,8 @@ export interface ReportData {
     jornada: string;
     // Goals tagged by each team. Null without events.
     score: { own: number; opp: number } | null;
+    // Penalty shootout after a draw: its score and kicks. Null without one.
+    shootout: { own: number; opp: number; kicks: ShootoutKick[] } | null;
     focus_team: string;
     other_team: string;
     is_demo: boolean;
@@ -416,6 +432,8 @@ export interface ReportData {
   results: { rows: ResultRow[]; total: number; no_events: number };
   summary: {
     rows: SummaryRow[];
+    // Substitutions in time order (who leaves, who comes in).
+    substitutions: { team: Side; moment: Moment; out: string | null; in: string | null }[];
     // Final-third entries without a lane: not used here.
     bins: Record<"5" | "10", TimeBins>;
     possession: Gate;
@@ -480,6 +498,20 @@ const zoneLabel = (e: MatchEvent) => {
 
 export const reportFileName = (match: Pick<Match, "match_id" | "folder">) => `report_${match.folder ?? match.match_id}.json`;
 
+// Cards, offsides and saves: rows of the summary only when some were tagged. A save is the goalkeeper's, so it
+// counts for the team that did not shoot.
+function optionalRows(events: MatchEvent[], own: Record<string, number>, opp: Record<string, number>): SummaryRow[] {
+  const card = (team: Side, c: string) => events.filter((e) => e.type === "foul" && e.team === team && e.detail === c).length;
+  const saves = (shooter: Side) => events.filter((e) => e.type === "shot" && e.team === shooter && e.detail === "saved").length;
+  const rows: SummaryRow[] = [
+    { key: "yellow", label: "Tarjetas amarillas", own: card("own", "yellow"), opp: card("opp", "yellow") },
+    { key: "red", label: "Tarjetas rojas", own: card("own", "red"), opp: card("opp", "red") },
+    { key: "offside", label: "Fueras de lugar", own: own.offside ?? 0, opp: opp.offside ?? 0 },
+    { key: "saves", label: "Atajadas de la portera", own: saves("opp"), opp: saves("own") },
+  ];
+  return rows.filter((r) => r.own + r.opp > 0);
+}
+
 export function buildReport(input: ReportInput): ReportData {
   const { match, plays, segmentsByVideo, parts } = input;
   const report = normalizeReport(match.report);
@@ -517,12 +549,19 @@ export function buildReport(input: ReportInput): ReportData {
   };
   const side = (e: MatchEvent) => e.team as Side;
 
-  const level = dataLevel(raw, segmentsByVideo, parts);
-  const br = level.sources.ball ? ballReport(parts, segmentsByVideo, raw) : null;
+  // Possession as intervals (lib/possession.ts): one reading for the coverage, the possession and its warnings.
+  // Held to the tagged losses and recoveries (lib/possessionEvents.ts): the tracking alone credits whoever is nearest.
+  const poss = anchorPossessionToEvents(possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match), undefined, trackingParamsOf(match).ballJumpMs), raw);
+  const level = dataLevel(raw, segmentsByVideo, parts, poss);
+  const br = level.sources.ball ? ballReport(parts, segmentsByVideo, raw, possessionCellsOf(poss.samples)) : null;
+  const possSummary = br ? summarizePossession(poss.samples) : null;
   const ballSummary: BallSummary | null = br && {
     followed_s: br.followed_s,
     share: level.play_s ? Math.min(1, br.followed_s / level.play_s) : null,
     possession: br.possession,
+    possession_detail: possSummary as PossessionSummary,
+    possession_warning: possSummary ? autoWarning(possSummary) : null,
+    possession_params: techSummary(match),
     passes: br.passes,
     changes: {
       confirmed: br.changes.filter((c) => c.confirmed).length,
@@ -564,6 +603,8 @@ export function buildReport(input: ReportInput): ReportData {
     { key: "crosses", label: "Centros", own: own.cross, opp: opp.cross },
     { key: "corners", label: "Córners", own: own.corner, opp: opp.corner },
     { key: "fouls", label: "Faltas", own: own.foul, opp: opp.foul },
+    // Only when tagged at all: a zero here would say "none" when it was not noted.
+    ...optionalRows(events, own, opp),
     { key: "losses", label: "Pérdidas", own: own.loss, opp: opp.loss },
     { key: "recoveries", label: "Recuperaciones", own: own.recovery, opp: opp.recovery },
   ];
@@ -685,6 +726,7 @@ export function buildReport(input: ReportInput): ReportData {
       date: match.date,
       jornada: report.jornada ?? "",
       score: scoreOf(events),
+      shootout: match.shootout?.length ? { ...(shootoutScore(match.shootout) as { own: number; opp: number }), kicks: match.shootout } : null,
       focus_team: match.focus_team,
       other_team: match.other_team,
       is_demo: !!match.is_demo,
@@ -693,6 +735,10 @@ export function buildReport(input: ReportInput): ReportData {
     results: recentResults(match.focus_team, input.library, report.results_manual ?? [], !!match.is_demo),
     summary: {
       rows: summaryRows,
+      substitutions: events
+        .filter((e) => e.type === "substitution" && (e.team === "own" || e.team === "opp"))
+        .sort((a, b) => (a.video_id ?? "v1").localeCompare(b.video_id ?? "v1") || a.t_video - b.t_video)
+        .map((e) => ({ team: side(e), moment: momentOf(e), out: e.player_id, in: e.player_in ?? null })),
       bins: { "5": timeBins(events, timeline.segments, 5), "10": timeBins(events, timeline.segments, 10) },
       possession: gate(src.ball, "ball"),
       ball: ballSummary,

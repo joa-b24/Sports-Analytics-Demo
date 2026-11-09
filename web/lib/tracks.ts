@@ -88,7 +88,7 @@ export function labToHex(lab: number[]): string {
 // nearest kit of another team at least TEAM_MARGIN times farther. Otherwise no team.
 export const MAX_COLOR_DISTANCE = 40;
 export const TEAM_MARGIN = 1.3;
-const TEAM_L_WEIGHT = 1;
+export const TEAM_L_WEIGHT = 1;
 
 export const colorDistance = (a: number[], b: number[], lWeight = 0.5) => Math.hypot(lWeight * (a[0] - b[0]), a[1] - b[1], a[2] - b[2]);
 
@@ -427,6 +427,38 @@ export function separateRun(edits: TrackEdits, file: TracksFile, track: number, 
   return { edits: { ...edits, splits }, identity };
 }
 
+// The stretch [a, b] of one raw track (frames inclusive) goes to `identity`; the rest of the track keeps what it was
+// (hand cuts inside the stretch are replaced, the one after it stays as it was). Null when the track has no box there.
+// One new TrackEdits: applying it is one action for the undo. Used by the one-click joins of the anchors mode.
+export function assignStretch(edits: TrackEdits, file: TracksFile, track: number, a: number, b: number, identity: number): TrackEdits | null {
+  const frames = file.frames.filter((f) => f.boxes.some((x) => x[0] === track)).map((f) => f.frame);
+  const inside = frames.filter((f) => f >= a && f <= b);
+  if (inside.length === 0) return null;
+  const fa = inside[0];
+  const nf = frames.find((f) => f > b);
+  const kept = edits.splits.filter((s) => s.track !== track || s.frame < fa || s.frame >= (nf ?? Number.POSITIVE_INFINITY));
+  const added: TrackEdits["splits"] = [];
+  if (nf !== undefined) {
+    const bx = file.frames.find((f) => f.frame === nf)?.boxes.find((x) => x[0] === track) as DetBox;
+    // Back to what the track was there before this change.
+    added.push({ track, frame: nf, identity: identityOf(bx, nf, edits) });
+  }
+  added.push({ track, frame: fa, identity });
+  return { ...edits, splits: [...kept.filter((s) => !(s.track === track && added.some((x) => x.frame === s.frame))), ...added] };
+}
+
+// Frames of [a, b] where `person` already has a live box, other than those of `exceptTrack` (a stretch given to her must
+// not collide with them).
+export function personFramesIn(file: TracksFile, edits: TrackEdits, person: number, a: number, b: number, exceptTrack?: number): number[] {
+  const drop = droppedSet(edits);
+  const out: number[] = [];
+  for (const fr of file.frames) {
+    if (fr.frame < a || fr.frame > b) continue;
+    if (fr.boxes.some((x) => x[0] !== exceptTrack && !isDropped(drop, x, fr.frame) && identityOf(x, fr.frame, edits) === person)) out.push(fr.frame);
+  }
+  return out;
+}
+
 // A hole of a person is "off camera" when she was at the edge of the image just before losing her or just after
 // finding her again: she went out of frame (or came back into it), and nothing can be fixed there. The other holes
 // happened in the middle of the image: there she was probably visible, and another piece of hers may be missing.
@@ -638,8 +670,42 @@ export function removeManual(edits: TrackEdits, identity: number, frame: number)
 
 // Processed frame nearest to a video frame (only 1 of every `stride` frames has detections).
 // Ball marked by hand (pixels) in a frame. One per frame.
+// A visible mark replaces a «no se ve» / «fuera» mark of the same frame. `aerial` is kept when the mark is moved.
 export function setBall(edits: TrackEdits, frame: number, px: number, py: number): TrackEdits {
-  return { ...edits, ball: [...(edits.ball ?? []).filter((b) => b.frame !== frame), { frame, px, py }].sort((a, b) => a.frame - b.frame) };
+  const old = (edits.ball ?? []).find((b) => b.frame === frame);
+  const states = (edits.ballStates ?? []).filter((s) => s.frame !== frame);
+  return {
+    ...edits,
+    ball: [...(edits.ball ?? []).filter((b) => b.frame !== frame), { frame, px, py, ...(old?.aerial ? { aerial: true } : {}), ...(old?.air ? { air: true } : {}) }].sort((a, b) => a.frame - b.frame),
+    ...(edits.ballStates ? { ballStates: states } : {}),
+  };
+}
+
+// «No se ve» (hidden) or «fuera» (out) from `frame`: replaces the visible mark of that frame (and the lines that touched it)
+// or the other state mark there. Same state again: nothing changes.
+export function setBallState(edits: TrackEdits, frame: number, state: "hidden" | "out"): TrackEdits {
+  const base = (edits.ball ?? []).some((b) => b.frame === frame) ? removeBall(edits, frame) : edits;
+  return { ...base, ballStates: [...(base.ballStates ?? []).filter((s) => s.frame !== frame), { frame, state }].sort((a, b) => a.frame - b.frame) };
+}
+
+export function removeBallState(edits: TrackEdits, frame: number): TrackEdits {
+  return { ...edits, ballStates: (edits.ballStates ?? []).filter((s) => s.frame !== frame) };
+}
+
+// Flags (or unflags) the visible mark of `frame` as the ground projection of a ball in the air. Null without a mark there.
+export function toggleAerial(edits: TrackEdits, frame: number): TrackEdits | null {
+  const m = (edits.ball ?? []).find((b) => b.frame === frame);
+  if (!m) return null;
+  const { aerial: _a, ...rest } = m; // eslint-disable-line @typescript-eslint/no-unused-vars
+  return { ...edits, ball: (edits.ball ?? []).map((b) => (b.frame === frame ? (m.aerial ? rest : { ...rest, aerial: true }) : b)) };
+}
+
+// Flags (or unflags) the mark of `frame` as «en el aire»: the click is on the ball itself while it flies. Null without a mark.
+export function toggleAir(edits: TrackEdits, frame: number): TrackEdits | null {
+  const m = (edits.ball ?? []).find((b) => b.frame === frame);
+  if (!m) return null;
+  const { air: _a, ...rest } = m; // eslint-disable-line @typescript-eslint/no-unused-vars
+  return { ...edits, ball: (edits.ball ?? []).map((b) => (b.frame === frame ? (m.air ? rest : { ...rest, air: true }) : b)) };
 }
 
 export function removeBall(edits: TrackEdits, frame: number): TrackEdits {
@@ -663,6 +729,6 @@ export function nearestFrame(file: Pick<TracksFile, "start_frame" | "end_frame" 
 
 // The edits with the referees (by shirt, not set by hand) left out, for what is exported.
 export function withoutReferees(file: TracksFile, edits: TrackEdits, colors?: Partial<JerseyColors>): TrackEdits {
-  const refs = people(file, edits, colors).filter((p) => p.team === "ref" && !p.teamByHand).map((p) => p.id);
+  const refs = people(file, edits, colors).filter((p) => p.team === "ref" && !p.teamByHand && !p.player_id).map((p) => p.id);
   return refs.length ? setRemovedMany(edits, refs) : edits;
 }

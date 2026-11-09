@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { NO_FILTER, activeAt, cleanEnd, retype, duplicatesOf, eventsFor, knownPlayers, missingEnd, missingReview } from "./tagging.ts";
+import { NO_FILTER, activeAt, cleanEnd, retype, duplicatesOf, eventsFor, knownPlayers, missingEnd, missingReview, detailsFor, outcomePatch, nextCard } from "./tagging.ts";
 
 const ev = (id, t, type = "shot", team = "own", extra = {}) => ({
   event_id: id, match_id: "m", video_id: "v1", t_video: t, period: 1, type, team, player_id: null, x: null, y: null,
@@ -62,4 +62,21 @@ test("pasada 3: un tiro bloqueado no pide dirección a puerta, ni un tiro libre 
   assert.equal(missingEnd(ev("a", 1, "free_kick")), true);
   const evs = [ev("b", 1, "shot", "own", { outcome: "blocked" }), ev("c", 2, "shot", "own"), ev("d", 3, "foul")];
   assert.deepEqual(eventsFor(3, evs, NO_FILTER).map((e) => e.event_id), ["c"]);
+});
+
+
+test("atajada solo en tiros a puerta; tarjetas en un clic; quien entra solo en cambios", () => {
+  assert.deepEqual(detailsFor({ type: "shot", outcome: "on_target" }).map(([k]) => k), ["saved"]);
+  assert.deepEqual(detailsFor({ type: "shot", outcome: "off_target" }), []);
+  assert.deepEqual(outcomePatch({ type: "shot", detail: "saved" }, "blocked"), { outcome: "blocked", detail: null });
+  assert.deepEqual(outcomePatch({ type: "shot", detail: "saved" }, "on_target"), { outcome: "on_target" });
+  assert.deepEqual([nextCard(null), nextCard("yellow"), nextCard("red")], ["yellow", "red", null]);
+  assert.equal(retype({ type: "substitution" }, "foul").player_in, null);
+  assert.equal("player_in" in retype({ type: "foul" }, "substitution"), false);
+});
+
+test("un cambio no pide posición, pide quién entra", () => {
+  const base = { event_id: "s", match_id: "m", t_video: 1, period: 1, type: "substitution", team: "own", player_id: "Sale", x: null, y: null, outcome: null, note: null };
+  assert.deepEqual(missingReview(base), ["quién entra"]);
+  assert.deepEqual(missingReview({ ...base, player_in: "Entra" }), []);
 });

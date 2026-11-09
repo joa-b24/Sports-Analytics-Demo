@@ -48,3 +48,25 @@ matches/*/clips/*
 matches/*/clips_*.json
 # Jugadas del pizarrón exportadas para el render
 data/boards/
+
+# Respaldos y eventos con nombres de jugadoras (los escribe «Guardar todo» en la app)
+matches/*/respaldo/*
+matches/*/events_*.csv
+matches/*/events/*
+
+# Posesión y revisiones del Playground: llevan nombres de la plantilla
+matches/*/possession_*.csv
+matches/*/possession_review_*.json
+matches/*/passes_review_*.json
+matches/*/events_auto_*.json
+matches/*/events_review_*.json
+
+# acceso remoto temporal
+tools/
+
+# app móvil (scripts/build_mobile.mjs)
+web/.mobile-build/
+web/dist-mobile/
+
+# zips para la tablet (a mano)
+tablet/

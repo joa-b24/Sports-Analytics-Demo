@@ -2,37 +2,125 @@
 
 import { useSyncExternalStore } from "react";
 import type { State } from "./types";
+import { createWriter, loadInitial } from "./storeIdb.ts";
 
-// Local-first storage: everything lives in the browser (localStorage) and is
-// moved between devices with export/import. Swap this module for a database
-// client when the app becomes multi-user.
+// Local-first storage: everything lives in the browser (IndexedDB, no practical size cap) and is moved between devices
+// with export/import. The old localStorage copy (`sportsan:v1`) is copied once on the first start and then left alone as
+// a backup. Swap this module for a database client when the app becomes multi-user.
+//
+// mutate() is synchronous in memory. Reading IndexedDB is asynchronous, so until the state is loaded (a few ms) the store
+// is `ready = false`: Shell holds the screens back (useStoreReady) and any mutate() meanwhile is replayed on the loaded state.
 
 const KEY = "sportsan:v1";
 
 export const EMPTY: State = { matches: [], events: [], plays: [], sessions: [], anchors: [], segments: [], venues: [], trackEdits: [], roster: [], passes: [], boards: [], edits: [], jerseys: {} };
 
-let state: State | null = null;
+let state: State = EMPTY;
+let ready = false;
+let db: IDBDatabase | null = null;
+let dirty = false;
+let blocked = false; // the stored state could not be read: never overwrite it
+let saveError: string | null = null;
+let queued: ((s: State) => State)[] = [];
 const listeners = new Set<() => void>();
+const notify = () => listeners.forEach((l) => l());
 
 function load(): State {
-  if (state) return state;
-  try {
-    const raw = localStorage.getItem(KEY);
-    state = raw ? { ...EMPTY, ...JSON.parse(raw) } : EMPTY;
-  } catch {
-    state = EMPTY;
+  return state;
+}
+
+function setError(message: string | null) {
+  if (saveError === message) return;
+  saveError = message;
+  notify();
+}
+
+const write = createWriter(
+  () => db,
+  (e) => {
+    if (e) dirty = true; // not saved: try again on the next change or when the tab is hidden
+    setError(e ? `${e.message || "error desconocido"}` : null);
+  },
+);
+
+// The whole state is serialised on every change (megabytes once a match has tracks and corrections), so the write is
+// grouped: the screen updates at once and the browser storage follows within `WRITE_DELAY_MS`. A change that is still
+// waiting is written when the tab is hidden or closed.
+const WRITE_DELAY_MS = 400;
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flush() {
+  if (writeTimer !== null) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
   }
-  return state as State;
+  if (!ready || !dirty) return;
+  if (blocked || !db) {
+    setError(blocked ? "no se pudo leer lo guardado antes, así que no se escribe encima" : "IndexedDB no está disponible");
+    return;
+  }
+  dirty = false;
+  try {
+    write(JSON.stringify(state));
+  } catch (e) {
+    dirty = true;
+    setError(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function init() {
+  let text: string | null = null;
+  try {
+    const r = await loadInitial(window.indexedDB, () => localStorage.getItem(KEY));
+    db = r.db;
+    text = r.text;
+    if (typeof navigator !== "undefined") void navigator.storage?.persist?.().catch(() => {});
+  } catch (e) {
+    // IndexedDB failed: show what localStorage has (read only) and warn; nothing is written.
+    blocked = true;
+    setError(e instanceof Error ? e.message : String(e));
+    try {
+      text = localStorage.getItem(KEY);
+    } catch {
+      text = null;
+    }
+  }
+  let base: State = EMPTY;
+  if (text) {
+    try {
+      base = { ...EMPTY, ...JSON.parse(text) };
+    } catch {
+      blocked = true;
+      setError("lo guardado está dañado y no se pudo leer");
+    }
+  }
+  for (const fn of queued) base = fn(base);
+  if (queued.length) dirty = true;
+  queued = [];
+  state = base;
+  ready = true;
+  notify();
+  if (dirty) flush();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flush);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flush();
+  });
+  void init();
 }
 
 export function mutate(fn: (s: State) => State) {
-  state = fn(load());
-  try {
-    localStorage.setItem(KEY, JSON.stringify(state));
-  } catch {
-    // Storage full or blocked: the change still lives in memory for this session.
+  if (!ready) {
+    queued.push(fn);
+    return;
   }
-  listeners.forEach((l) => l());
+  state = fn(state);
+  dirty = true;
+  if (writeTimer !== null) clearTimeout(writeTimer);
+  writeTimer = setTimeout(flush, WRITE_DELAY_MS);
+  notify();
 }
 
 function subscribe(l: () => void) {
@@ -44,6 +132,22 @@ function subscribe(l: () => void) {
 
 export function useStore(): State {
   return useSyncExternalStore(subscribe, load, () => EMPTY);
+}
+
+// False until the saved state is loaded; true on the server never (the screens are drawn on the client).
+export function useStoreReady(): boolean {
+  return useSyncExternalStore(subscribe, () => ready, () => false);
+}
+
+// Why the last save failed (null = fine). Shown by StorageNotice; cleared when a later save works.
+export function useSaveError(): string | null {
+  return useSyncExternalStore(subscribe, () => saveError, () => null);
+}
+
+// Tries to save right now (the notice's "Reintentar" button).
+export function retrySave() {
+  dirty = true;
+  flush();
 }
 
 const noop = () => () => {};
@@ -84,6 +188,22 @@ export function setPref(key: string, value: string) {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
   } catch {
     // Blocked storage: the preference lasts for this session only.
+  }
+  prefListeners.forEach((l) => l());
+}
+
+// After renaming a match folder: the preferences named after it (direction of attack, crop, chosen match...) follow.
+export function renamePrefs(from: string, to: string) {
+  // Folder names are letters, digits, _ . and -: only the dot needs escaping.
+  const re = new RegExp(`(^|[:|])${from.replaceAll(".", "\\.")}(?=$|[:|])`, "g");
+  const cur = loadPrefs();
+  const next: Record<string, string> = {};
+  for (const [k, v] of Object.entries(cur)) next[k.replace(re, `$1${to}`)] = v === from ? to : v;
+  prefs = next;
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Blocked storage: the change lasts for this session only.
   }
   prefListeners.forEach((l) => l());
 }

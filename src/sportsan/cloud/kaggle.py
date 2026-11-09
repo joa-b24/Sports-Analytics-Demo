@@ -27,6 +27,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -37,7 +38,7 @@ import zipfile
 from pathlib import Path
 
 from ..config import MATCHES_DIR, load_config, project_root
-from ..ingest.download_videos import read_registry
+from ..ingest.download_videos import registry_with_yaml
 from ..tracking.overnight import plan_video
 from .kaggle_job import gpu_model_name
 
@@ -74,7 +75,7 @@ def kernel_slug(match: str) -> str:
 
 def pending(root: Path, match: str, only: list[str] | None = None) -> list:
     """Videos del partido a los que `overnight` aún les haría algo (o los pedidos). Cada uno con su plan."""
-    rows = [r for r in read_registry(root / MATCHES_DIR / "videos.csv") if r["match_id"] == match]
+    rows = [r for r in registry_with_yaml(root) if r["match_id"] == match]
     plans = [plan_video(root, match, r["video_id"]) for r in rows]
     if only:
         return [p for p in plans if p.video_id in only]
@@ -129,7 +130,7 @@ def build_data_zip(root: Path, match: str, videos: list[str], dest: Path) -> lis
                 z.write(mdir / rel, f"matches/{match}/{rel}")
                 names.append(rel)
         # Solo las filas de esos videos: overnight recorre videos.csv y los demás saldrían como «sin descargar».
-        rows = [r for r in read_registry(root / MATCHES_DIR / "videos.csv") if r["match_id"] == match and r["video_id"] in videos]
+        rows = [r for r in registry_with_yaml(root) if r["match_id"] == match and r["video_id"] in videos]
         buf = io.StringIO()
         if rows:
             w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()), lineterminator="\n")
@@ -211,8 +212,13 @@ def login(user: str) -> None:
     print(f"Sesión iniciada; usuario {user} guardado en {LOCAL_CONFIG}.")
 
 
+# The CLI writes in UTF-8 whatever the console is: on Windows a captured output is cp1252 by default and the CLI dies
+# printing an accent or a log line (the files were already downloaded, but the call failed).
+UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
+
 def kaggle(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    r = subprocess.run([*kaggle_exe(), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    r = subprocess.run([*kaggle_exe(), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", env=UTF8_ENV)
     if check and r.returncode != 0:
         raise SystemExit(f"kaggle {' '.join(args[:2])} falló:\n{r.stdout}\n{r.stderr}")
     return r
@@ -243,13 +249,19 @@ def wait_dataset(ref: str, minutes: int = 60) -> None:
         time.sleep(15)
 
 
+def parse_status(returncode: int, text: str) -> str:
+    """Solo cuenta lo que diga Kaggle del cuaderno («has status "KernelWorkerStatus.ERROR"»): si la consulta misma
+    falla (red caída), su mensaje también dice «error» y no significa que el cuaderno haya terminado."""
+    m = re.search(r'has status "(?:\w+\.)?(\w+)"', text)
+    if returncode != 0 or not m:
+        return "sin respuesta"
+    word = m.group(1).lower()
+    return next((w for w in ("complete", "error", "cancel", "running", "queued") if w in word), word)
+
+
 def kernel_status(ref: str) -> str:
     r = kaggle("kernels", "status", ref, check=False)
-    text = (r.stdout + r.stderr).lower()
-    for word in ("complete", "error", "cancel", "running", "queued"):
-        if word in text:
-            return word
-    return text.strip()[:80] or "?"
+    return parse_status(r.returncode, r.stdout + r.stderr)
 
 
 def job_script(job: dict) -> str:
@@ -265,7 +277,7 @@ def kernel_meta(ref: str, sources: list[str], gpu: bool = True) -> dict:
 
 # ------------------------------------------------------------------------------------------------- comandos
 
-def run_tracking(match: str, videos: list[str] | None, dry: bool, wait: bool, hours: float, gpu: str, force: bool) -> None:
+def run_tracking(match: str, videos: list[str] | None, dry: bool, wait: bool, hours: float, gpu: str, force: bool, workers: int = 1) -> None:
     root = project_root()
     load_config(match=match)  # que el partido exista y su match.yaml se lea
     plans = pending(root, match, videos)
@@ -298,6 +310,8 @@ def run_tracking(match: str, videos: list[str] | None, dry: bool, wait: bool, ho
         ultra = "8.4.175"
     job = {"match_id": match, "code_slug": CODE_SLUG, "data_slug": data_slug(match),
            "videos": {v: video_slug(match, v) for v in vids}, "hours": hours, "ultralytics": ultra}
+    if workers > 1:
+        job["workers"] = workers   # partes en paralelo dentro de cada video (overnight --workers); 1 = como siempre
     (kernel_dir / "job.py").write_text(job_script(job), encoding="utf-8")
     kref = f"{user}/{kernel_slug(match)}"
     sources = [f"{user}/{CODE_SLUG}", f"{user}/{data_slug(match)}", *video_refs.values()]
@@ -394,19 +408,27 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--hours", type=float, default=DEFAULT_HOURS, help="tope de tiempo en Kaggle (la sesión dura como mucho 12 h)")
     r.add_argument("--gpu", default=DEFAULT_GPU, help="NvidiaTeslaT4 (por defecto) o NvidiaTeslaP100")
     r.add_argument("--force", action="store_true", help="vuelve a subir los videos aunque ya estén")
+    r.add_argument("--workers", type=int, default=1, help="partes en paralelo en Kaggle (1 = como siempre); la GPU es una sola, mide antes de subirlo")
     lg = sub.add_parser("login", help="una vez: inicia sesión en Kaggle y guarda tu usuario")
     lg.add_argument("--user", required=True, help="tu usuario de Kaggle (el de la dirección de tu perfil)")
-    for name in ("status", "pull"):
+    for name in ("status", "pull", "logs"):
         s = sub.add_parser(name)
         s.add_argument("--match", required=True)
         s.add_argument("--force", action="store_true", help="(pull) reemplaza archivos tuyos distintos")
+        s.add_argument("--follow", action="store_true", help="(logs) sigue el registro en vivo, como tail -f")
     a = ap.parse_args(argv)
     if a.cmd == "login":
         login(a.user)
     elif a.cmd == "run":
-        run_tracking(a.match, a.videos.split(",") if a.videos else None, a.dry_run, not a.no_wait, a.hours, a.gpu, a.force)
+        run_tracking(a.match, a.videos.split(",") if a.videos else None, a.dry_run, not a.no_wait, a.hours, a.gpu, a.force, a.workers)
     elif a.cmd == "status":
-        print(kernel_status(f"{username()}/{kernel_slug(a.match)}"))
+        st = kernel_status(f"{username()}/{kernel_slug(a.match)}")
+        print(st)
+        if st == "sin respuesta":
+            print(f"Kaggle no respondió: sin red o la sesión venció (python -m sportsan.cloud.kaggle login --user {username()}).")
+    elif a.cmd == "logs":
+        # El registro completo, sin el recorte de la página de Kaggle; con --follow, en vivo.
+        subprocess.run([*kaggle_exe(), "kernels", "logs", *(["-f"] if a.follow else []), f"{username()}/{kernel_slug(a.match)}"], env=UTF8_ENV)
     else:
         pull(a.match, a.force)
 

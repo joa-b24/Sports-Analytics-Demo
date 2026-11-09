@@ -17,8 +17,11 @@ export function FilePicker({
   onFile,
   current,
   describe,
+  warn,
+  flag,
   primary = false,
   title,
+  subdirs = [],
 }: {
   // Folder, repository-relative: "matches/<carpeta>/tracking".
   dir: string;
@@ -31,8 +34,14 @@ export function FilePicker({
   current?: string | null;
   // Text shown for each file instead of its name.
   describe?: (name: string) => string;
+  // Warning of a file (e.g. «Cambios sin guardar»): an amber dot with the text for screen readers; null: none.
+  warn?: (name: string) => string | null;
+  // Same warning on the button itself, when some part (maybe not the open one) has it.
+  flag?: string | null;
   primary?: boolean;
   title?: string;
+  // Subfolders listed too (their files show as "subfolder/name").
+  subdirs?: string[];
 }) {
   const [names, setNames] = useState<string[] | null>(null);
   const [open, setOpen] = useState(false);
@@ -41,11 +50,21 @@ export function FilePicker({
   const fileInput = useRef<HTMLInputElement>(null);
   // By its text: a regular expression written inline is a new object on every render.
   const source = pattern.source;
+  const subKey = subdirs.join("|");
   const refresh = useCallback(async () => {
     const files = await listLocal(dir);
     const re = new RegExp(source);
-    setNames(files ? files.filter((f) => !f.dir && re.test(f.name)).map((f) => f.name).sort(byNumber) : null);
-  }, [dir, source]);
+    if (!files) return setNames(null);
+    const own = files.filter((f) => !f.dir && re.test(f.name)).map((f) => f.name).sort(byNumber);
+    const extra: string[] = [];
+    for (const sd of subKey ? subKey.split("|") : []) {
+      // A nested path («revision/quick») needs its first folder to be there.
+      if (!files.some((f) => f.dir && f.name === sd.split("/")[0])) continue;
+      const inner = (await listLocal(`${dir}/${sd}`)) ?? [];
+      extra.push(...inner.filter((f) => !f.dir && re.test(f.name)).map((f) => `${sd}/${f.name}`).sort(byNumber));
+    }
+    setNames([...own, ...extra]);
+  }, [dir, source, subKey]);
   useEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => {
@@ -87,6 +106,12 @@ export function FilePicker({
       >
         {icon}
         {busy ? "Cargando…" : label}
+        {flag && (
+          <span className="flex items-center" title={flag}>
+            <span className="h-2 w-2 rounded-full bg-warn" aria-hidden />
+            <span className="sr-only">{flag}</span>
+          </span>
+        )}
         <CaretDown size={12} className={`opacity-70 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
       </button>
       <input
@@ -131,6 +156,13 @@ export function FilePicker({
                   >
                     <span className="grid w-3.5 shrink-0 place-items-center">{n === current && <Check size={12} weight="bold" />}</span>
                     <span className="tc min-w-0 flex-1 truncate">{describe ? describe(n) : n}</span>
+                    {warn?.(n) && (
+                      <span className="flex shrink-0 items-center gap-1 text-[10px] text-warn" title={warn(n) ?? ""}>
+                        <span className="h-2 w-2 rounded-full bg-warn" aria-hidden />
+                        <span className="sr-only">{warn(n)}</span>
+                        <span aria-hidden>sin guardar</span>
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>

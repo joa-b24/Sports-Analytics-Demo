@@ -95,6 +95,37 @@ test("a short excursion of a few points is taken out; a real change of place is 
   assert.equal(dropJumps(away, O).removed, 0);
 });
 
+test("an excursion of 0.7 s to another player and back is taken out (it was kept with the old 0.5 s)", () => {
+  const pts = run(0, 20, 20, 2);
+  // 7 positions (0.7 s) on the feet of a player 6 m in front, then back on her way.
+  for (let k = 6; k <= 12; k++) pts[k] = pt(k * 3, 20 + (2 * k * 3) / 30, 36);
+  const { points, removed } = dropJumps(pts, O);
+  assert.equal(removed, 7);
+  assert.ok(points.every((p) => p.y === 30));
+  assert.equal(dropJumps(pts, { ...O, excursionS: 0.5 }).removed, 0);
+});
+
+test("a real sprint or curve of 0.7 s is not an excursion", () => {
+  // Jogging, a curve at 7 m/s for 0.7 s (every step possible), and jogging again from where she got to.
+  const curve = [...run(0, 6, 20, 2)];
+  let x = curve[5].x;
+  let y = 30;
+  for (let i = 1; i <= 7; i++) {
+    x += 0.5;
+    y += 0.5;
+    curve.push(pt(15 + i * 3, x, y));
+  }
+  curve.push(...run(15 + 8 * 3, 6, x + 0.2, 2).map((p) => ({ ...p, y })));
+  assert.equal(dropJumps(curve, O).removed, 0);
+});
+
+test("a hand-marked position inside a long excursion is never removed", () => {
+  const pts = run(0, 20, 20, 2);
+  for (let k = 6; k <= 12; k++) pts[k] = pt(k * 3, 20 + (2 * k * 3) / 30, 36, k === 9 ? "manual" : "auto");
+  const { points } = dropJumps(pts, O);
+  assert.ok(points.some((p) => p.frame === 27 && p.source === "manual"));
+});
+
 test("open holes: only those the export cannot fill", () => {
   const o = { fps: 30, stride: 3, metersPerUnit: [1, 1], ...SMOOTH_DEFAULTS };
   const p = (frame, x) => ({ frame, x, y: 30, source: "auto" });
@@ -103,4 +134,43 @@ test("open holes: only those the export cannot fill", () => {
   const gaps = [[0, 30], [60, 90], [120, 210]];
   assert.deepEqual(openGaps(pts, gaps, o), [[60, 90], [120, 210]]);
   assert.deepEqual(openGaps(pts, gaps, null), gaps);
+});
+
+test("canBridge: the rule of fillGaps (at most 2 s and 9 m/s)", async () => {
+  const { canBridge } = await import("./smooth.ts");
+  assert.equal(canBridge(2.5, 0.2), false);
+  assert.equal(canBridge(1.5, 0.2), true);
+  assert.equal(canBridge(10, 2), true);
+  assert.equal(canBridge(5, 2.5), false);
+  assert.equal(canBridge(0, 0), false);
+});
+
+test("withGapIgnore: la jugadora con huecos ignorados rellena hasta ese largo; las demás no", async () => {
+  const { withGapIgnore } = await import("./smooth.ts");
+  const o = { maxFillS: 2, maxSpeedMs: 9 };
+  assert.equal(withGapIgnore(o, { 7: 3.5 }, 7).maxFillS, 3.5);
+  assert.equal(withGapIgnore(o, { 7: 3.5 }, 8), o);
+  assert.equal(withGapIgnore(o, { 7: 1 }, 7), o);
+  assert.equal(withGapIgnore(o, undefined, 7), o);
+});
+
+test("un corte marcado: no se rellena, no se suaviza ni se cuenta como salto a través de él", () => {
+  // 30 fps, procesa 1 de cada 3; la jugadora salta 40 m en el corte del cuadro 30.
+  const o = { fps: 30, stride: 3, metersPerUnit: [1, 1], ...SMOOTH_DEFAULTS, maxFillS: Infinity, cuts: [{ from: 30, to: 29, kind: "cut" }] };
+  const pts = [];
+  for (let f = 0; f < 30; f += 3) pts.push({ frame: f, x: 10, y: 30, source: "auto" });
+  for (let f = 30; f < 60; f += 3) pts.push({ frame: f, x: 50, y: 30, source: "auto" });
+  const r = smoothTrack(pts, o);
+  assert.equal(r.points.length, pts.length);
+  assert.equal(r.report.filled, 0);
+  assert.equal(r.report.outliers, 0);
+});
+
+test("congelado: las posiciones repetidas se descartan", () => {
+  const o = { fps: 30, stride: 3, metersPerUnit: [1, 1], ...SMOOTH_DEFAULTS, maxFillS: Infinity, cuts: [{ from: 12, to: 20, kind: "freeze" }] };
+  const pts = [];
+  for (let f = 0; f < 40; f += 3) pts.push({ frame: f, x: 10 + f * 0.01, y: 30, source: "auto" });
+  const r = smoothTrack(pts, o);
+  assert.ok(r.points.every((p) => p.frame < 12 || p.frame > 20));
+  assert.equal(r.report.filled, 0);
 });

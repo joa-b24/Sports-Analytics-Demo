@@ -1,0 +1,22 @@
+match_id: 2026_09_25_ucg_vs_u_interamericana
+kind: rival                       # own = partido nuestro; rival = scouting; reference = referencia
+date: "2026-09-25"
+own_team_name: "UCG"
+other_team_name: "U. Interamericana"
+analysis_stride: 3
+
+venue:
+  name: "Campo UCG"
+
+# Un partido puede venir en varios videos. t_video es el tiempo dentro de cada video.
+videos:
+  - video_id: v1
+    label: "Partido completo"
+    youtube_id: "ILZOxsD5B5I"
+    file: video/v1.mp4
+    fps: 30
+    # Marcador y logo del canal (píxeles de este video, 1280 x 720): ni la calibración ni la detección miran ahí.
+    mask: [[20, 25, 670, 78], [1138, 36, 1247, 130]]
+
+# Colores de camiseta para asignar equipos en el tracking (elegidos en la app)
+jersey_colors: {own: "#1b88f8", own_gk: "#dd62a1", opp: "#bb3735", opp_gk: "#eda463"}

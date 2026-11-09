@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .schema import validate_ball, validate_events, validate_tracking
+from .schema import validate_ball, validate_events, validate_possession, validate_tracking
 
 
 def _read(path: str | Path, pattern: str) -> pd.DataFrame:
@@ -28,3 +28,16 @@ def load_ball(path: str | Path) -> pd.DataFrame:
 
 def load_events(path: str | Path) -> pd.DataFrame:
     return validate_events(_read(path, "events*.parquet"))
+
+
+def load_possession(path: str | Path) -> pd.DataFrame:
+    """possession_<video_id>.csv (o una carpeta con varios) escrito por la app."""
+    path = Path(path)
+    files = sorted(path.glob("possession_*.csv")) if path.is_dir() else [path]
+    if not files:
+        raise FileNotFoundError(f"No hay archivos possession_*.csv en {path}")
+    df = pd.concat(
+        [pd.read_csv(f, dtype={"video_id": str, "segment_id": str, "first_player": str, "last_player": str, "flags": str}) for f in files],
+        ignore_index=True,
+    )
+    return validate_possession(df)

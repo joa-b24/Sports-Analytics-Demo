@@ -33,6 +33,7 @@ from .geometry import (
     homography_at,
     label_for,
     pitch_to_image,
+    player_bodies,
     project,
     resolve,
     reveal_count,
@@ -46,7 +47,12 @@ PROFILES = {
 VIDEO_EXT = (".mp4", ".mkv", ".webm", ".mov")
 
 # Colores de los dibujos (los del tema oscuro de la app, en BGR) y de la cancha y las fichas del pizarrón.
-DRAW_BGR = {"accent": (255, 200, 184), "warn": (88, 164, 224), "danger": (138, 128, 240), "ok": (151, 207, 111), "ink": (237, 233, 233)}
+DRAW_BGR = {
+    "accent": (255, 192, 169), "warn": (88, 164, 224), "danger": (138, 128, 240), "ok": (138, 195, 76), "ink": (240, 242, 242),
+    "own": (255, 102, 58), "opp": (77, 154, 255),
+    # Mezclas de la paleta de la app (lib/palette.ts): violeta, turquesa y naranja.
+    "violet": (178, 138, 202), "teal": (140, 190, 116), "orange": (111, 134, 232),
+}
 BOARD_BGR = {"bg": (38, 24, 22), "pitch": (46, 30, 27), "line": (108, 93, 89), "own": (255, 149, 120), "opp": (99, 154, 243), "ball": (254, 245, 243), "token_text": (38, 24, 22)}
 FONT_FILES = ("arialbd.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf")
 
@@ -111,40 +117,79 @@ def _dashed(cv2, img, pts: np.ndarray, color, width: int, dash: float, gap: floa
     return img
 
 
-def draw_items(img: np.ndarray, items: list[Projected], scale: float = 1.0) -> np.ndarray:
-    """Dibuja sobre un cuadro BGR lo que da `project` (píxeles de la calibración; `scale` los lleva al cuadro)."""
+def _is_hex(v) -> bool:
+    return isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v) is not None
+
+
+def color_bgr(name, overrides: dict | None = None) -> tuple[int, int, int]:
+    """BGR de un color de dibujo: un «#rrggbb» libre, o una casilla de la paleta (con los cambios de la analista)."""
+    v = name if _is_hex(name) else (overrides or {}).get(name)
+    if _is_hex(v):
+        return int(v[5:7], 16), int(v[3:5], 16), int(v[1:3], 16)
+    return DRAW_BGR.get(name, DRAW_BGR["accent"])
+
+
+def draw_items(img: np.ndarray, items: list[Projected], scale: float = 1.0, palette: dict | None = None,
+               bodies: list | None = None) -> np.ndarray:
+    """Dibuja sobre un cuadro BGR lo que da `project` (píxeles de la calibración; `scale` los lleva al cuadro).
+
+    Como en la app, los dibujos llevan una sombra suave y las jugadoras (`bodies`, cajas en píxeles de la calibración)
+    quedan por delante: el dibujo se recorta ahí. Los rótulos van siempre encima, legibles.
+    """
     import cv2
 
-    h = img.shape[0]
+    h, w = img.shape[:2]
     k = h / 1080
     width = max(1, round(DRAW_PX["stroke"] * k))
+    layer = np.zeros(img.shape, np.uint8)
+    alpha = np.zeros((h, w), np.float32)
+
+    def stamp(draw, color, a: float):
+        mask = np.zeros((h, w), np.uint8)
+        draw(mask)
+        m = mask.astype(np.float32) / 255 * a
+        layer[mask > 0] = color
+        np.maximum(alpha, m, out=alpha)
+
     texts = []
     for d in items:
-        color = DRAW_BGR.get(d.style.get("color"), DRAW_BGR["accent"])
+        color = color_bgr(d.style.get("color"), palette)
         dashed = bool(d.style.get("dashed"))
         for path in d.paths:
             pts = np.asarray(path, float) * scale
+            poly = np.round(pts).astype(np.int32)
             if d.closed:
-                over = img.copy()
-                cv2.fillPoly(over, [np.round(pts).astype(np.int32)], color, cv2.LINE_AA)
-                alpha = 0.22 if d.kind == "zone" else 0.12
-                img = cv2.addWeighted(over, alpha, img, 1 - alpha, 0)
+                stamp(lambda m, poly=poly: cv2.fillPoly(m, [poly], 255, cv2.LINE_AA), color, 0.22 if d.kind == "zone" else 0.12)
             if dashed:
-                img = _dashed(cv2, img, pts, color, width, 14 * k, 10 * k, d.closed)
+                stamp(lambda m, pts=pts, d=d: _dashed(cv2, m, pts, 255, width, 14 * k, 10 * k, d.closed), color, 1.0)
             else:
-                cv2.polylines(img, [np.round(pts).astype(np.int32)], d.closed, color, width, cv2.LINE_AA)
+                stamp(lambda m, poly=poly, d=d: cv2.polylines(m, [poly], d.closed, 255, width, cv2.LINE_AA), color, 1.0)
         if d.head:
-            cv2.fillPoly(img, [np.round(np.asarray(d.head, float) * scale).astype(np.int32)], color, cv2.LINE_AA)
+            head = np.round(np.asarray(d.head, float) * scale).astype(np.int32)
+            stamp(lambda m, head=head: cv2.fillPoly(m, [head], 255, cv2.LINE_AA), color, 1.0)
         if d.text:
             (x, y), value = d.text
-            texts.append(((x * scale, y * scale), value, color, DRAW_PX["text" if d.kind == "text" else "label"] * k))
+            texts.append(((x * scale, y * scale), value, color, DRAW_PX["text" if d.kind == "text" else "label"] * k,
+                          {"start": "ls", "end": "rs"}.get(getattr(d, "anchor", "middle"), "ms")))
+    if alpha.any():
+        cut = np.ones((h, w), np.float32)
+        for bx, by, bw, bh in bodies or []:
+            cv2.rectangle(cut, (round((bx) * scale), round(by * scale)), (round((bx + bw) * scale), round((by + bh) * scale)), 0, -1)
+        # La sombra: el dibujo corrido hacia abajo y desenfocado (feDropShadow de la app: dy 4, desvío 3, opacidad 0.45).
+        shift = round(4 * k)
+        shadow = np.zeros_like(alpha)
+        shadow[shift:] = alpha[: h - shift] if shift else alpha
+        shadow = cv2.GaussianBlur(shadow, (0, 0), max(0.5, 3 * k)) * 0.45 * cut
+        img = (img.astype(np.float32) * (1 - shadow[:, :, None])).astype(np.uint8)
+        a = (alpha * cut)[:, :, None]
+        img = (img.astype(np.float32) * (1 - a) + layer.astype(np.float32) * a).round().astype(np.uint8)
     if texts:
         from PIL import Image, ImageDraw
 
         pil = Image.fromarray(img[:, :, ::-1])
         dr = ImageDraw.Draw(pil)
-        for (x, y), value, color, size in texts:
-            dr.text((x, y), value, font=_font(max(8, round(size))), fill=tuple(reversed(color)), anchor="ms",
+        for (x, y), value, color, size, anchor in texts:
+            dr.text((x, y), value, font=_font(max(8, round(size))), fill=tuple(reversed(color)), anchor=anchor,
                     stroke_width=max(1, round(DRAW_PX["outline"] * k)), stroke_fill=(0, 0, 0))
         img = np.ascontiguousarray(np.asarray(pil)[:, :, ::-1])
     return img
@@ -280,6 +325,8 @@ def render_edit(edit_path: Path, profile: str = "charla", force: bool = False) -
     image = (snap["image_w"], snap["image_h"]) if snap else size
     scale = size[0] / image[0]
     plan = frame_plan(edit, fps)
+    side = edit.get("label_side")
+    hidden = {str(x) for x in edit.get("hidden_labels") or []}
     if not snap:
         print("aviso: sin calibración guardada ni en la carpeta; solo sale el texto en pantalla")
 
@@ -288,8 +335,9 @@ def render_edit(edit_path: Path, profile: str = "charla", force: bool = False) -
             shown = reveal_count(stop, elapsed) if stop else 0
             rs = drawings_at(edit, t_video, position_of, stop, shown)
             to = pitch_to_image(homography_at(snap["homographies"], src, h_gap(snap)), snap["venue"]) if snap else None
-            items = [p for r in rs if (p := project(r, to, image, lambda i: label_for(i, mode, snap))) is not None]
-            yield draw_items(reader.get(src).copy(), items, scale)
+            items = [p for r in rs if (p := project(r, to, image, lambda i: label_for(i, mode, snap), side=side, hidden=hidden)) is not None]
+            bodies = player_bodies(snap, position_of, to, t_video) if snap else []
+            yield draw_items(reader.get(src).copy(), items, scale, palette=edit.get("palette"), bodies=bodies)
 
     _encode(frames(), size, fps, profile, out)
     print(f"listo: {out} ({len(plan)} cuadros, {len(plan) / fps:.1f} s)")

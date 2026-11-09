@@ -1,5 +1,6 @@
 // Mirror of docs/data_contract.md (events) plus the web-only tables (matches, plays, sessions, boards).
 import type { Annotation, ClipEdit } from "./annotations.ts";
+import type { Deck } from "./deck.ts";
 
 export type Team = "own" | "opp" | "ref" | "unk";
 
@@ -22,6 +23,10 @@ export const EVENT_TYPES = [
   "cross",
   // Optional (2026-10-17): only tagged in the matches where the duels map is wanted.
   "duel",
+  // 2026-10-19: offside, with the team that commits it.
+  "offside",
+  // 2026-10-20: substitution; player_id leaves, player_in comes in.
+  "substitution",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -42,6 +47,8 @@ export const EVENT_LABELS: Record<EventType, string> = {
   goal_kick: "Saque de meta",
   cross: "Centro",
   duel: "Duelo",
+  offside: "Fuera de lugar",
+  substitution: "Cambio",
 };
 
 // Keyboard shortcut for each event type in the tagging tool: a letter that recalls its Spanish name.
@@ -63,6 +70,8 @@ export const EVENT_KEYS: Record<EventType, string> = {
   goal_kick: "m",
   cross: "c",
   duel: "d",
+  offside: "q",
+  substitution: "h",
 };
 
 // Second datum of an event, by type. Same values as EVENT_OUTCOMES / EVENT_DETAILS in schema.py.
@@ -80,12 +89,16 @@ export const EVENT_DETAILS: Partial<Record<EventType, Record<string, string>>> =
   goal_kick: { short: "En corto", long: "En largo" },
   recovery: { forward: "Pase adelante", backward: "Pase atrás" },
   duel: { aerial: "Aéreo", ground: "En el suelo" },
+  foul: { yellow: "Amarilla", red: "Roja" },
+  shot: { saved: "Atajada" },
 };
 export const DETAIL_TITLES: Partial<Record<EventType, string>> = {
   corner: "Envío",
   goal_kick: "Salida",
   recovery: "Primer pase",
   duel: "Tipo",
+  foul: "Tarjeta",
+  shot: "Portera",
 };
 // Keys for the options of the last tagged event, in order.
 export const OUTCOME_KEYS = ["1", "2", "3"];
@@ -127,6 +140,11 @@ export interface Report {
   results_manual?: ManualResult[];
   // The table of touches by player goes into the printout only when the analyst says so.
   print_touches?: boolean;
+  // Which team the sections after «General» describe (2026-10-19): usually the analysed one.
+  focus?: "own" | "opp";
+  // The sections of the report, in order, by id (REPORT_SECTIONS in lib/reportSections.ts). Absent: the default
+  // layout. A section left out is not shown; a section without data hides itself anyway.
+  sections?: string[];
 }
 
 export const EMPTY_REPORT: Report = {
@@ -140,6 +158,7 @@ export const EMPTY_REPORT: Report = {
   jornada: "",
   results_manual: [],
   print_touches: false,
+  focus: "own",
 };
 
 // One video of a match. Times in events, plays and segment marks are times inside their own video.
@@ -149,6 +168,16 @@ export interface MatchVideo {
   label: string;
   // Half of the match this video belongs to (a half can come in several videos). Absent = first video 1, others 2.
   period?: 1 | 2;
+  // «Partido completo»: this single video holds both halves. The four marks (seconds inside this video) say where each
+  // half starts and ends; kept here, not in segments.csv. Absent: the video is one half (`period`). See lib/videos.ts.
+  full?: FullVideoMarks;
+}
+
+export interface FullVideoMarks {
+  h1_start?: number;
+  h1_end?: number;
+  h2_start?: number;
+  h2_end?: number;
 }
 
 export interface Match {
@@ -168,7 +197,41 @@ export interface Match {
   // Venue of the match (lib/venue.ts), chosen in its calibration.
   venue_id?: string;
   report: Report;
+  // Possession read from the followed ball, in seconds, kept when the report is built (the match list shows it without
+  // reading the tracking files). Absent until the report of a match with the ball followed is opened.
+  possession?: {
+    own: number;
+    opp: number;
+    followed_s: number;
+    // Of the time the game was alive: the share credited to a team, and the share that is a measured contact
+    // (lib/possession.ts summarizePossession). Absent in matches saved before: the figure then has no coverage to show.
+    coverage?: number | null;
+    contact_coverage?: number | null;
+  };
+  // Technical details of the match (Configuración del partido > Detalles técnicos, lib/tech.ts): only the parameters the
+  // analyst changed; the rest are the defaults. Part of the backup with the rest of the match.
+  tech?: {
+    possession?: Partial<Record<string, number | boolean>>;
+    // Parameters of the event detectors (lib/eventDetect.ts), only what the analyst changed.
+    events?: Partial<Record<string, number | boolean>>;
+    // Event types whose detection the analyst accepted: they are created by themselves as «automático» suggestions.
+    autoEvents?: string[];
+    // Parameters of the tracking tools (fill, green gaps, ball confidence, search strip, g key): lib/tech.ts TRACKING_FIELDS.
+    tracking?: Partial<Record<string, number | boolean>>;
+    // Download by itself the videos of this match that have a link but no file in its folder (app on this computer only).
+    // Absent = on; false = off (lib/downloads.ts autoDownloadOn).
+    autoDownload?: boolean;
+  };
+  // Penalty shootout after a draw (lib/shootout.ts), in kick order. Absent: none.
+  shootout?: ShootoutKick[];
   is_demo?: boolean;
+}
+
+// One kick of a penalty shootout: not a match event (it comes after the match).
+export interface ShootoutKick {
+  team: "own" | "opp";
+  player_id: string | null;
+  result: "goal" | "saved" | "missed";
 }
 
 export interface MatchEvent {
@@ -188,11 +251,16 @@ export interface MatchEvent {
   detail?: string | null;
   note: string | null;
   // Where it ended (third tagging pass). Crosses and corners: where the ball landed, on the pitch.
+  // Substitutions: who comes in (player_id is who leaves). Absent or null in every other type.
+  player_in?: string | null;
   x_end?: number | null;
   y_end?: number | null;
   // Shots: where the ball crossed the goal line seen from the shooter, meters from the left post and height.
   goal_y?: number | null;
   goal_z?: number | null;
+  // Created by itself from the detection of its type (Match.tech.autoEvents): the lists label it «automático». App only:
+  // not a column of the data contract nor of events CSV (EVENT_COLUMNS).
+  auto?: boolean;
 }
 
 export interface Keyframe {
@@ -273,6 +341,10 @@ export interface AnchorPoint {
   landmark_id: string;
   px: number;
   py: number;
+  // Model position, for points that are not a landmark of the venue: a click on an arc or a line taken to the nearest
+  // point of its circle or line in the fit (ids `arc:...`, `ln:...`).
+  x_m?: number;
+  y_m?: number;
 }
 
 // Manual calibration of one frame. The homography is not stored: it is recomputed from the points.
@@ -285,7 +357,13 @@ export interface CalibAnchor {
   t_video: number;
   image_w: number;
   image_h: number;
+  // Clicked points, plus the points computed from `lines` (ids `ix:...`, lib/calibLines.ts) so that whoever reads the
+  // anchors file (sportsan.tracking.propagate) gets them as any other point.
   points: AnchorPoint[];
+  // Lines of the pitch marked on the frame (two pixels each and the line of the model). Absent in older anchors.
+  lines?: { line_id: string; a: [number, number]; b: [number, number] }[];
+  // Clicks along a circle of the pitch (centre circle, penalty arcs), fitted together with points and lines.
+  arcs?: { arc_id: "center" | "pen_l" | "pen_r"; pts: [number, number][] }[];
 }
 
 // Same values as the `tipo` column of segments.csv in the data contract.
@@ -322,13 +400,57 @@ export interface VenueSpec {
   // Centre of the football field relative to the centre of the soccer pitch.
   grid_dx_m?: number;
   grid_dy_m?: number;
+  // Soccer markings when they are not the regulation ones (m). Absent: regulation (lib/venue.ts SOCCER_DEFAULTS).
+  box_depth_m?: number;
+  box_width_m?: number;
+  goal_area_depth_m?: number;
+  goal_area_width_m?: number;
+  penalty_spot_m?: number;
+  circle_r_m?: number;
+  // Width of the American football field between its sidelines (m). Absent: 53 1/3 yd.
+  football_width_m?: number;
   // Paint colours, used in the venue diagrams.
   soccer_color: string;
   grid_color: string;
+  // Goal mouth measured on an image or by hand (m). Absent: not measured (shown as missing, never the regulation size).
+  goal_width_m?: number;
+  goal_height_m?: number;
+  // Extra drawings in venue meters (lib/venueFit.ts): straight lines (mowing lines, other paint) and mowing stripes.
+  // Extra straight lines for calibrating by lines (lib/calibLines.ts) where the paint is worn: parallel to the
+  // sidelines ("along", at y = at_m) or to the goal lines ("across", at x = at_m), in meters from the far-left corner
+  // of the soccer pitch. For instance, where the grass ends, 1 m beyond the far sideline: along, -1.
+  ref_lines?: { id: string; label: string; axis: "along" | "across"; at_m: number }[];
+  layers?: (
+    | { id: string; kind: "line"; color: string; pts: [number, number][] }
+    | { id: string; kind: "stripes"; color: string; axis: "across" | "along"; width_m: number; offset_m: number }
+  )[];
+  // Reference groups (lib/venueFit.ts REFERENCE_GROUPS) checked by eye against an image of the venue.
+  checked?: string[];
 }
 
 // The person's corrections to the automatic tracks of one processed part (lib/tracks.ts). The file with the
 // detections is never changed: these edits are applied on top of it.
+// One suggestion of the tramos file (lib/anchors.ts TramoSuggestion) accepted by the «seguras» batch: the piece of `track`
+// (frames inclusive) went to `person`; `prev` is the identity it had before (so it can go back).
+export interface AutoAccepted {
+  key: string;
+  person: string;
+  track: number;
+  frame_ini: number;
+  frame_fin: number;
+  p: number;
+  cost: number;
+  prev: number;
+}
+
+// A break of the picture: a hard cut of the broadcast (`to` = `from` - 1, nothing in between) or a frozen stretch (positions
+// from `from` to `to` are repeats of the last real picture and are left out). Frames of the processed part.
+export interface CameraCut {
+  from: number;
+  to: number;
+  kind: "cut" | "freeze";
+}
+
 export interface TrackEdits {
   // `${match_id}|${video_id}|${start_frame}_${end_frame}` of the tracks file.
   key: string;
@@ -341,11 +463,21 @@ export interface TrackEdits {
   // From `frame` on, `track` is the new `identity`.
   splits: { track: number; frame: number; identity: number }[];
   // Feet position marked by hand (pixels) where the detector lost the person.
-  manual: { identity: number; frame: number; px: number; py: number }[];
+  // Marks of a stretch fitted from key frames (lib/feetKeys.ts) carry `fit` (stretch id) and `key` (true: clicked,
+  // false: interpolated); marks clicked one by one have neither.
+  manual: { identity: number; frame: number; px: number; py: number; key?: boolean; fit?: number }[];
   // Single boxes left out: the second box of a player who was detected twice in that frame. Absent in older edits.
   dropped?: { track: number; frame: number }[];
   // Ball marked by hand on the video (pixels), one per frame. Absent in older edits.
-  ball?: { frame: number; px: number; py: number }[];
+  // `aerial`: the mark is the projection (shadow) on the ground of a ball in the air, not the ball itself: nobody touches
+  // it there (docs/pautas_marcado_balon.md).
+  // `air`: the mark is on the ball itself while it flies (not on its shadow). It has no position on the pitch of its own: it
+  // is placed between the marks on the ground that come before and after it (lib/parts.ts manualBall); without both it stays NaN.
+  ball?: { frame: number; px: number; py: number; aerial?: boolean; air?: boolean }[];
+  // The ball is not visible from this frame (state "hidden": in play but out of frame or covered; «no se ve») or is
+  // out of the pitch with the game stopped (state "out": «fuera»), until the next ball mark or state mark. A hand mark in
+  // `ball` is the third state, «visible». Absent in older edits (everything visible).
+  ballStates?: { frame: number; state: "hidden" | "out" }[];
   // Two ball marks joined by a straight line whatever the time between them: a long pass or a ball in the air, marked
   // only where it leaves and where it lands.
   ballLinks?: { from: number; to: number }[];
@@ -357,6 +489,25 @@ export interface TrackEdits {
   ballRejected?: number[];
   // Ball review by samples: every how many seconds, and the sample frames already gone through (ball marked or not seen).
   ballReview?: { every: number; seen: number[] };
+  // Impossible movements the analyst looked at and found fine (anomalyKey of lib/anomalies.ts).
+  anomalyOk?: string[];
+  // Holes of a person shorter than this many seconds are not offered for review (by person id): for players far away who look
+  // tiny whose straight-line path is fine. Absent = the general limit.
+  gapIgnoreS?: Record<string, number>;
+  // Cuts of the broadcast / frozen picture marked by hand (lib/cameraCuts.ts). They are limits, not movement: nothing is joined,
+  // filled or measured across them.
+  cuts?: CameraCut[];
+  // Events suggested from the ball (lib/autoEvents.ts) rejected here, by suggestion id.
+  autoRejected?: string[];
+  // Anchors mode (lib/anchors.ts): doubts of links_<part>.json already resolved, by doubtKey. Absent in older edits.
+  anchorDoubts?: string[];
+  // Suggested joins accepted by themselves as «seguras» (lib/autoAccept.ts), so the list «Aceptadas automáticamente» can show
+  // and undo them one by one. Absent in older edits; «Empezar de cero» clears it.
+  autoAccepted?: AutoAccepted[];
+  // Splits of `splits` created by a fill by stretches (editsFromLinks, links with `segments`): «Empezar de cero» removes them.
+  linkSplits?: { track: number; frame: number }[];
+  // Double boxes of a player skipped in the table («Siguiente / saltar»), as "<identity>:<frame>" (lib/doubles.ts).
+  twiceSeen?: string[];
 }
 
 // A pass tagged by hand (pass 4 of the tagging): who to whom. to_id is null when it did not reach a teammate.
@@ -378,6 +529,13 @@ export interface RosterPlayer {
   number: number | null;
 }
 
+// A player of the other team, named in the quick review of the tracking. Her identity in the tracks is always
+// `R<number>`; the name is only shown.
+export interface RivalPlayer {
+  number: number;
+  name?: string;
+}
+
 export interface State {
   matches: Match[];
   events: MatchEvent[];
@@ -389,6 +547,8 @@ export interface State {
   trackEdits: TrackEdits[];
   // Our squad. Absent in backups made before it existed.
   roster: RosterPlayer[];
+  // Rival players named in the tracking, by the match id of the tracks files. Absent in older data.
+  rivals?: Record<string, RivalPlayer[]>;
   // Passes tagged by hand. Absent in backups made before they existed.
   passes: PassRow[];
   // Board plays. Absent in backups made before the board existed.
@@ -397,6 +557,33 @@ export interface State {
   edits: ClipEdit[];
   // Shirt colours by match_id of the match folder, as #rrggbb.
   jerseys: Record<string, { own: string; opp: string; ref: string; own_gk?: string; opp_gk?: string }>;
+  // Presentations of the matches (lib/deck.ts): charts of the analysis saved as slides. Absent before they existed.
+  decks?: Deck[];
+  // Comparison of two fills of one part, from a tab that no longer exists: only read by «Empezar de cero» (lib/reset.ts).
+  reviews?: PartReview[];
+}
+
+export type ReviewVersionId = "A" | "B";
+// One version of a part under comparison. The edits of the open version live in trackEdits; the other one's here.
+export interface ReviewVersion {
+  edits?: TrackEdits;
+  // Fill loaded (links file name) and whether it was the example made in the app.
+  loaded?: string;
+  example?: boolean;
+  // Edits right after «Resolver automático» (or the start of the verification): what is counted as work by hand.
+  checkpoint?: TrackEdits;
+  auto?: { doubts: string[]; byReason: Record<string, { boxes: number; doubts: number }> };
+  // Players verified by hand in this version.
+  verified?: string[];
+}
+export interface PartReview {
+  // Same key as the TrackEdits of the part.
+  key: string;
+  active: ReviewVersionId;
+  // The edits of the part before any fill was loaded: where both versions start.
+  base: TrackEdits;
+  A: ReviewVersion;
+  B: ReviewVersion;
 }
 
 export const PITCH = { length: 105, width: 68 };

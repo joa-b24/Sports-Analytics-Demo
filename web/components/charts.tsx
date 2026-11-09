@@ -57,6 +57,115 @@ export function StatTile({ label, a, b, aLabel, bLabel }: { label: string; a: nu
   );
 }
 
+// The head of the analysis: the score as the one big figure, and the other headline numbers in one compact row under it.
+export function ScoreStrip({
+  aLabel,
+  bLabel,
+  goals,
+  stats,
+}: {
+  aLabel: string;
+  bLabel: string;
+  goals: [number, number];
+  stats: { label: string; a: number; b: number }[];
+}) {
+  return (
+    <div className="rounded-2xl bg-surface/60 px-4 py-5 sm:px-6">
+      <div className="flex items-center justify-center gap-3 sm:gap-7">
+        <span className="min-w-0 flex-1 truncate text-right text-sm font-semibold sm:text-base" style={{ color: COLORS.own }}>
+          {aLabel}
+        </span>
+        <span className="num text-6xl leading-none" style={{ color: COLORS.own }}>
+          <CountUp value={goals[0]} />
+        </span>
+        <span className="text-2xl text-faint">–</span>
+        <span className="num text-6xl leading-none" style={{ color: COLORS.opp }}>
+          <CountUp value={goals[1]} />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold sm:text-base" style={{ color: COLORS.opp }}>
+          {bLabel}
+        </span>
+      </div>
+      {stats.length > 0 && (
+        <div className="mt-5 grid auto-cols-fr grid-flow-col gap-x-5 overflow-x-auto border-t border-line-soft pt-4">
+          {stats.map((s) => {
+            const total = s.a + s.b;
+            return (
+              <div key={s.label} className="min-w-[4.5rem]" title={`${s.label} · ${aLabel}: ${s.a} · ${bLabel}: ${s.b}`}>
+                <div className="truncate text-center text-[11px] text-muted">{s.label}</div>
+                <div className="mt-1 flex items-baseline justify-center gap-1.5">
+                  <span className="num text-2xl" style={{ color: COLORS.own }}>
+                    {s.a}
+                  </span>
+                  <span className="text-xs text-faint">|</span>
+                  <span className="num text-2xl" style={{ color: COLORS.opp }}>
+                    {s.b}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex h-[3px] gap-0.5 overflow-hidden rounded-full">
+                  {total === 0 ? (
+                    <span className="h-full w-full bg-line-soft" />
+                  ) : (
+                    <>
+                      <span className="h-full rounded-full" style={{ width: `${(s.a / total) * 100}%`, background: COLORS.own }} />
+                      <span className="h-full flex-1 rounded-full" style={{ background: COLORS.opp }} />
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Momentum: the threat each team creates minute by minute. One team grows above the middle line, the other below.
+export function MomentumChart({ points, aLabel, bLabel }: { points: { min: number; own: number; opp: number }[]; aLabel: string; bLabel: string }) {
+  if (points.length < 2) return <p className="text-sm text-faint">Faltan eventos de ataque (tiros, goles, entradas, córners) para dibujar el momentum.</p>;
+  const W = 640;
+  const H = 190;
+  const padX = 8;
+  const mid = H / 2 - 6;
+  const maxV = Math.max(1, ...points.flatMap((p) => [p.own, p.opp]));
+  const k = (mid - 14) / maxV;
+  const last = points[points.length - 1].min;
+  const x = (m: number) => padX + (m / Math.max(1, last)) * (W - 2 * padX);
+  const area = (get: (p: (typeof points)[number]) => number, dir: 1 | -1) =>
+    `M${x(points[0].min)},${mid} ` + points.map((p) => `L${x(p.min).toFixed(1)},${(mid - dir * get(p) * k).toFixed(1)}`).join(" ") + ` L${x(last)},${mid} Z`;
+  const ticks: number[] = [];
+  for (let m = 0; m <= last; m += last > 60 ? 15 : 10) ticks.push(m);
+  return (
+    <div>
+      <Legend
+        items={[
+          { color: COLORS.own, label: aLabel },
+          { color: COLORS.opp, label: bLabel },
+        ]}
+      />
+      <svg viewBox={`0 0 ${W} ${H}`} className="mt-3 w-full" role="img" aria-label={`Momentum de ${aLabel} y ${bLabel} minuto a minuto`}>
+        <path d={area((p) => p.own, 1)} fill={COLORS.own} fillOpacity={0.55} stroke={COLORS.own} strokeWidth={1.5} strokeLinejoin="round" />
+        <path d={area((p) => p.opp, -1)} fill={COLORS.opp} fillOpacity={0.55} stroke={COLORS.opp} strokeWidth={1.5} strokeLinejoin="round" />
+        <line x1={padX} x2={W - padX} y1={mid} y2={mid} stroke="var(--color-line)" strokeWidth={1} />
+        {ticks.map((m) => (
+          <g key={m}>
+            <line x1={x(m)} x2={x(m)} y1={mid - 3} y2={mid + 3} stroke="var(--color-faint)" strokeWidth={1} />
+            <text x={x(m)} y={H - 6} textAnchor="middle" fontSize={10} fill="var(--color-faint)">
+              {m}′
+            </text>
+          </g>
+        ))}
+        {points.map((p) => (
+          <rect key={p.min} x={x(p.min) - (W - 2 * padX) / Math.max(1, last) / 2} y={0} width={(W - 2 * padX) / Math.max(1, last)} height={H} fill="transparent">
+            <title>{`${p.min}′ · ${aLabel}: ${p.own} · ${bLabel}: ${p.opp}`}</title>
+          </rect>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 // Paired horizontal bars: one row per category, two teams on a shared scale.
 export function CompareBars({
   rows,
@@ -99,8 +208,48 @@ export function CompareBars({
   );
 }
 
+// Match-sheet comparison: the label in the middle, each team's bar growing outwards from it, its figure at the end.
+// Each row has its own scale (the larger of the two fills its side): it compares the teams, not the rows.
+export function MirrorBars({ rows, aLabel, bLabel }: { rows: { label: string; a: number; b: number; fmt?: (v: number) => string }[]; aLabel: string; bLabel: string }) {
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between text-xs text-muted">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLORS.own }} />
+          {aLabel}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          {bLabel}
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLORS.opp }} />
+        </span>
+      </div>
+      <div className="space-y-2">
+        {rows.map((r, n) => {
+          const max = Math.max(r.a, r.b, 1e-9);
+          const f = r.fmt ?? String;
+          const lead = (v: number, o: number) => (v > o ? "text-ink font-semibold" : "text-muted");
+          return (
+            <div key={r.label} className="grid grid-cols-[2.75rem_minmax(0,1fr)_minmax(6.5rem,9rem)_minmax(0,1fr)_2.75rem] items-center gap-2" title={`${r.label} · ${aLabel}: ${f(r.a)} · ${bLabel}: ${f(r.b)}`}>
+              <span className={`num text-right text-base ${lead(r.a, r.b)}`}>{f(r.a)}</span>
+              <div className="flex h-2 justify-end">
+                <div className="a-bar h-full rounded-l-[4px]" style={{ width: `${(100 * r.a) / max}%`, minWidth: r.a > 0 ? 3 : 0, background: COLORS.own, transformOrigin: "right center", ...i(n) }} />
+              </div>
+              <span className="text-center text-xs leading-tight text-ink-2">{r.label}</span>
+              <div className="flex h-2">
+                <div className="a-bar h-full rounded-r-[4px]" style={{ width: `${(100 * r.b) / max}%`, minWidth: r.b > 0 ? 3 : 0, background: COLORS.opp, ...i(n) }} />
+              </div>
+              <span className={`num text-base ${lead(r.b, r.a)}`}>{f(r.b)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Shots on the pitch: filled = goal, hollow = no goal. Colour = team.
-export function ShotMap({ events, aLabel, bLabel }: { events: MatchEvent[]; aLabel: string; bLabel: string }) {
+// `onPick`: a click (or Enter) on a mark, to play that moment under the panel.
+export function ShotMap({ events, aLabel, bLabel, onPick }: { events: MatchEvent[]; aLabel: string; bLabel: string; onPick?: (e: MatchEvent) => void }) {
   // One mark per finish: a goal tagged together with its shot (and its penalty) is drawn once.
   const all = finishEvents(events);
   const shots = all.filter((e) => e.x !== null && e.y !== null);
@@ -129,8 +278,23 @@ export function ShotMap({ events, aLabel, bLabel }: { events: MatchEvent[]; aLab
               fill={e.type === "goal" ? c : "var(--color-surface)"}
               stroke={c}
               strokeWidth={0.55}
+              {...(onPick
+                ? {
+                    role: "button",
+                    tabIndex: 0,
+                    "aria-label": `Ver el video: ${EVENT_LABELS[e.type]}, ${e.team === "own" ? aLabel : bLabel}`,
+                    cursor: "pointer",
+                    onClick: () => onPick(e),
+                    onKeyDown: (k: React.KeyboardEvent) => {
+                      if (k.key === "Enter" || k.key === " ") {
+                        k.preventDefault();
+                        onPick(e);
+                      }
+                    },
+                  }
+                : {})}
             >
-              <title>{`${EVENT_LABELS[e.type]} · ${e.team === "own" ? aLabel : bLabel} · ${fmtT(e.t_video)}`}</title>
+              <title>{`${EVENT_LABELS[e.type]} · ${e.team === "own" ? aLabel : bLabel} · ${fmtT(e.t_video)}${onPick ? " · clic para ver el video" : ""}`}</title>
             </circle>
           );
         })}

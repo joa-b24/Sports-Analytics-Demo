@@ -21,6 +21,10 @@ EVENT_TYPES = (
     "final_third_entry", "box_entry", "goal_kick", "cross",
     # Opcional (2026-10-17): solo en los partidos donde se quiere el mapa de duelos
     "duel",
+    # 2026-10-19: fuera de lugar, con el equipo que lo comete (el de la jugadora adelantada)
+    "offside",
+    # 2026-10-20: cambio; player_id es quien sale y la columna opcional player_in quien entra
+    "substitution",
 )
 # Valores permitidos de `outcome` y `detail` por tipo de evento. Los dos son opcionales (nulos = no se anotó);
 # un tipo que no aparece aquí no admite ese campo.
@@ -37,6 +41,8 @@ EVENT_DETAILS = {
     "goal_kick": ("short", "long"),
     "recovery": ("forward", "backward"),      # primer pase tras recuperar
     "duel": ("aerial", "ground"),
+    "foul": ("yellow", "red"),                # tarjeta
+    "shot": ("saved",),                       # tiro a puerta que atajó la portera (no se anota si lo sacó otra)
 }
 
 # Dónde acabó la acción (2026-10-14). Columnas opcionales: si faltan o van vacías, no se anotó.
@@ -49,7 +55,9 @@ GOAL_TYPES = ("shot", "goal", "free_kick", "penalty")
 GOAL_WIDTH_M = 7.32
 GOAL_HEIGHT_M = 2.44
 GOAL_MARGIN_M = 5.0  # hasta dónde se admite un tiro fuera alrededor de la portería
-OPTIONAL_EVENT_COLUMNS = ["x_end", "y_end", "goal_y", "goal_z"]
+OPTIONAL_EVENT_COLUMNS = ["x_end", "y_end", "goal_y", "goal_z", "player_in"]
+# player_in (2026-10-20): quien entra en un cambio (`substitution`); en otros tipos va vacía.
+PLAYER_IN_TYPES = ("substitution",)
 
 TRACKING_COLUMNS = [
     "match_id", "segment_id", "frame", "t_local", "t_video",
@@ -77,6 +85,13 @@ EVENT_COLUMNS = [
 PASS_COLUMNS = ["pass_id", "match_id", "video_id", "t_video", "period", "team", "from_id", "to_id", "outcome"]
 PASS_TEAMS = ("own", "opp")
 PASS_OUTCOMES = ("complete", "incomplete")
+
+# Posesión derivada (2026-10-25): possession_<video_id>.csv, la escribe la app (web/lib/possession.ts) desde tracks_fixed_*.
+# Una fila por intervalo; sin solapes dentro de un video_id. `flags` es texto separado por comas.
+POSSESSION_COLUMNS = ["video_id", "segment_id", "t_start", "t_end", "team", "first_player", "last_player", "kind", "flags"]
+POSSESSION_TEAMS = ("own", "opp", "none")
+POSSESSION_KINDS = ("control", "contested", "loose", "dead", "unknown")
+_POSSESSION_EPS_S = 1e-6
 
 
 class SchemaError(ValueError):
@@ -148,6 +163,28 @@ def validate_passes(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def validate_possession(df: pd.DataFrame) -> pd.DataFrame:
+    _require(df, POSSESSION_COLUMNS, "possession")
+    for column in ("video_id", "segment_id"):
+        if df[column].isna().any() or (df[column].astype(str).str.strip() == "").any():
+            raise SchemaError(f"possession: {column} no puede ir vacío")
+    if df[["t_start", "t_end"]].isna().any().any():
+        raise SchemaError("possession: t_start y t_end no pueden ir vacíos")
+    if not df["team"].isin(POSSESSION_TEAMS).all():
+        raise SchemaError(f"possession: team inválido; permitidos {POSSESSION_TEAMS}")
+    if not df["kind"].isin(POSSESSION_KINDS).all():
+        raise SchemaError(f"possession: kind inválido; permitidos {POSSESSION_KINDS}")
+    if (df["t_start"] < 0).any():
+        raise SchemaError("possession: t_start no puede ser negativo")
+    if (df["t_end"] <= df["t_start"]).any():
+        raise SchemaError("possession: t_end debe ser mayor que t_start")
+    for video_id, g in df.groupby("video_id"):
+        g = g.sort_values("t_start")
+        if (g["t_start"].to_numpy()[1:] < g["t_end"].to_numpy()[:-1] - _POSSESSION_EPS_S).any():
+            raise SchemaError(f"possession: intervalos solapados en {video_id}")
+    return df
+
+
 def validate_events(df: pd.DataFrame) -> pd.DataFrame:
     _require(df, EVENT_COLUMNS, "events")
     if df["event_id"].duplicated().any():
@@ -167,6 +204,12 @@ def validate_events(df: pd.DataFrame) -> pd.DataFrame:
         bad = [(t, v) for t, v in zip(filled["type"], filled[column]) if v not in allowed.get(t, ())]
         if bad:
             raise SchemaError(f"events: {column} inválido para su tipo: {sorted(set(bad))}; permitidos {allowed}")
+    saved = df[(df["type"] == "shot") & (df["detail"].fillna("") == "saved")]
+    if (saved["outcome"].fillna("") != "on_target").any():
+        raise SchemaError("events: un tiro atajado (detail=saved) tiene que ir a puerta (outcome=on_target)")
+    subs = df[df["type"] == "substitution"]
+    if subs[["x", "y"]].notna().any().any():
+        raise SchemaError("events: un cambio (substitution) no lleva posición (x, y vacías)")
     _check_in_pitch(df, "events")
     for columns, types in ((("x_end", "y_end"), END_TYPES), (("goal_y", "goal_z"), GOAL_TYPES)):
         present = [c for c in columns if c in df.columns]
@@ -180,6 +223,10 @@ def validate_events(df: pd.DataFrame) -> pd.DataFrame:
         wrong = sorted(set(filled["type"]) - set(types))
         if wrong:
             raise SchemaError(f"events: {columns[0]}/{columns[1]} solo para {types}; aparecen en {wrong}")
+    if "player_in" in df.columns:
+        wrong = sorted(set(df[df["player_in"].notna()]["type"]) - set(PLAYER_IN_TYPES))
+        if wrong:
+            raise SchemaError(f"events: player_in solo para {PLAYER_IN_TYPES}; aparece en {wrong}")
     if all(c in df.columns for c in ("x_end", "y_end")):
         _check_in_pitch(df[["x_end", "y_end"]].rename(columns={"x_end": "x", "y_end": "y"}), "events (destino)")
     if all(c in df.columns for c in ("goal_y", "goal_z")):

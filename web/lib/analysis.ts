@@ -330,3 +330,54 @@ export function timeBins(events: MatchEvent[], segments: Segment[], binMin: numb
   }
   return { bins, basis: hasPlay ? "juego" : "video", skipped };
 }
+
+// Momentum: how much threat each team creates around every minute of play. Every event adds a weight (a goal counts more
+// than an entry to the last third) and the weights are summed in a sliding window, so the curve rises when a team keeps
+// arriving and falls when it stops. Only the events with a team; the same clock as timeBins (minutes of play when the
+// stretches are marked, else minutes of video since the first event).
+export const MOMENTUM_WEIGHTS: Partial<Record<MatchEvent["type"], number>> = {
+  goal: 5,
+  shot: 3,
+  box_entry: 2,
+  final_third_entry: 1,
+  corner: 1,
+  cross: 1,
+};
+
+export interface Momentum {
+  // One point per minute: the threat of each team in the window around it.
+  points: { min: number; own: number; opp: number }[];
+  basis: "juego" | "video";
+  skipped: number;
+  windowMin: number;
+}
+
+export function momentum(events: MatchEvent[], segments: Segment[], windowMin = 5): Momentum {
+  const hasPlay = segments.some((s) => s.tipo === "juego");
+  const t0 = events.length ? Math.min(...events.map((e) => e.t_video)) : 0;
+  const hits: { min: number; team: "own" | "opp"; w: number }[] = [];
+  let skipped = 0;
+  for (const e of events) {
+    const w = MOMENTUM_WEIGHTS[e.type];
+    if (!w || (e.team !== "own" && e.team !== "opp")) continue;
+    const t = hasPlay ? playTime(segments, e.t_video) : e.t_video - t0;
+    if (t === null) {
+      skipped++;
+      continue;
+    }
+    hits.push({ min: t / 60, team: e.team, w });
+  }
+  const last = hits.length ? Math.ceil(Math.max(...hits.map((h) => h.min))) : 0;
+  const points: Momentum["points"] = [];
+  for (let m = 0; m <= last; m++) {
+    let own = 0;
+    let opp = 0;
+    for (const h of hits) {
+      if (Math.abs(h.min - m) > windowMin / 2) continue;
+      if (h.team === "own") own += h.w;
+      else opp += h.w;
+    }
+    points.push({ min: m, own, opp });
+  }
+  return { points, basis: hasPlay ? "juego" : "video", skipped, windowMin };
+}

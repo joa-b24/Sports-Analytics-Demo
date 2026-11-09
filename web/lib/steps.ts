@@ -1,3 +1,4 @@
+import { videoFileOf } from "./downloads.ts";
 import { hasCorrections } from "./parts.ts";
 import type { Segment } from "./segments.ts";
 import { missingEnd, missingReview } from "./tagging.ts";
@@ -12,16 +13,20 @@ export interface StepStatus {
   state: StepState;
   text: string;
 }
-export type StepId = "calibration" | "segments" | "tracking" | "tag" | "plays" | "analysis" | "report";
+export type StepId = "calibration" | "segments" | "tracking" | "ball" | "tag" | "plays" | "board" | "analysis" | "report";
 
 // What is in the folder of the match (app/api/local), when it can be read.
 export interface FolderFiles {
   // File names in tracking/.
   tracking: string[];
+  // File names in video/ (absent: not listed, so a missing video is not reported).
+  video?: string[];
 }
 
 export interface StepInput {
   videoIds: string[];
+  // Videos registered with a link (YouTube): the ones that must have a file in video/ (lib/downloads.ts).
+  linked?: string[];
   folder?: string;
   venueId?: string;
   segmentsByVideo: Record<string, Segment[]>;
@@ -29,6 +34,8 @@ export interface StepInput {
   plays: Play[];
   trackEdits: TrackEdits[];
   files: FolderFiles | null;
+  // Plays on the board (the board is not tied to a match: all of them).
+  boards?: number;
 }
 
 const fmtMin = (s: number) => `${Math.round(s / 60)} min`;
@@ -41,6 +48,9 @@ export function matchSteps(i: StepInput): Record<StepId, StepStatus> {
   const withPlay = i.videoIds.filter((v) => play(v).length > 0).length;
   const names = i.files?.tracking ?? [];
   const noFolder = !i.folder;
+  // Registered videos whose file is not in the folder: calibration and tracking need the file, YouTube is not enough.
+  const lacking = i.files?.video ? (i.linked ?? []).filter((v) => !videoFileOf(i.files?.video, v)) : [];
+  const noVideo = (st: StepStatus): StepStatus => (lacking.length ? { ...st, text: `${st.text} · falta el video${lacking.length > 1 ? ` (${lacking.join(", ")})` : ""}` } : st);
 
   // Calibration: one library per video (built from a calibrated sweep).
   const libs = i.videoIds.filter((v) => names.includes(`library_${v}.npz`)).length;
@@ -79,6 +89,13 @@ export function matchSteps(i: StepInput): Record<StepId, StepStatus> {
           text: `${parts.length} parte(s)${stretches ? ` de ${stretches} tramos` : ""} · ${corrected} corregida(s)${unsaved ? ` · ${unsaved} sin guardar` : ""}`,
         };
 
+  // Ball: processed parts with the ball marked by hand (in the correction table).
+  const withBall = i.trackEdits.filter((e) => keys.has(e.key) && ((e.ball?.length ?? 0) > 0 || (e.ballReview?.seen.length ?? 0) > 0)).length;
+  const ball: StepStatus =
+    parts.length === 0
+      ? { state: "optional", text: "necesita tracking" }
+      : { state: withBall === parts.length ? "done" : withBall > 0 ? "partial" : "todo", text: `${of(withBall, parts.length)} partes con balón` };
+
   const toReview = i.events.filter((e) => missingReview(e).length > 0).length;
   const withEnd = i.events.filter((e) => missingEnd(e) !== null);
   const toEnd = withEnd.filter((e) => missingEnd(e)).length;
@@ -96,6 +113,8 @@ export function matchSteps(i: StepInput): Record<StepId, StepStatus> {
       ? { state: "optional", text: "ninguna marcada" }
       : { state: animated === i.plays.length ? "done" : "partial", text: `${of(animated, i.plays.length)} animadas` };
 
+  const board: StepStatus = i.boards ? { state: "done", text: `${i.boards} jugada(s)` } : { state: "optional", text: "sin jugadas" };
+
   const metrics = i.videoIds.filter((v) => names.includes(`team_metrics_${v}.json`)).length;
   const analysis: StepStatus =
     i.events.length === 0
@@ -103,5 +122,5 @@ export function matchSteps(i: StepInput): Record<StepId, StepStatus> {
       : { state: "done", text: metrics ? "con forma del equipo" : "con eventos" };
   const report: StepStatus = i.events.length === 0 ? { state: "todo", text: "necesita eventos" } : { state: "done", text: "listo para imprimir" };
 
-  return { calibration, segments, tracking, tag, plays, analysis, report };
+  return { calibration: noVideo(calibration), segments, tracking: noVideo(tracking), ball, tag, plays, board, analysis, report };
 }

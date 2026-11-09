@@ -3,7 +3,9 @@
 //
 // Everything here only counts what the camera saw: a player out of frame is not absent, just not seen. Positions
 // filled inside short holes ("interpolated") are left out of the counts; they are not measurements.
+import { isExtrapolated, isMeasuredSource } from "./smooth.ts";
 import { boxTeamOf, fileTeamRefs, type TracksFile } from "./tracks.ts";
+import { ballJumpFrames, viewPolygon, type BallStateRange } from "./parts.ts";
 import type { Segment } from "./segments.ts";
 import { laneThirdOf } from "./stats.ts";
 import { PITCH, type MatchEvent } from "./types.ts";
@@ -28,8 +30,14 @@ export interface FixedFile {
   // Real size of the venue (m). Absent in files saved before 2026-10-16: then the loader takes it from match.yaml.
   venue?: { length_m: number; width_m: number } | null;
   people: { id: number; team: FixedTeam; player_id: string | null; tracks: number[] }[];
-  ball: { frame: number; x: number; y: number; source: string }[];
-  frames: { frame: number; positions: FixedPosition[] }[];
+  ball: { frame: number; x: number; y: number; source: string; aerial?: boolean; air?: boolean; lift?: number }[];
+  // Stretches marked «no se ve» / «fuera» by hand (parts.ts ballStateRanges). Absent in files saved before 2026-10-27: all visible.
+  ball_states?: BallStateRange[];
+  // Cuts of the broadcast / frozen pictures marked by hand (cameraCuts.ts). Absent in older files: none.
+  camera_cuts?: { from: number; to: number; kind: "cut" | "freeze" }[];
+  // `view`: what the camera saw in that frame, as a polygon of the normalised pitch (parts.ts viewPolygon). Absent in
+  // files saved before 2026-10-20.
+  frames: { frame: number; positions: FixedPosition[]; view?: [number, number][] }[];
 }
 
 export const fixedName = (videoId: string) => new RegExp(`^tracks_fixed_${videoId}_\\d+_\\d+\\.json$`);
@@ -53,6 +61,7 @@ export function autoFixed(t: TracksFile): FixedFile {
   const teamOf = new Map<number, FixedTeam>();
   const frames = t.frames.map((fr) => ({
     frame: fr.frame,
+    ...((v) => (v ? { view: v } : {}))(viewPolygon(t, fr.H)),
     positions: fr.boxes.flatMap((b) => {
       if (!b[11] || b[9] === null || b[10] === null) return [];
       const team = boxTeamOf(b, refs);
@@ -94,7 +103,7 @@ export function inferOwnAttacksRight(files: FixedFile | FixedFile[]): boolean | 
     for (const fr of f.frames)
       for (const q of fr.positions) {
         const t = team.get(q.id);
-        if ((t === "own" || t === "opp") && q.source !== "interpolated") {
+        if ((t === "own" || t === "opp") && isMeasuredSource(q.source)) {
           sum[t] += q.x;
           n[t] += 1;
         }
@@ -138,7 +147,7 @@ export function heatmap(parts: Oriented[], team: "own" | "opp", playerId: string
     const keep = new Set(o.file.people.filter((p) => p.team === team && (playerId === null || p.player_id === playerId)).map((p) => p.id));
     for (const fr of o.file.frames)
       for (const q of fr.positions) {
-        if (!keep.has(q.id) || q.source === "interpolated") continue;
+        if (!keep.has(q.id) || !isMeasuredSource(q.source)) continue;
         const [x, y] = orient(o, q.x, q.y);
         const i = Math.min(nx - 1, Math.max(0, Math.floor((x / PITCH.length) * nx)));
         const j = Math.min(ny - 1, Math.max(0, Math.floor((y / PITCH.width) * ny)));
@@ -147,6 +156,43 @@ export function heatmap(parts: Oriented[], team: "own" | "opp", playerId: string
       }
   }
   return { nx, ny, seconds, total };
+}
+
+// Smooths a heat map with a Gaussian blur (sigma in cells), so a fine grid reads as a surface and not as squares.
+// Cells near the edge are divided by the weight of the kernel that fits, so they do not look colder than the rest.
+// The total is kept as it was (the blur only moves time around).
+export function smoothHeat(h: Heat, sigma = 1.3): Heat {
+  if (sigma <= 0) return h;
+  const r = Math.max(1, Math.ceil(sigma * 3));
+  const k: number[] = [];
+  for (let d = -r; d <= r; d++) k.push(Math.exp(-(d * d) / (2 * sigma * sigma)));
+  const pass = (src: number[], nx: number, ny: number, horizontal: boolean) => {
+    const out = new Array(nx * ny).fill(0);
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        let acc = 0;
+        let w = 0;
+        for (let d = -r; d <= r; d++) {
+          const a = horizontal ? i + d : i;
+          const b = horizontal ? j : j + d;
+          if (a < 0 || a >= nx || b < 0 || b >= ny) continue;
+          acc += src[b * nx + a] * k[d + r];
+          w += k[d + r];
+        }
+        out[j * nx + i] = acc / w;
+      }
+    return out;
+  };
+  const blurred = pass(pass(h.seconds, h.nx, h.ny, true), h.nx, h.ny, false);
+  const sum = blurred.reduce((a, b) => a + b, 0);
+  const have = h.seconds.reduce((a, b) => a + b, 0);
+  const scale = sum > 0 ? have / sum : 1;
+  return { ...h, seconds: blurred.map((v) => v * scale) };
+}
+
+// The heat map as the screens draw it: a 42 x 28 grid (2.5 m cells) smoothed.
+export function heatmapSmooth(parts: Oriented[], team: "own" | "opp", playerId: string | null = null): Heat {
+  return smoothHeat(heatmap(parts, team, playerId, 42, 28));
 }
 
 // Named players of a team across the parts (names come from the correction table), by time seen.
@@ -158,7 +204,7 @@ export function namedPlayers(parts: Oriented[], team: "own" | "opp"): { name: st
     for (const fr of o.file.frames)
       for (const q of fr.positions) {
         const n = name.get(q.id);
-        if (n && q.source !== "interpolated") out.set(n, (out.get(n) ?? 0) + dt);
+        if (n && isMeasuredSource(q.source)) out.set(n, (out.get(n) ?? 0) + dt);
       }
   }
   return [...out].map(([name, seconds]) => ({ name, seconds })).sort((a, b) => b.seconds - a.seconds);
@@ -200,7 +246,7 @@ export function unnamedLeftovers(f: FixedFile): Leftover[] {
   for (const fr of f.frames)
     for (const q of fr.positions) {
       const p = person.get(q.id);
-      if (!p || (p.team !== "own" && p.team !== "opp") || q.source === "interpolated") continue;
+      if (!p || (p.team !== "own" && p.team !== "opp") || !isMeasuredSource(q.source)) continue;
       seen[p.team]++;
       if (p.player_id) {
         named[p.team]++;
@@ -222,27 +268,82 @@ export function unnamedLeftovers(f: FixedFile): Leftover[] {
 //     near that line, and nobody cut it. Touches come from where the ball was marked by hand or from a tagged event;
 //   - a player at an interpolated position (a short hole filled in) was not seen there, so she is not a candidate;
 //   - leftovers without a name (unnamedLeftovers) are not candidates either.
-export function touches(f: FixedFile): Touch[] {
-  return ballStates(f).flatMap((s) => (s.touch ? [s.touch] : []));
+export function touches(f: FixedFile, jumpMs?: number): Touch[] {
+  return ballStates(f, jumpMs).flatMap((s) => (s.touch ? [s.touch] : []));
+}
+
+// A person near the ball, as seen by the rule that says who has it.
+export interface HolderCand {
+  id: number;
+  team: FixedTeam;
+  d: number; // meters to the ball
+  x: number;
+  y: number;
+  // A person without a name of a team that is named in the part (unnamedLeftovers).
+  leftover: boolean;
+  // Position filled in a hole (not measured).
+  interp: boolean;
+}
+// A box this close (m) to a nearer person that cannot take the ball is taken as her duplicate box (a second box on the
+// same player), not as somebody else in the way.
+export const DUPLICATE_BOX_M = 1;
+// Rivals this much farther than the nearest one (m) make the ball contested.
+export const CONTEST_MARGIN_M = 0.5;
+
+export type HolderDecision<T extends HolderCand = HolderCand> =
+  | { kind: "touch"; cand: T }
+  // `a` is the nearest, `b` the nearest of the other team (within CONTEST_MARGIN_M of `a`).
+  | { kind: "contested"; a: T; b: T }
+  // The nearest person is a referee, someone with no team or a leftover without a name: nobody can be credited, and the
+  // ball is NOT passed on to the next-nearest player (that would hand it to whoever happens to stand a bit farther).
+  | { kind: "blocked"; cand: T }
+  | { kind: "free" };
+
+const canHold = (c: HolderCand) => (c.team === "own" || c.team === "opp") && !c.leftover;
+
+// Who has the ball among the people within `controlM`: the nearest one, unless
+//   - she cannot hold it (blocked, see above), unless a person who can stands within DUPLICATE_BOX_M of her (then she
+//     is a duplicate box of that player and is ignored);
+//   - a player of the other team is within CONTEST_MARGIN_M of the same distance (contested).
+export function decideHolder<T extends HolderCand>(cands: T[], controlM = POSSESS_M, contestM = CONTEST_MARGIN_M): HolderDecision<T> {
+  const near = cands.filter((c) => c.d <= controlM).sort((a, b) => a.d - b.d);
+  const ok = near.filter(canHold);
+  let first: T | null = null;
+  for (const c of near) {
+    if (canHold(c)) {
+      first = c;
+      break;
+    }
+    if (!ok.some((o) => Math.hypot(o.x - c.x, o.y - c.y) <= DUPLICATE_BOX_M)) return { kind: "blocked", cand: c };
+  }
+  if (!first) return { kind: "free" };
+  const rival = ok.find((c) => c.team !== first.team);
+  return rival && rival.d - first.d < contestM ? { kind: "contested", a: first, b: rival } : { kind: "touch", cand: first };
 }
 
 // What the ball is doing at each known position: held (a touch), contested (players of both teams about as near),
-// or free (nobody near enough). `followed`: a hand mark, or a position joined to one by less than BALL_FILL_S (the
-// time counted as "ball followed"); positions taken only from tagged events, far from any mark, are not.
+// blocked (the nearest person cannot hold it), or free (nobody near enough). `followed`: a hand mark, or a position
+// joined to one by less than BALL_FILL_S (the time counted as "ball followed"); positions taken only from tagged
+// events, far from any mark, are not. `jump`: a tracker position that is part of an impossible jump (never a touch).
 export interface BallState {
   frame: number;
   source: string;
   followed: boolean;
   touch: Touch | null;
   contested: boolean;
+  blocked: boolean;
+  jump: boolean;
 }
 // Same as BALL_FILL_S in parts.ts (not imported: this module stays free of the drawing code).
 const FOLLOW_S = 3;
 
-export function ballStates(f: FixedFile): BallState[] {
+// `jumpMs`: Detalles técnicos > salto máximo del balón (default BALL_JUMP_MS of parts.ts).
+export function ballStates(f: FixedFile, jumpMs?: number): BallState[] {
   const team = new Map(f.people.map((p) => [p.id, p.team]));
   const leftover = new Set(unnamedLeftovers(f).map((l) => l.id));
   const byFrame = new Map(f.frames.map((fr) => [fr.frame, fr.positions]));
+  const [mx, my] = metersPerUnit(f);
+  const jumps = ballJumpFrames(f.ball, f.fps, mx, my, undefined, jumpMs);
   // Followed: a hand mark or the ball tracker (precise), and what lies close to one of them.
   const manual = f.ball.filter((b) => b.source === "manual" || b.source === "auto").map((b) => b.frame).sort((x, y) => x - y);
   const nearManual = (frame: number) => {
@@ -259,23 +360,18 @@ export function ballStates(f: FixedFile): BallState[] {
   };
   const out: BallState[] = [];
   for (const b of [...f.ball].sort((x, y) => x.frame - y.frame)) {
-    const state: BallState = { frame: b.frame, source: b.source, followed: b.source === "manual" || b.source === "auto" || nearManual(b.frame), touch: null, contested: false };
+    const state: BallState = { frame: b.frame, source: b.source, followed: b.source === "manual" || b.source === "auto" || nearManual(b.frame), touch: null, contested: false, blocked: false, jump: jumps.has(b.frame) };
     out.push(state);
-    if (b.source === "interpolated") continue;
+    if (b.source === "interpolated" || b.aerial || state.jump) continue; // a ball in the air (its ground projection) is never touched
     const ps = byFrame.get(b.frame);
     if (!ps) continue;
-    const near = ps
-      .filter((q) => q.source !== "interpolated" && !leftover.has(q.id))
-      .map((q) => ({ q, t: team.get(q.id), d: realDistance(f, q.x, q.y, b.x, b.y) }))
-      .filter((c) => (c.t === "own" || c.t === "opp") && c.d <= POSSESS_M)
-      .sort((a, c) => a.d - c.d);
-    if (near.length === 0) continue;
-    const rival = near.find((c) => c.t !== near[0].t);
-    if (rival && rival.d - near[0].d < 0.5) {
-      state.contested = true;
-      continue;
-    }
-    state.touch = { frame: b.frame, id: near[0].q.id, team: near[0].t as "own" | "opp" };
+    const cands: HolderCand[] = ps
+      .filter((q) => isMeasuredSource(q.source))
+      .map((q) => ({ id: q.id, team: team.get(q.id) ?? "unk", d: realDistance(f, q.x, q.y, b.x, b.y), x: q.x * mx, y: q.y * my, leftover: leftover.has(q.id), interp: false }));
+    const dec = decideHolder(cands);
+    if (dec.kind === "touch") state.touch = { frame: b.frame, id: dec.cand.id, team: dec.cand.team as "own" | "opp" };
+    else if (dec.kind === "contested") state.contested = true;
+    else if (dec.kind === "blocked") state.blocked = true;
   }
   return out;
 }
@@ -286,6 +382,9 @@ export interface Pass {
   from: number;
   to: number;
   team: "own" | "opp";
+  // The team has no names in this part: the pass is read between two boxes of the team, so a change of fragment of
+  // the same player can pass for a pass. Counted at team level only, and shown as approximate.
+  approx: boolean;
 }
 export interface Turnover {
   frame: number; // when the other team first has it
@@ -294,18 +393,47 @@ export interface Turnover {
   lost: "own" | "opp";
 }
 
+// Two touches of one team closer in time than this are not a pass: it is the same player whose track changed fragment.
+export const MIN_PASS_GAP_S = 0.5;
+
+// Which teams are named in a part (more than NAMED_TEAM_MIN of their measured positions belong to a named person).
+export function namedTeams(f: FixedFile): { own: boolean; opp: boolean } {
+  const person = new Map(f.people.map((p) => [p.id, p]));
+  const seen = { own: 0, opp: 0 };
+  const named = { own: 0, opp: 0 };
+  for (const fr of f.frames)
+    for (const q of fr.positions) {
+      const p = person.get(q.id);
+      if (!p || (p.team !== "own" && p.team !== "opp") || !isMeasuredSource(q.source)) continue;
+      seen[p.team]++;
+      if (p.player_id) named[p.team]++;
+    }
+  return { own: seen.own > 0 && named.own / seen.own > NAMED_TEAM_MIN, opp: seen.opp > 0 && named.opp / seen.opp > NAMED_TEAM_MIN };
+}
+
 // Passes and changes of team from the sequence of holders. Only when the ball is followed: with no ball, nothing.
-export function passesAndTurnovers(f: FixedFile): { passes: Pass[]; turnovers: Turnover[]; touches: Touch[] } {
-  const ts = touches(f);
+// A pass needs at least MIN_PASS_GAP_S between its two touches. In a team with names both ends must have one (and be
+// two different players); in a team without names (the rival, usually) it is counted at team level and flagged `approx`.
+export function passesAndTurnovers(f: FixedFile, jumpMs?: number): { passes: Pass[]; turnovers: Turnover[]; touches: Touch[] } {
+  const ts = touches(f, jumpMs);
   const passes: Pass[] = [];
   const turnovers: Turnover[] = [];
   const maxGap = PASS_MAX_S * f.fps;
+  const person = new Map(f.people.map((p) => [p.id, p]));
+  const named = namedTeams(f);
   for (let i = 1; i < ts.length; i++) {
     const a = ts[i - 1];
     const b = ts[i];
     if (a.id === b.id || b.frame - a.frame > maxGap) continue;
-    if (a.team === b.team) passes.push({ frame: b.frame, from_frame: a.frame, from: a.id, to: b.id, team: a.team });
-    else turnovers.push({ frame: b.frame, from_frame: a.frame, from: a.id, lost: a.team });
+    if (a.team === b.team) {
+      if (b.frame - a.frame < MIN_PASS_GAP_S * f.fps) continue;
+      if (named[a.team]) {
+        const na = person.get(a.id)?.player_id;
+        const nb = person.get(b.id)?.player_id;
+        if (!na || !nb || na === nb) continue;
+      }
+      passes.push({ frame: b.frame, from_frame: a.frame, from: a.id, to: b.id, team: a.team, approx: !named[a.team] });
+    } else turnovers.push({ frame: b.frame, from_frame: a.frame, from: a.id, lost: a.team });
   }
   return { passes, turnovers, touches: ts };
 }
@@ -321,15 +449,15 @@ export const CONFIRM_S = 2;
 export type PossessionState = "own" | "opp" | "unassigned";
 type Side = "own" | "opp";
 
-const inStretches = (play: Segment[] | null, t: number) => !play || play.some((g) => g.tipo === "juego" && g.end !== null && t >= g.start && t < g.end);
+export const inStretches = (play: Segment[] | null, t: number) => !play || play.some((g) => g.tipo === "juego" && g.end !== null && t >= g.start && t < g.end);
 
 // Who has the ball in each cell of followed ball, inside the closed play stretches (all of it when `play` is null).
 // A team keeps the ball from one of its touches until a touch of the other team, for at most PASS_MAX_S without a new
 // touch. A contested ball, a ball nobody has touched for longer, or a ball before the first touch is "unassigned":
 // never shared out between the teams.
-export function possessionCells(o: Oriented, play: Segment[] | null, cells: Map<string, PossessionState> = new Map()): Map<string, PossessionState> {
+export function possessionCells(o: Oriented, play: Segment[] | null, cells: Map<string, PossessionState> = new Map(), jumpMs?: number): Map<string, PossessionState> {
   const f = o.file;
-  const states = ballStates(f);
+  const states = ballStates(f, jumpMs);
   const step = Math.max(1, f.stride);
   let holder: Side | null = null;
   let since = -Infinity;
@@ -337,7 +465,7 @@ export function possessionCells(o: Oriented, play: Segment[] | null, cells: Map<
     if (st.touch) {
       holder = st.touch.team;
       since = st.frame;
-    } else if (st.contested) holder = null;
+    } else if (st.contested || st.blocked) holder = null;
     if (!st.followed) return;
     const t = st.frame / f.fps;
     if (!inStretches(play, t)) return;
@@ -354,6 +482,8 @@ export function possessionCells(o: Oriented, play: Segment[] | null, cells: Map<
 
 export interface TeamPasses {
   completed: number;
+  // Of the completed ones, those read in a part where the team has no names (approximate).
+  approx: number;
   // Passes cut: the other team had the ball within PASS_MAX_S of the last touch.
   cut: number;
   // By where the passer had the ball, seen by her team attacking right: thirds (own, middle, rival) and lanes (left
@@ -389,14 +519,16 @@ export interface BallReport {
   leftovers: { video_id: string; team: Side; t0: number; t1: number }[];
 }
 
-const emptyPasses = (): TeamPasses => ({ completed: 0, cut: 0, completed_by_third: [0, 0, 0], cut_by_third: [0, 0, 0], completed_by_lane: [0, 0, 0, 0, 0], cut_by_lane: [0, 0, 0, 0, 0] });
+const emptyPasses = (): TeamPasses => ({ completed: 0, approx: 0, cut: 0, completed_by_third: [0, 0, 0], cut_by_third: [0, 0, 0], completed_by_lane: [0, 0, 0, 0, 0], cut_by_lane: [0, 0, 0, 0, 0] });
 
 // Everything the report reads from the followed ball. `playByVideo`: the play stretches of each video; with none, all
 // the followed ball counts. `events` with their own video times.
-export function ballReport(parts: Oriented[], playByVideo: Record<string, Segment[]>, events: MatchEvent[]): BallReport {
+// `cells`: the possession already worked out (lib/possession.ts possessionCells, which joins the play stretches and
+// carries flags); without it, the touch-by-touch reading of this module (possessionCells above) is used.
+export function ballReport(parts: Oriented[], playByVideo: Record<string, Segment[]>, events: MatchEvent[], cellsIn?: Map<string, PossessionState>): BallReport {
   const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
   const playOf = (v: string) => (usePlay ? (playByVideo[v] ?? []) : null);
-  const cells = new Map<string, PossessionState>();
+  const cells = cellsIn ?? new Map<string, PossessionState>();
   const passes = { own: emptyPasses(), opp: emptyPasses() };
   const changes: ChangeRow[] = [];
   const players = new Map<string, PlayerTouches>();
@@ -405,7 +537,7 @@ export function ballReport(parts: Oriented[], playByVideo: Record<string, Segmen
   for (const o of parts) {
     const f = o.file;
     const play = playOf(f.video_id);
-    possessionCells(o, play, cells);
+    if (!cellsIn) possessionCells(o, play, cells);
     const ballAt = new Map(f.ball.map((b) => [b.frame, b]));
     const zone = (frame: number, team: Side) => {
       const b = ballAt.get(frame);
@@ -419,6 +551,7 @@ export function ballReport(parts: Oriented[], playByVideo: Record<string, Segmen
       if (!inPlay(p.from_frame)) continue;
       const tp = passes[p.team];
       tp.completed++;
+      if (p.approx) tp.approx++;
       const z = zone(p.from_frame, p.team);
       if (z) {
         tp.completed_by_third[z.third]++;
@@ -511,7 +644,7 @@ export function passNetwork(parts: Oriented[], team: "own" | "opp", playByVideo:
     for (const fr of o.file.frames)
       for (const q of fr.positions) {
         const n = name.get(q.id);
-        if (!n || teamOf.get(q.id) !== team || q.source === "interpolated") continue;
+        if (!n || teamOf.get(q.id) !== team || !isMeasuredSource(q.source)) continue;
         const [x, y] = orient(o, q.x, q.y);
         const s = pos.get(n) ?? { x: 0, y: 0, n: 0 };
         pos.set(n, { x: s.x + x, y: s.y + y, n: s.n + 1 });
@@ -552,6 +685,39 @@ export function passNetwork(parts: Oriented[], team: "own" | "opp", playByVideo:
   };
 }
 
+export interface PassArrow {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  from: string | null; // passer's name
+  progressive: boolean; // gains at least PROGRESSIVE_M towards the rival goal
+}
+export const PROGRESSIVE_M = 10;
+
+// Every pass of a team read from the followed ball, from the passer (at her last touch) to the receiver (at her
+// first), with the team attacking right. A pass whose two ends are not in frame is left out.
+export function passArrows(parts: Oriented[], team: "own" | "opp", playByVideo: Record<string, Segment[]> = {}): PassArrow[] {
+  const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
+  const out: PassArrow[] = [];
+  for (const o of parts) {
+    const name = new Map(o.file.people.map((p) => [p.id, p.player_id]));
+    const [mx] = metersPerUnit(o.file);
+    const play = usePlay ? (playByVideo[o.file.video_id] ?? []) : null;
+    for (const p of passesAndTurnovers(o.file).passes) {
+      if (p.team !== team || !inStretches(play, p.from_frame / o.file.fps)) continue;
+      const a = positionsNear(o.file, p.from_frame)?.find((q) => q.id === p.from);
+      const b = positionsNear(o.file, p.frame)?.find((q) => q.id === p.to);
+      if (!a || !b) continue;
+      let [x1, y1] = orient(o, a.x, a.y);
+      let [x2, y2] = orient(o, b.x, b.y);
+      if (team === "opp") [x1, y1, x2, y2] = [PITCH.length - x1, PITCH.width - y1, PITCH.length - x2, PITCH.width - y2];
+      out.push({ x1, y1, x2, y2, from: name.get(p.from) ?? null, progressive: (x2 - x1) * mx >= PROGRESSIVE_M });
+    }
+  }
+  return out;
+}
+
 // --------------------------------------------------------------------------------------------- behind the ball
 
 export interface BehindBall {
@@ -588,7 +754,7 @@ export function behindBallAtLosses(parts: Oriented[], events: MatchEvent[]): Beh
     const count = (frame: number, ballX: number): { behind: number; seen: number } | null => {
       const ps = positionsNear(f, frame);
       if (!ps) return null;
-      const own = ps.filter((q) => team.get(q.id) === "own" && q.source !== "interpolated");
+      const own = ps.filter((q) => team.get(q.id) === "own" && isMeasuredSource(q.source));
       return { behind: own.filter((q) => orient(o, q.x, q.y)[0] < ballX).length, seen: own.length };
     };
     const ballAt = new Map(f.ball.map((b) => [b.frame, b]));
@@ -625,11 +791,14 @@ export interface Dot {
   label: string;
   x: number;
   y: number;
+  // Held still outside what was seen (source "extrapolated"): to be drawn dim, never measured.
+  extrapolated?: boolean;
 }
 
 // Measured positions at a moment of the video (t_video), joined linearly between the two processed frames around
-// it, with the analysed team attacking right. Ball too when it is known there. Null outside the part.
-export function positionsAt(o: Oriented, t: number): { players: Dot[]; ball: [number, number] | null } | null {
+// it, with the analysed team attacking right. Ball too when it is known there. Null outside the part. People held still
+// outside what was seen (extrapolated) are left out unless the caller draws them (`withExtrapolated`, flagged `extrapolated`).
+export function positionsAt(o: Oriented, t: number, opts: { withExtrapolated?: boolean } = {}): { players: Dot[]; ball: [number, number] | null; ballLift: number; view: [number, number][] | null } | null {
   const f = o.file;
   const at = t * f.fps;
   if (at < f.start_frame || at > f.end_frame || f.frames.length === 0) return null;
@@ -642,15 +811,19 @@ export function positionsAt(o: Oriented, t: number): { players: Dot[]; ball: [nu
   const people = new Map(f.people.map((p) => [p.id, p]));
   const players = a.positions.flatMap((q) => {
     const p = people.get(q.id);
-    if (!p) return [];
+    if (!p || (isExtrapolated(q.source) && !opts.withExtrapolated)) return [];
     const r = next.get(q.id) ?? q;
     const [x, y] = orient(o, q.x + (r.x - q.x) * w, q.y + (r.y - q.y) * w);
-    return [{ id: q.id, team: p.team, label: p.player_id ? p.player_id.slice(0, 3) : "", x, y }];
+    return [{ id: q.id, team: p.team, label: p.player_id ? p.player_id.slice(0, 3) : "", x, y, ...(isExtrapolated(q.source) ? { extrapolated: true } : {}) }];
   });
   const ba = f.ball.find((p) => p.frame === a.frame);
   const bb = f.ball.find((p) => p.frame === b.frame) ?? ba;
   const ball = ba && bb ? orient(o, ba.x + (bb.x - ba.x) * w, ba.y + (bb.y - ba.y) * w) : null;
-  return { players, ball };
+  const near = w < 0.5 ? a : b;
+  const view = near.view ? near.view.map(([x, y]) => orient(o, x, y)) : null;
+  // Height of the ball in a flight (m, an estimate for the animation); 0 on the ground.
+  const ballLift = ba && bb ? (ba.lift ?? 0) + ((bb.lift ?? 0) - (ba.lift ?? 0)) * w : 0;
+  return { players, ball, ballLift, view };
 }
 
 // The part that covers a stretch of a video, if any.
@@ -697,7 +870,7 @@ export function passStretches(parts: Oriented[], segmentsByVideo: Record<string,
           let a = 0;
           let b = 0;
           for (const q of fr.positions) {
-            if (q.source === "interpolated") continue;
+            if (!isMeasuredSource(q.source)) continue;
             const tm = team.get(q.id);
             if (tm === "own") a++;
             else if (tm === "opp") b++;
@@ -716,4 +889,23 @@ export function passStretches(parts: Oriented[], segmentsByVideo: Record<string,
     }
   }
   return out;
+}
+
+// ------------------------------------------------------------------------------------------- behind the ball: summary
+
+export interface BehindSummary {
+  n: number;
+  mean: number;
+  // Losses with at least REST_DEFENCE players behind the ball (the team was covered).
+  covered: number;
+  // Losses grouped by how many players were behind the ball, 0 up to the most seen; each one keeps its moment.
+  columns: { behind: number; items: BehindBall[] }[];
+}
+export const REST_DEFENCE = 4;
+
+export function behindSummary(rows: BehindBall[]): BehindSummary | null {
+  if (rows.length === 0) return null;
+  const top = Math.max(...rows.map((r) => r.behind));
+  const columns = Array.from({ length: top + 1 }, (_, behind) => ({ behind, items: rows.filter((r) => r.behind === behind) }));
+  return { n: rows.length, mean: rows.reduce((t, r) => t + r.behind, 0) / rows.length, covered: rows.filter((r) => r.behind >= REST_DEFENCE).length, columns };
 }

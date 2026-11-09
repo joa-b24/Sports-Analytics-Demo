@@ -38,8 +38,6 @@ const METRIC_LABELS: Record<string, string> = {
 };
 const label = (m: string) => METRIC_LABELS[m] ?? m;
 
-const EYEBROW = "Entrenamiento · sensores";
-const SUBTITLE = "Carga de trabajo por jugadora a partir de los datos de sensores (GPS, frecuencia cardiaca).";
 
 export default function Page() {
   const { sessions: stored } = useStore();
@@ -64,7 +62,7 @@ export default function Page() {
   if (sessions.length === 0) {
     return (
       <>
-        <PageHeader eyebrow={EYEBROW} title="Sesiones" subtitle={SUBTITLE} />
+        <PageHeader title="Sesiones" />
         <Card tone="hero" className="max-w-2xl">
           <h2 className="text-2xl text-ink">Aún no hay sesiones</h2>
           <p className="mt-2 text-sm text-muted">
@@ -95,7 +93,7 @@ export default function Page() {
 
   return (
     <>
-      <PageHeader eyebrow={EYEBROW} title="Sesiones" subtitle={SUBTITLE}>
+      <PageHeader title="Sesiones">
         {isDemo && <DemoBadge />}
         <label className="flex items-center gap-2 text-xs text-muted">
           Métrica

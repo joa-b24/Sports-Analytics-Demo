@@ -35,3 +35,33 @@ def test_renombrar(tmp_path):
         rename(tmp_path, "2026_10_11_ccm_vs_up", "mal nombre")
     with pytest.raises(ValueError):
         rename_in_yaml("match_id: otro\n", "viejo", "nuevo")
+
+
+def test_renombrar_todo_lo_que_lleva_el_nombre(tmp_path):
+    m = tmp_path / "matches"
+    d = m / "viejo"
+    for sub in ("tracking", "edits", "video"):
+        (d / sub).mkdir(parents=True)
+    (d / "match.yaml").write_text("match_id: viejo\n", encoding="utf-8")
+    (d / "tracking" / "anchors_viejo_v1.json").write_text(json.dumps({"match_id": "viejo", "anchors": []}), encoding="utf-8")
+    (d / "edits" / "edit_c1.json").write_text(json.dumps({"match_id": "viejo"}), encoding="utf-8")
+    (d / "report_viejo.json").write_text(json.dumps({"match_id": "viejo"}), encoding="utf-8")
+    (d / "video" / "v1_viejo.mp4").write_bytes(b"x")
+    (m / "videos.csv").write_text("match_id,video_id\nviejo,v1\nviejo_bis,v1\notro,v1\n", encoding="utf-8")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "project.yaml").write_text("default_match: viejo   # comentario\n", encoding="utf-8")
+
+    dry = rename(tmp_path, "viejo", "2026_10_11_ccm_vs_up", dry_run=True)
+    assert "videos.csv (1 fila(s))" in dry and d.exists()
+
+    rename(tmp_path, "viejo", "2026_10_11_ccm_vs_up")
+    n = m / "2026_10_11_ccm_vs_up"
+    a = n / "tracking" / "anchors_2026_10_11_ccm_vs_up_v1.json"
+    assert a.exists() and json.loads(a.read_text(encoding="utf-8"))["match_id"] == "2026_10_11_ccm_vs_up"
+    assert json.loads((n / "edits" / "edit_c1.json").read_text(encoding="utf-8"))["match_id"] == "2026_10_11_ccm_vs_up"
+    assert (n / "report_2026_10_11_ccm_vs_up.json").exists()
+    assert (n / "video" / "v1_viejo.mp4").exists()  # el video no se toca
+    assert (m / "videos.csv").read_text(encoding="utf-8") == "match_id,video_id\n2026_10_11_ccm_vs_up,v1\nviejo_bis,v1\notro,v1\n"
+    assert (tmp_path / "config" / "project.yaml").read_text(encoding="utf-8") == "default_match: 2026_10_11_ccm_vs_up   # comentario\n"
+    log = json.loads((m / "renames.json").read_text(encoding="utf-8"))
+    assert log[-1]["from"] == "viejo" and log[-1]["to"] == "2026_10_11_ccm_vs_up"

@@ -1,4 +1,4 @@
-import { END_TYPES, EVENT_OUTCOMES, GOAL_TYPES, type EventType, type MatchEvent, type Team } from "./types.ts";
+import { END_TYPES, EVENT_DETAILS, EVENT_OUTCOMES, GOAL_TYPES, type EventType, type MatchEvent, type Team } from "./types.ts";
 
 // Rules of the three tagging passes. Pure functions: no storage, no React.
 //   Pass 1: what happened (type and team), fast, while the video plays.
@@ -32,6 +32,8 @@ export function activeAt(events: MatchEvent[], t: number, span = ACTIVE_S): Matc
 // What pass 2 still has to fill in: the position, and the result for the types that have one.
 export function missingReview(e: MatchEvent): string[] {
   const out: string[] = [];
+  // A substitution has no place on the pitch; what it needs is who comes in.
+  if (e.type === "substitution") return e.player_in ? [] : ["quién entra"];
   if (e.x === null || e.y === null) out.push("posición");
   if (EVENT_OUTCOMES[e.type] && !e.outcome) out.push("resultado");
   return out;
@@ -44,6 +46,7 @@ export const endKind = (type: EventType): "goal" | "landing" | null =>
 // position (a shot keeps its spot on the goal if it becomes a penalty, not if it becomes a foul).
 export function retype(e: Pick<MatchEvent, "type">, type: EventType): Partial<MatchEvent> {
   const patch: Partial<MatchEvent> = { type, outcome: null, detail: null };
+  if (e.type === "substitution" && type !== "substitution") patch.player_in = null;
   if (endKind(type) !== endKind(e.type)) Object.assign(patch, { x_end: null, y_end: null, goal_y: null, goal_z: null });
   return patch;
 }
@@ -100,4 +103,20 @@ export function knownPlayers(events: MatchEvent[]): string[] {
   const count = new Map<string, number>();
   for (const e of events) if (e.player_id) count.set(e.player_id, (count.get(e.player_id) ?? 0) + 1);
   return [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([p]) => p);
+}
+
+// The details an event can take now: a shot is "saved" only when it went on target (a save is the goalkeeper's).
+export function detailsFor(e: Pick<MatchEvent, "type" | "outcome">): [string, string][] {
+  const all = Object.entries(EVENT_DETAILS[e.type] ?? {});
+  return e.type === "shot" && e.outcome !== "on_target" ? [] : all;
+}
+
+// Setting the result of an event: a shot that is no longer on target loses its save.
+export function outcomePatch(e: Pick<MatchEvent, "type" | "detail">, outcome: string | null): Partial<MatchEvent> {
+  return e.type === "shot" && outcome !== "on_target" && e.detail === "saved" ? { outcome, detail: null } : { outcome };
+}
+
+// The card of a foul, one click at a time: none, yellow, red, none again.
+export function nextCard(detail: string | null | undefined): "yellow" | "red" | null {
+  return detail === "yellow" ? "red" : detail === "red" ? null : "yellow";
 }

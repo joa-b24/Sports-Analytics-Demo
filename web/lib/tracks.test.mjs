@@ -406,3 +406,72 @@ test("a hole is off camera when she leaves or comes back at the edge of the imag
   assert.equal(offCamera(file, e, 1, [120, 210]), false);
 });
 
+
+// ---------------------------------------------------------------- unión rápida y tramos (2026-10-25)
+
+const synth = (pos, frames) => ({
+  match_id: "m", video_id: "v1", fps: 30, start_frame: 0, end_frame: 300, stride: 3, image_w: 1920, image_h: 1080, venue: { length_m: 105, width_m: 68 },
+  frames: frames.map((frame) => ({
+    frame, H: null,
+    boxes: Object.keys(pos).map(Number).filter((t) => pos[t](frame)).map((t) => [t, 800, 500, 840, 600, 0.9, 120, 128, 128, pos[t](frame)[0], pos[t](frame)[1], true, "own"]),
+  })),
+});
+const upto = (a, b) => Array.from({ length: Math.floor((b - a) / 3) + 1 }, (_, i) => a + i * 3);
+
+test("unión rápida: el hueco de una jugadora ofrece la pieza que cabe; se corta de quien la tiene en dos lados", async () => {
+  const { quickHoles, quickProgress, applyQuickJoin, holeKey } = await import("./quickJoin.ts");
+  // Ana (track 1) runs 0..30 and 60..90 with a 1 s hole between. Bea's identity (track 3) is far away except in the hole,
+  // where she sits on Ana's line (a wrong join that went across two people).
+  const line = (fr) => [20 + fr * 0.1, 30];
+  const f = synth(
+    {
+      1: (fr) => (fr <= 30 || fr >= 60 ? line(fr) : null),
+      3: (fr) => (fr > 30 && fr < 60 ? line(fr) : [80, 60]),
+    },
+    upto(0, 90),
+  );
+  const e = { ...emptyEdits("k"), people: { 1: { player_id: "Ana" }, 3: { player_id: "Bea" } } };
+  const ppl = people(f, e);
+  const holes = quickHoles(f, e, ppl, 1);
+  assert.equal(holes.length, 1);
+  assert.deepEqual([holes[0].a, holes[0].b, holes[0].green], [30, 60, false]);
+  const c = holes[0].candidates[0];
+  assert.deepEqual([c.from, c.a, c.b, c.twoSides, c.name], [3, 33, 57, true, "Bea"]);
+  assert.deepEqual(quickProgress(holes), { left: 1, leftS: 1, green: 0 });
+  assert.deepEqual(quickProgress(holes, new Set([holeKey(holes[0])])), { left: 0, leftS: 0, green: 0 });
+  const r = applyQuickJoin(f, e, ppl, 1, c);
+  assert.equal(r.cut, true);
+  const after = people(f, r.edits);
+  const ana = after.find((p) => p.player_id === "Ana");
+  const bea = after.find((p) => p.player_id === "Bea");
+  assert.equal(quickHoles(f, r.edits, after, ana.id).length, 0);
+  // Bea keeps her own boxes before and after the piece.
+  assert.ok(bea.frames.includes(0) && bea.frames.includes(90) && !bea.frames.includes(45));
+  assert.ok(ana.frames.includes(45));
+});
+
+test("unión rápida: sin candidata ajustada no se ofrece nada; verde si fuera de cuadro y 2-7 s", async () => {
+  const { quickHoles } = await import("./quickJoin.ts");
+  // Ana leaves the image by the right edge at frame 30 and comes back at 120 (3 s); somebody far away in between.
+  const f = synth({ 1: (fr) => (fr <= 30 || fr >= 120 ? [100, 30] : null), 2: (fr) => (fr > 30 && fr < 120 ? [10, 5] : null) }, upto(0, 150));
+  for (const fr of f.frames) for (const b of fr.boxes) if (b[0] === 1) [b[1], b[3]] = [1880, 1915];
+  const e = emptyEdits("k");
+  const ppl = people(f, e);
+  const holes = quickHoles(f, e, ppl, 1);
+  assert.equal(holes.length, 1);
+  assert.equal(holes[0].candidates.length, 0);
+  assert.equal(holes[0].offCamera, true);
+  assert.equal(holes[0].green, true);
+});
+
+test("assignStretch: el tramo cambia de identidad y el resto del trozo queda como estaba", async () => {
+  const { assignStretch, personFramesIn } = await import("./tracks.ts");
+  const f = synth({ 5: () => [10, 10] }, upto(0, 60));
+  const e = { ...emptyEdits("k"), splits: [{ track: 5, frame: 45, identity: 9 }] };
+  const r = assignStretch(e, f, 5, 12, 30, 7);
+  const id = (ed, frame) => identityOf(f.frames.find((x) => x.frame === frame).boxes[0], frame, ed);
+  assert.deepEqual([0, 12, 30, 33, 45, 60].map((fr) => id(r, fr)), [5, 7, 7, 5, 9, 9]);
+  assert.equal(assignStretch(e, f, 5, 100, 200, 7), null);
+  assert.deepEqual(personFramesIn(f, e, 5, 0, 6), [0, 3, 6]);
+  assert.deepEqual(personFramesIn(f, e, 5, 0, 6, 5), []);
+});

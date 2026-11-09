@@ -31,11 +31,35 @@ import numpy as np
 
 from ..schema import MARGIN_M, PITCH_LENGTH_M, PITCH_WIDTH_M
 from .detect import DEFAULT_TRACKER, LOOSE_ID, Chunk, FrameTracker, chunk_quality, default_model, estimate_seconds, fmt_duration, jersey_color, load_model, plan_chunks
+from .feet import FEET_CORRECTION, correct_rows
 from .propagate import apply_h, estimate_motion, propagate, venue_grid
 from .stitch import absorb_loose, duplicate_loose, fragments_from_boxes, stitch
 from .team import JERSEY_KEYS, MAX_COLOR_DISTANCE, classify_team, hex_to_lab, lab_to_hex, team_changes, track_teams, track_teams_legacy, vote_teams  # noqa: F401  (se usan desde aquí)
 
 TRACKS_SCHEMA_VERSION = 3
+# Suavizar la homografía en el tiempo (refine.smooth_homographies): la H de cada cuadro tiembla y mueve a todas las
+# jugadoras a la vez, más en la banda lejana. Se suaviza la proyección de 6 puntos fijos (mediana + Savitzky-Golay,
+# ~0.7 s) sin cruzar cortes de calibración. Medido en tracking/revision/refine.md. False: H tal cual por cuadro.
+SMOOTH_H = True
+
+
+def post_settings(cfg: dict | None) -> dict:
+    """Posprocesado de `postprocess` en match.yaml ({feet, smooth_h, smooth_window_s}, lo escribe la app): pies corregidos,
+    calibración suavizada y su ventana en segundos. Lo que falta o no es válido queda en el comportamiento de siempre
+    (FEET_CORRECTION, SMOOTH_H, refine.WINDOW_S); la ventana válida va de 0.2 a 3 s."""
+    from .refine import WINDOW_S
+
+    raw = (cfg or {}).get("postprocess")
+    raw = raw if isinstance(raw, dict) else {}
+    win = raw.get("smooth_window_s")
+    ok_win = isinstance(win, (int, float)) and not isinstance(win, bool) and 0.2 <= win <= 3
+    return {
+        "feet": raw["feet"] if isinstance(raw.get("feet"), bool) else FEET_CORRECTION,
+        "smooth_h": raw["smooth_h"] if isinstance(raw.get("smooth_h"), bool) else SMOOTH_H,
+        "window_s": float(win) if ok_win else WINDOW_S,
+    }
+
+
 TEAM_CODES = ("unk", "own", "opp", "ref")
 # Una caja a menos de estos píxeles del borde de la imagen está saliendo o entrando del encuadre.
 EDGE_PX = 10
@@ -160,7 +184,7 @@ BAND_BOTTOM_PX = 20
 BAND_MARGIN_M = 3.0
 
 
-def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h: int) -> tuple[int, int] | None:
+def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h: int, margin_m: float = BAND_MARGIN_M) -> tuple[int, int] | None:
     """(y0, y1) en píxeles donde cae la cancha (con BAND_MARGIN_M alrededor) según la calibración H (píxel -> metros).
     None si no hay calibración o si la cancha no cae en la imagen."""
     if H is None:
@@ -169,7 +193,7 @@ def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h:
         inv = np.linalg.inv(np.asarray(H, dtype=float).reshape(3, 3))
     except np.linalg.LinAlgError:
         return None
-    m = BAND_MARGIN_M
+    m = margin_m
     # Las cuatro esquinas y puntos de las bandas: una banda curvada por la perspectiva queda bien cubierta.
     pts = [(x, y) for x in np.linspace(-m, length_m + m, 9) for y in (-m, width_m + m)]
     ys = []
@@ -185,11 +209,11 @@ def pitch_band(H: np.ndarray | None, length_m: float, width_m: float, w: int, h:
     return (y0, y1) if y1 - y0 > 40 else None
 
 
-def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: float, tracker: str, progress=None, tiles: int = 1, band: tuple[int, int] | str | None = None):
+def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: float, tracker: str, progress=None, tiles: int = 1, band: tuple[int, int] | str | None = None, mask_rects: list | None = None, band_margin_m: float = BAND_MARGIN_M):
     """Una pasada por la parte: movimiento de cámara, detección y seguimiento, y ubicación con la biblioteca cada `every` cuadros procesados."""
     import cv2
 
-    from .library import features, localize
+    from .library import features, in_mask, localize, mask_image
 
     auto_band = band == "auto"
     ft = FrameTracker(model, tracker, conf, tiles=tiles, band=None if auto_band else band)  # seguidor nuevo: identificadores locales a la parte
@@ -201,6 +225,8 @@ def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: floa
     motions: dict[int, np.ndarray | None] = {}
     anchors: dict[int, np.ndarray] = {}
     prev_gray, hint = None, None
+    rects = mask_rects if mask_rects is not None else (lib.meta.get("mask") or [])
+    hide = None
     for f in range(chunk.start, chunk.end):
         if not cap.grab():
             break
@@ -212,19 +238,23 @@ def run_chunk(cap, model, lib, chunk: Chunk, stride: int, every: int, conf: floa
         i = len(frames)
         small = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1.0 else img
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        if rects and hide is None:
+            hide = mask_image(rects, gray.shape, scale)
         if prev_gray is not None:
-            motions[i - 1], _ = estimate_motion(prev_gray, gray, scale)
+            motions[i - 1], _ = estimate_motion(prev_gray, gray, scale, hide)
         prev_gray = gray
         if i % every == 0:
-            loc = localize(*features(gray, scale), lib, hint)
+            loc = localize(*features(gray, scale, mask=hide), lib, hint)
             if loc.H is not None:
                 anchors[i] = loc.H
                 hint = loc.ref
                 if auto_band:
                     venue = lib.meta.get("venue") or {}
-                    ft.band = pitch_band(loc.H, float(venue.get("length_m", PITCH_LENGTH_M)), float(venue.get("width_m", PITCH_WIDTH_M)), w, h)
+                    ft.band = pitch_band(loc.H, float(venue.get("length_m", PITCH_LENGTH_M)), float(venue.get("width_m", PITCH_WIDTH_M)), w, h, band_margin_m)
         row: list[dict] = []
         for tid, x1, y1, x2, y2, c in ft.step(img):
+            if in_mask(rects, (x1 + x2) / 2, (y1 + y2) / 2):
+                continue  # en el marcador o el logo, no es una persona
             row.append({
                 "track_id": tid, "box": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)], "conf": round(c, 2),
                 "lab": jersey_color(img, x1, y1, x2, y2),
@@ -298,8 +328,10 @@ def propose_identities(frames: list[int], rows: list[list[dict]], meters: list[n
             "team_conf": {t: c for t, (_, c) in votes.items()}, "absorbed": absorbed, "duplicates": duplicates}
 
 
-def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray], fps: float, max_error_m: float) -> dict:
-    """Calibra la parte, pasa las cajas a la cancha, une fragmentos, asigna equipos y resume la calidad."""
+def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray], fps: float, max_error_m: float, post: dict | None = None) -> dict:
+    """Calibra la parte, pasa las cajas a la cancha, une fragmentos, asigna equipos y resume la calidad.
+    post: lo que devuelve post_settings (sin él, los de siempre)."""
+    post = post or post_settings(None)
     stride_s = (frames[1] - frames[0]) / fps if len(frames) > 1 else 1 / fps
     w, h = lib.meta["image_w"], lib.meta["image_h"]
     venue = lib.meta.get("venue") or {}
@@ -310,8 +342,17 @@ def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray
     meters: list[np.ndarray] = []
     positions: list[np.ndarray] = []
     insides: list[np.ndarray] = []
-    for H, row in zip(Hs, rows):
-        feet = np.array([[(r["box"][0] + r["box"][2]) / 2, r["box"][3]] for r in row], dtype=float).reshape(-1, 2)
+    # Feet: the bottom of the box, or under the head where that bottom is not reliable (feet.py, FEET_CORRECTION).
+    if post["feet"]:
+        feet_rows, _ = correct_rows(frames, rows, fps)
+    else:
+        feet_rows = [np.array([[(r["box"][0] + r["box"][2]) / 2, r["box"][3]] for r in row], dtype=float).reshape(-1, 2) for row in rows]
+    # Calibration smoothed in time (refine.py, SMOOTH_H): the H of each frame is cut by cut, not filtered across a cut.
+    if post["smooth_h"] and len(frames) >= 2:
+        from .refine import image_points, smooth_homographies
+
+        Hs, _ = smooth_homographies(Hs, np.asarray(frames, dtype=float) / fps, image_points(feet_rows, w, h), post["window_s"])
+    for H, row, feet in zip(Hs, rows, feet_rows):
         m = to_meters(H, feet)
         xy = m * np.array([PITCH_LENGTH_M / length, PITCH_WIDTH_M / width])
         meters.append(m)
@@ -368,7 +409,7 @@ def finish_chunk(frames, rows, motions, anchors, lib, refs: dict[str, np.ndarray
         "teams": {t: sum(1 for i in identities if teams.get(i) == t) for t in TEAM_CODES},
     })
     track_labs = [np.median(np.array([b[6:9] for line in out_rows for b in line if b[0] == t]), axis=0) for t in inside_tracks]
-    return {"boxes": out_rows, "quality": quality, "colors": dominant_colors(np.array(track_labs)) if track_labs else [], "H": Hs}
+    return {"boxes": out_rows, "quality": quality, "colors": dominant_colors(np.array(track_labs)) if track_labs else [], "H": Hs, "post": post}
 
 
 def tracking_table(meta: dict, chunk: Chunk, frames: list[int], boxes: list[list[list]]):
@@ -399,6 +440,7 @@ def tracking_table(meta: dict, chunk: Chunk, frames: list[int], boxes: list[list
 
 def write_outputs(out_dir: Path, meta: dict, chunk: Chunk, stride: int, frames: list[int], result: dict) -> Path:
     path = out_dir / f"tracks_{meta['video_id']}_{chunk.name}.json"
+    post = result.get("post") or post_settings(None)
     data = {
         "schema_version": TRACKS_SCHEMA_VERSION,
         "kind": "tracks_px",
@@ -413,13 +455,46 @@ def write_outputs(out_dir: Path, meta: dict, chunk: Chunk, stride: int, frames: 
             for f, H, b in zip(frames, result["H"], result["boxes"])
         ],
         "quality": result["quality"],
+        # Lo que ya trae la parte (refine no lo repite).
+        "refined": {"feet": post["feet"], "smooth_h": post["smooth_h"], "window_s": post["window_s"]},
     }
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     tmp.replace(path)
+    if post["feet"]:
+        # Which boxes had their feet corrected (the app draws a line there): tracks_<part>.feet.json.
+        from .refine import feet_marks_path, write_feet_marks
+
+        write_feet_marks(data, f"{meta['video_id']}_{chunk.name}", feet_marks_path(path))
     table = tracking_table(meta, chunk, frames, result["boxes"])
     table.to_parquet(out_dir / f"tracking_{meta['video_id']}_{chunk.name}.parquet", index=False)
     return path
+
+
+# ---------------------------------------------------------------- test
+
+TEST_S = 30
+
+
+def test_summary(result: dict, frames: list[int], per_frame_s: float, total_frames: int, stride: int, fps: float) -> dict:
+    """What a short test says before processing everything: how many people the detector sees per frame (all boxes and
+    those on the pitch; a full pitch has about 22 players plus referees, a narrow camera sees fewer), how much was
+    calibrated, and the time the whole plan would take at this speed."""
+    boxes = [len(b) for b in result["boxes"]]
+    on_pitch = [sum(1 for row in b if row[11]) for b in result["boxes"]]
+    q = result["quality"]
+    return {
+        "frames": len(frames),
+        "boxes_median": float(np.median(boxes)) if boxes else 0.0,
+        "boxes_p10": float(np.percentile(boxes, 10)) if boxes else 0.0,
+        "on_pitch_median": float(np.median(on_pitch)) if on_pitch else 0.0,
+        "calibrated_share": float(q.get("calibrated_share", 0.0)),
+        "identities": int(q.get("identities", 0)),
+        "teams": q.get("teams") or {},
+        "ms_per_frame": round(per_frame_s * 1000),
+        "estimate_s": float(estimate_seconds(total_frames, stride, per_frame_s)),
+        "fps": fps,
+    }
 
 
 # ---------------------------------------------------------------- CLI
@@ -442,16 +517,22 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--model", help="modelo (carpeta OpenVINO o .pt); por defecto, `detector.model` de match.yaml o el de siempre")
     ap.add_argument("--tiles", type=int, help="trozos a lo ancho para detectar (cámara amplia); por defecto, `detector.tiles` de match.yaml o 1")
     ap.add_argument("--band", help="franja de la cancha en la imagen: «auto» (desde la calibración) o «y0,y1» en píxeles; por defecto, `detector.band` de match.yaml o todo el alto")
+    ap.add_argument("--band-margin", type=float, default=BAND_MARGIN_M, help="con --band auto: metros alrededor de la cancha que se le dan al detector (por defecto %(default)s)")
     ap.add_argument("--library")
-    ap.add_argument("--conf", type=float, default=0.2)
+    ap.add_argument("--conf", type=float, help="confianza mínima de una caja; por defecto, `detector.conf` de match.yaml o 0.2")
     ap.add_argument("--tracker", default=str(DEFAULT_TRACKER))
     ap.add_argument("--max-error", type=float, default=MAX_CONSISTENCY_M)
     ap.add_argument("--benchmark", action="store_true", help="solo mide la velocidad y estima el tiempo total")
+    ap.add_argument("--test", action="store_true",
+                    help=f"prueba de {TEST_S} s antes del proceso completo: escribe la parte en tracking/prueba/ con un summary.json (cuántas personas ve por cuadro, tiempo estimado) sin tocar lo hecho")
     ap.add_argument("--force", action="store_true", help="vuelve a procesar las partes ya hechas")
     ap.add_argument("--out-dir", help="carpeta de salida (por defecto, tracking/ del partido); para pruebas que no toquen lo hecho")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="partes en paralelo (procesos). 1 (por defecto) = como siempre. Se recorta a un tope seguro por hilos y memoria (tracking/parallel.py)")
     args = ap.parse_args(argv)
 
     cfg = load_config(match=args.match, video=args.video)
+    post = post_settings(cfg)
     root = project_root()
     fps = float(cfg["video_fps"])
     stride = args.stride or int(cfg.get("analysis_stride") or 3)
@@ -484,6 +565,7 @@ def main(argv: list[str] | None = None) -> None:
     model_path = (Path(model_arg) if Path(model_arg).is_absolute() or Path(model_arg).exists() else root / "weights" / model_arg) if model_arg else default_model(root)
     tiles = int(args.tiles or det_cfg.get("tiles") or 1)
     band_raw = args.band or det_cfg.get("band")
+    conf = float(args.conf if args.conf is not None else det_cfg.get("conf", 0.2))
     band = "auto" if band_raw == "auto" else (tuple(int(v) for v in (band_raw.split(",") if isinstance(band_raw, str) else band_raw)) if band_raw else None)
     if not model_path.exists():
         raise SystemExit(f"No encuentro el modelo en {model_path}.")
@@ -504,8 +586,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.benchmark:
         probe = Chunk(chunks[0].start, min(chunks[0].end, chunks[0].start + round(20 * fps)))
         t0 = time.time()
-        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, args.conf, args.tracker, tiles=tiles, band=band)
-        result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
+        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None, band_margin_m=args.band_margin)
+        result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error, post)
         per = (time.time() - t0) / max(1, len(frames))
         q = result["quality"]
         print(f"  prueba de {len(frames)} cuadros: {per * 1000:.0f} ms por cuadro procesado")
@@ -518,6 +600,36 @@ def main(argv: list[str] | None = None) -> None:
             print("  colores de camiseta más frecuentes en la cancha: " + ", ".join(f"{c} ({n} tracks)" for c, n in result["colors"]))
         return
 
+    if args.test:
+        # The first stretch of play long enough (else the longest), TEST_S seconds of it, apart from the real parts.
+        long_enough = [c for c in chunks if c.end - c.start >= TEST_S * fps]
+        base = long_enough[0] if long_enough else max(chunks, key=lambda c: c.end - c.start)
+        probe = Chunk(base.start, min(base.end, base.start + round(TEST_S * fps)))
+        test_dir = root / cfg["paths"]["tracking_dir"] / "prueba"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        t0 = time.time()
+        frames, rows, motions, anchors = run_chunk(cap, model, lib, probe, stride, every, conf, args.tracker, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None, band_margin_m=args.band_margin)
+        result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error, post)
+        per = (time.time() - t0) / max(1, len(frames))
+        path = write_outputs(test_dir, meta, probe, stride, frames, result)
+        # Con --start/--end (la prueba en un tramo elegido) el plan es el de segments.csv, no esos pocos segundos.
+        plan_frames = total_frames
+        if args.start and args.end:
+            seg_file = root / cfg["paths"]["segments_csv"]
+            if seg_file.exists():
+                segs_all = load_segments(seg_file, cfg["video_id"])
+                plan_ranges = [(r.start_s, r.end_s) for r in segs_all[segs_all["tipo"] == "juego"].itertuples()]
+                if plan_ranges:
+                    plan_frames = sum(c.end - c.start for c in plan_chunks(plan_ranges, fps, args.chunk))
+        summary = test_summary(result, frames, per, plan_frames, stride, fps)
+        summary.update({"part": path.name, "start_s": probe.start / fps, "end_s": probe.end / fps, "model": model_path.name, "tiles": tiles,
+                        "band": meta["band"], "conf": conf, "stride": stride, "created": time.strftime("%Y-%m-%d %H:%M")})
+        (test_dir / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+        print(f"  prueba: {summary['boxes_median']:.0f} cajas por cuadro (mediana), {summary['on_pitch_median']:.0f} en la cancha;"
+              f" calibrado el {summary['calibrated_share'] * 100:.0f} %; {per * 1000:.0f} ms por cuadro")
+        print(f"  estimado para todo lo planificado: {fmt_duration(summary['estimate_s'])}. Resultado en {test_dir / 'summary.json'}")
+        return
+
     index_path = out_dir / f"tracks_{cfg['video_id']}_index.json"
     index = {"schema_version": TRACKS_SCHEMA_VERSION, **meta, "stride": stride, "chunks": []}
     if index_path.exists() and not args.force:
@@ -528,17 +640,50 @@ def main(argv: list[str] | None = None) -> None:
     print(f"  hechas: {len(chunks) - len(pending)} de {len(chunks)}; faltan {len(pending)}. Se puede cortar con Ctrl+C y volver a lanzar.")
     spent, processed = 0.0, 0
     colors_shown = bool(refs)
+    workers = 1
+    if args.workers > 1 and len(pending) > 1 and not (args.benchmark or args.test):
+        from .parallel import safe_workers
+
+        workers = min(safe_workers(args.workers), len(pending))
     try:
+        if workers > 1:
+            from .parallel import ProgressLog, map_chunks
+
+            cap.release()   # cada proceso abre su propio video
+            by_range = {(c.start, c.end): c for c in pending}
+            spec = {"model_path": str(model_path), "lib_path": str(lib_path), "video_path": str(root / cfg["paths"]["raw_video"]), "stride": stride,
+                    "every": every, "conf": conf, "tracker": args.tracker, "tiles": tiles, "band": band, "mask": cfg.get("mask") or None,
+                    "band_margin": args.band_margin, "refs": refs, "fps": fps, "max_error": args.max_error, "post": post, "out_dir": str(out_dir), "meta": meta}
+            log = ProgressLog(f"{cfg['match_id']} {cfg['video_id']} ({workers} procesos)", sum(c.end - c.start for c in pending), out_dir / "process_progress.log")
+            print(f"  {workers} procesos en paralelo sobre {len(pending)} partes.")
+            for n, res in enumerate(map_chunks(pending, spec, workers), 1):
+                chunk = by_range[res["chunk"]]
+                if not res["frames"]:
+                    print(f"  parte {chunk.name}: sin cuadros (¿fin del video?)")
+                    log.step(chunk.end - chunk.start)
+                    continue
+                q = res["quality"]
+                index["chunks"] = [c for c in index["chunks"] if c["name"] != chunk.name] + [
+                    {"name": chunk.name, "file": res["path"], "start_frame": chunk.start, "end_frame": chunk.end, "start_s": round(chunk.start / fps, 1), "end_s": round(chunk.end / fps, 1), **q}
+                ]
+                index["chunks"].sort(key=lambda c: c["start_frame"])
+                index_path.write_text(json.dumps(index, indent=1), encoding="utf-8")
+                t = chunk.start / fps
+                log.step(chunk.end - chunk.start, f"parte {n}/{len(pending)} en {int(t // 60)}:{int(t % 60):02d} · {q['on_pitch_median']:.0f} en la cancha -> {q['identities']} identidades · calibrado {q['calibrated_share'] * 100:.0f} % · {res['seconds']:.0f} s")
+                if not colors_shown and res["colors"]:
+                    colors_shown = True
+                    print("      colores de camiseta más frecuentes: " + ", ".join(f"{c} ({k} tracks)" for c, k in res["colors"]))
+            pending = []
         for n, chunk in enumerate(pending, 1):
             t0 = time.time()
             after = sum(c.end - c.start for c in pending[n:]) // stride
             bar = Progress(f"[{n}/{len(pending)}]", (chunk.end - chunk.start) // stride + 1, fps, stride, after_s=after)
-            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, args.conf, args.tracker, progress=bar, tiles=tiles, band=band)
+            frames, rows, motions, anchors = run_chunk(cap, model, lib, chunk, stride, every, conf, args.tracker, progress=bar, tiles=tiles, band=band, mask_rects=cfg.get("mask") or None, band_margin_m=args.band_margin)
             bar.end()
             if not frames:
                 print(f"  parte {chunk.name}: sin cuadros (¿fin del video?)")
                 continue
-            result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error)
+            result = finish_chunk(frames, rows, motions, anchors, lib, refs, fps, args.max_error, post)
             path = write_outputs(out_dir, meta, chunk, stride, frames, result)
             q = result["quality"]
             index["chunks"] = [c for c in index["chunks"] if c["name"] != chunk.name] + [

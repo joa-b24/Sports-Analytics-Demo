@@ -1,23 +1,29 @@
 "use client";
 
+import { ShootoutPanel } from "@/components/match/Shootout";
+import { FolderTools, useYamlSync } from "@/components/match/FolderSync";
+import { SaveStatus } from "@/components/match/SaveStatus";
 import {
-  ArrowLeft,
-  ChartLineUp,
-  ClipboardText,
-  Crosshair,
-  PersonSimpleRun,
+  CalendarBlank,
+  CheckCircle,
+  Folder,
+  MapPin,
+  Trash,
+  WarningCircle,
+  GearSix,
   FastForward,
   FilmStrip,
+  Flask,
   FolderOpen,
+  ListChecks,
   Pause,
   Play,
   Plus,
   Rewind,
-  Scissors,
   SkipBack,
+  SlidersHorizontal,
   SkipForward,
-  VideoCamera,
-  X,
+  YoutubeLogo,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -25,41 +31,39 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { ClipEditor } from "@/components/clip/ClipEditor";
 import { AnalysisTab } from "@/components/match/AnalysisTab";
 import { PlaysTab } from "@/components/match/PlaysTab";
+import { ProcessesPanel } from "@/components/match/ProcessesPanel";
+import { TechPanel } from "@/components/match/TechPanel";
+import { MissingTag, VideoFilesBar } from "@/components/match/VideoDownload";
+import { Modal } from "@/components/Modal";
+import { techChanged } from "@/lib/tech";
+import { MODES, MatchHeader, isMode, mainOf, modeOf, type TabId } from "@/components/match/MatchHeader";
+import { BoardsWorkspace } from "@/components/board/BoardsWorkspace";
 import { ReportTab } from "@/components/match/ReportTab";
 import { SegmentsTab } from "@/components/match/SegmentsTab";
 import { TagTab } from "@/components/match/TagTab";
 import { Card, DemoBadge, btn, btnPrimary, input } from "@/components/Shell";
+import { Dropdown } from "@/components/Dropdown";
+import { Select } from "@/components/Select";
+import { EdgeReveal, useFocusMode } from "@/components/FocusMode";
 import { Calibration } from "@/components/workspace/Calibration";
 import { Correction } from "@/components/workspace/Correction";
 import { SpeedControl } from "@/components/SpeedControl";
 import { VideoPlayer, type PlayerHandle } from "@/components/VideoPlayer";
 import { fmtT, isTyping, parseYouTubeId } from "@/lib/format";
-import { FOLDER_RULE, isFolderName, listLocal, localVideo } from "@/lib/local";
-import { matchSteps, type FolderFiles, type StepState } from "@/lib/steps";
+import { FOLDER_RULE, isFolderName, localVideo, readFolderFiles } from "@/lib/local";
+import { matchSteps, type FolderFiles } from "@/lib/steps";
+import { useVideoDownloads } from "@/lib/useVideoDownloads";
 import { segmentsFromMarks, skipTarget, type Segment } from "@/lib/segments";
 import { mutate, setPref, useHydrated, usePref, useStore } from "@/lib/store";
+import { allVenues } from "@/lib/venue";
 import type { Match, MatchVideo } from "@/lib/types";
-import { matchTimeline, matchVideos, nextVideo, videoOf } from "@/lib/videos";
+import { matchTimeline, matchVideos, nextVideo, periodAt, videoOf } from "@/lib/videos";
+import { FullVideoMarks } from "@/components/match/FullVideoMarks";
 
-// In working order: the pitch, which parts of the video are play, the tracking, and then the tagging on top.
-// Calibration and tracking are optional: everything after them works with tagged events only.
-const TABS = [
-  { id: "calibration", label: "Calibración", icon: Crosshair },
-  { id: "segments", label: "Tramos", icon: Scissors },
-  { id: "tracking", label: "Tracking", icon: PersonSimpleRun },
-  { id: "tag", label: "Etiquetado", icon: VideoCamera },
-  { id: "plays", label: "Jugadas", icon: FilmStrip },
-  { id: "analysis", label: "Análisis", icon: ChartLineUp },
-  { id: "report", label: "Informe", icon: ClipboardText },
-] as const;
-type TabId = (typeof TABS)[number]["id"];
-
-const STATE_STYLE: Record<StepState, { dot: string; label: string }> = {
-  done: { dot: "bg-ok", label: "completo" },
-  partial: { dot: "bg-warn", label: "a medias" },
-  todo: { dot: "border border-line-strong", label: "por hacer" },
-  optional: { dot: "border border-dashed border-line-strong", label: "opcional" },
-};
+// Width of the side panel in Tramos (px): it is dragged from its left edge.
+const SEG_SIDE_MIN = 300;
+const SEG_SIDE_MAX = 640;
+const SEG_SIDE_DEFAULT = 416;
 
 // Object URLs of local video files, per match and video. They only live for this browser session.
 const fileUrls = new Map<string, string>();
@@ -75,7 +79,35 @@ function MatchPage() {
   const linkT = Number(params.get("t"));
   const state = useStore();
   const hydrated = useHydrated();
-  const [tab, setTab] = useState<TabId>("tag");
+  const focus = useFocusMode();
+  // With events, the match opens on its analysis (what the staff reads); without, on capture. A link to a moment
+  // opens the events of that video.
+  // The mode comes from the sidebar (?modo=captura|estudio|analisis); inside it the analyst picks the step.
+  const modo = params.get("modo");
+  // The step picked inside a mode; when the sidebar changes the mode, its main step shows.
+  // A link can name the step too (?modo=analisis&paso=report, from Inicio).
+  const [picked, setPicked] = useState<TabId | null>(() => {
+    const paso = params.get("paso");
+    return MODES.flatMap((m) => m.steps.map(([s]) => s as TabId)).find((s) => s === paso) ?? null;
+  });
+  const setTab = (t: TabId) => setPicked(t);
+  // Configuración del partido > Detalles técnicos (a link from the evaluation tools opens it: ?detalles=tecnicos).
+  const [techOpen, setTechOpen] = useState(params.get("detalles") === "tecnicos");
+  const [procOpen, setProcOpen] = useState(params.get("procesos") === "1");
+  // Without a mode: a link to a moment opens its events; a match with events opens on its analysis (what the staff
+  // reads) and one without, on capture.
+  const fallback: TabId = linkVideo ? "tag" : isMode(modo) ? mainOf(modo) : state.events.some((e) => e.match_id === id) ? "analysis" : "tag";
+  const tab: TabId = picked && (!isMode(modo) || modeOf(picked) === modo) ? picked : fallback;
+  // The sidebar's Captura / Estudio / Análisis go to the last match opened.
+  useEffect(() => {
+    if (id) setPref("currentMatch", id);
+  }, [id]);
+  // The URL says the mode being shown, so the sidebar marks it.
+  const shownMode = modeOf(tab);
+  useEffect(() => {
+    if (!id || linkVideo || linkEdit || modo === shownMode) return;
+    router.replace(`/partido?id=${encodeURIComponent(id)}&modo=${shownMode}`, { scroll: false });
+  }, [id, modo, shownMode, linkVideo, linkEdit, router]);
   // Time to go to as soon as the player knows the length of the video (it cannot seek before).
   const pendingSeek = useRef<number | null>(linkVideo && Number.isFinite(linkT) && linkT >= 0 ? linkT : null);
   const [time, setTime] = useState(0);
@@ -85,9 +117,6 @@ function MatchPage() {
   const [ytDraft, setYtDraft] = useState<string | null>(null);
   const [rate, setRate] = useState(1);
   const [playing, setPlaying] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  // Where the tagging tab puts its events table: under the video, where there is room for it.
-  const [tableSlot, setTableSlot] = useState<HTMLDivElement | null>(null);
   // Over the video and right under its controls: the tagging tab draws its live tags and its timeline there.
   const [overlaySlot, setOverlaySlot] = useState<HTMLDivElement | null>(null);
   const [belowSlot, setBelowSlot] = useState<HTMLDivElement | null>(null);
@@ -95,19 +124,81 @@ function MatchPage() {
   const skipPauses = usePref("skipPauses", "on") === "on";
   // What is in the folder of the match, for the state of each step; read again when the tab changes.
   const [folderFiles, setFolderFiles] = useState<FolderFiles | null>(null);
+  // Bumped when the folder was created or a video finished downloading: its files are read again.
+  const [fileTick, setFileTick] = useState(0);
   const playerRef = useRef<PlayerHandle>(null);
   const stopAt = useRef<number | null>(null);
+  const loopSpan = useRef<[number, number] | null>(null);
+  const [focusPlay, setFocusPlay] = useState<string | null>(null);
+  // Tramos fits the window (no page scroll): the video as large as fits above its controls and timeline, the side
+  // panel as wide as dragged and only the list of marks scrolling inside it.
+  const fitOn = tab === "segments" || tab === "tag" || tab === "plays";
+  const fitRef = useRef<HTMLDivElement>(null);
+  const [fitH, setFitH] = useState<number | null>(null);
+  const [underEl, setUnderEl] = useState<HTMLDivElement | null>(null);
+  const [underH, setUnderH] = useState(0);
+  // Jugadas starts wider: its panel holds the pitch animation.
+  const sideDefault = tab === "plays" ? 480 : SEG_SIDE_DEFAULT;
+  const segSideW = Math.min(SEG_SIDE_MAX, Math.max(SEG_SIDE_MIN, Number(usePref(`${tab}:sideW`, String(sideDefault))) || sideDefault));
+  useEffect(() => {
+    // Off Tramos the height is not used.
+    if (!fitOn) return;
+    const measure = () => {
+      const el = fitRef.current;
+      if (!el || window.innerWidth < 1280) return setFitH(null);
+      setFitH(Math.max(420, Math.floor(window.innerHeight - (el.getBoundingClientRect().top + window.scrollY) - 16)));
+    };
+    const raf = requestAnimationFrame(measure);
+    const late = window.setTimeout(measure, 320);
+    window.addEventListener("resize", measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(late);
+      window.removeEventListener("resize", measure);
+    };
+  }, [fitOn]);
+  useEffect(() => {
+    if (!underEl) return;
+    const ro = new ResizeObserver(([e]) => setUnderH(Math.round(e.contentRect.height)));
+    ro.observe(underEl);
+    return () => ro.disconnect();
+  }, [underEl]);
+  // In Jugadas the panel ends where the video and its controls end: both columns share one height.
+  const [videoColEl, setVideoColEl] = useState<HTMLDivElement | null>(null);
+  const [videoColH, setVideoColH] = useState(0);
+  useEffect(() => {
+    if (!videoColEl) return;
+    const ro = new ResizeObserver(([e]) => setVideoColH(Math.round(e.contentRect.height)));
+    ro.observe(videoColEl);
+    return () => ro.disconnect();
+  }, [videoColEl]);
+  const dragSegSide = (e: React.PointerEvent<HTMLElement>) => {
+    const x0 = e.clientX;
+    const w0 = segSideW;
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    const key = `${tab}:sideW`;
+    const move = (ev: PointerEvent) => setPref(key, String(Math.round(Math.min(SEG_SIDE_MAX, Math.max(SEG_SIDE_MIN, w0 - (ev.clientX - x0))))));
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  };
 
   const match = state.matches.find((m) => m.match_id === id);
   const folderForSteps = match?.folder;
   useEffect(() => {
     if (!folderForSteps) return;
     let live = true;
-    void listLocal(`matches/${folderForSteps}/tracking`).then((files) => live && setFolderFiles(files ? { tracking: files.map((f) => f.name) } : null));
+    void readFolderFiles(folderForSteps).then((files) => {
+      if (live) setFolderFiles(files);
+    });
     return () => {
       live = false;
     };
-  }, [folderForSteps, tab]);
+  }, [folderForSteps, tab, fileTick]);
   // With a folder, the video of each part of the match is opened from it (any speed, frame by frame).
   const folder = match?.folder;
   const videoNow = match ? (matchVideos(match).find((v) => v.video_id === videoSel) ?? matchVideos(match)[0]).video_id : "";
@@ -122,7 +213,7 @@ function MatchPage() {
     return () => {
       live = false;
     };
-  }, [folder, id, videoNow]);
+  }, [folder, id, videoNow, fileTick]);
   // Video keys in the tabs with the video: Space plays or pauses, ← → jump 5 s, with Shift 1 s (as the buttons).
   // Not while writing, nor over a drop-down or a slider (their arrows are theirs). Over the YouTube frame the keys go
   // to YouTube, which does the same.
@@ -148,6 +239,11 @@ function MatchPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [videoTab]);
+  // The match data written into match.yaml by themselves (components/match/FolderSync.tsx).
+  const yamlSync = useYamlSync(match, match?.venue_id ? allVenues(state.venues).find((v) => v.venue_id === match.venue_id) : undefined);
+  // The folder of the match is created when it is missing, and the videos with a link but no file are downloaded by
+  // themselves (unless the switch of Detalles técnicos is off). Only when the app runs on this computer.
+  const videoDl = useVideoDownloads(match, { create: true, auto: true, onCreated: () => setFileTick((n) => n + 1), onReady: () => setFileTick((n) => n + 1) });
 
   if (!hydrated) return null;
   if (!match) {
@@ -182,6 +278,7 @@ function MatchPage() {
   const timeline = matchTimeline(videos, allEvents, segmentsByVideo);
   const steps = matchSteps({
     videoIds: videos.map((v) => v.video_id),
+    linked: videos.filter((v) => !!v.youtube_id).map((v) => v.video_id),
     folder: match.folder,
     venueId: match.venue_id,
     segmentsByVideo,
@@ -189,6 +286,7 @@ function MatchPage() {
     plays: allPlays,
     trackEdits: state.trackEdits,
     files: match.folder ? folderFiles : null,
+    boards: (state.boards ?? []).length,
   });
   const originalTime = new Map(allEvents.map((e) => [e.event_id, e]));
   const videoLabel = (vid: string) => videos.find((v) => v.video_id === vid)?.label ?? vid;
@@ -223,6 +321,8 @@ function MatchPage() {
       return;
     }
     if (stopAt.current !== null && t >= stopAt.current) {
+      // Looping a play: back to the start of its stretch instead of stopping.
+      if (loopSpan.current) return playerRef.current?.seek(loopSpan.current[0], true);
       stopAt.current = null;
       playerRef.current?.pause();
     }
@@ -234,9 +334,18 @@ function MatchPage() {
     const d = playerRef.current?.getDuration() || undefined;
     setDuration((prev) => (prev === d ? prev : d));
   };
-  const playClip = (t0: number, t1: number) => {
-    stopAt.current = t1;
-    playerRef.current?.seek(t0, true);
+  const playClip = (t0: number, t1: number, loopMargin: number | null = null) => {
+    stopAt.current = t1 + (loopMargin ?? 0);
+    loopSpan.current = loopMargin === null ? null : [Math.max(0, t0 - loopMargin), t1 + loopMargin];
+    playerRef.current?.seek(loopSpan.current?.[0] ?? t0, true);
+  };
+  // Opens a play of any video of the match: its video loads (if it is another) and goes to its start.
+  const goToPlay = (vid: string, t: number, playId: string) => {
+    setFocusPlay(playId);
+    loopSpan.current = null;
+    if (vid === video.video_id) return void playerRef.current?.seek(t);
+    pickVideo(vid);
+    pendingSeek.current = t;
   };
 
   const presentEdit = linkEdit ? (state.edits ?? []).find((e) => e.edit_id === linkEdit && e.match_id === match.match_id) : undefined;
@@ -246,170 +355,345 @@ function MatchPage() {
       {presentEdit && (
         <ClipEditor match={match} edit={presentEdit} startPresenting onClose={() => router.replace(`/partido?id=${encodeURIComponent(match.match_id)}`, { scroll: false })} />
       )}
-      <div className="mb-5 print:hidden">
-        <Link
-          href="/partidos"
-          className="enter inline-flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-accent-200"
-        >
-          <ArrowLeft size={13} />
-          Análisis con video
-        </Link>
-        <div className="eyebrow enter mt-3" style={{ "--d": "40ms" } as React.CSSProperties}>
-          {match.kind === "rival" ? "Análisis táctico · rival" : match.kind === "reference" ? "Video de referencia" : "Análisis post-partido"}
-        </div>
-        <div className="enter mt-1 flex flex-wrap items-center gap-3" style={{ "--d": "90ms" } as React.CSSProperties}>
-          <input
-            className="-ml-2 min-w-0 flex-1 rounded-xl border border-transparent bg-transparent px-2 font-display text-3xl leading-tight text-ink transition-colors hover:border-line focus:border-accent focus:bg-surface focus:outline-none md:text-4xl"
-            value={match.name}
-            aria-label="Nombre del partido"
-            onChange={(e) => patch({ name: e.target.value })}
-          />
-          {match.is_demo && <DemoBadge />}
-        </div>
-        {/* Match details stay folded: they are set once, and the height goes to the video. */}
-        <div className="enter mt-2 flex flex-wrap items-start gap-x-6 gap-y-2 text-[11px] text-faint" style={{ "--d": "140ms" } as React.CSSProperties}>
-          <details className="min-w-0 flex-1">
-            <summary className="cursor-pointer text-xs text-muted transition-colors hover:text-accent-200">
-              {match.focus_team} <span className="text-faint">vs</span> {match.other_team} · <span className="tc">{match.date || "sin fecha"}</span> ·{" "}
-              <span className="link">editar datos</span>
-            </summary>
-            <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-2">
-              <label className="flex flex-col gap-1">
-                Equipo analizado
-                <input className={`${input} w-40`} value={match.focus_team} onChange={(e) => patch({ focus_team: e.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1">
-                Contrario
-                <input className={`${input} w-40`} value={match.other_team} onChange={(e) => patch({ other_team: e.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1">
-                Fecha
-                <input className={input} type="date" value={match.date} onChange={(e) => patch({ date: e.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1" title="Nombre de su carpeta en matches/, donde están el video, la calibración y el tracking">
-                Carpeta (matches/…)
-                <input className={`${input} tc w-64`} placeholder="2026_09_25_up_vs_rival" value={match.folder ?? ""} onChange={(e) => patch({ folder: e.target.value.trim() || undefined })} />
-                {match.folder && !isFolderName(match.folder) && (
-                  <span className="text-warn">
-                    No sigue la convención {FOLDER_RULE}. Se renombra con <code>python -m sportsan.ingest.rename_match {match.folder} &lt;nuevo&gt;</code>
-                  </span>
-                )}
-              </label>
-            </div>
-          </details>
-          <span className="flex items-baseline gap-5 text-xs">
-            <span>
-              <span className="num mr-1.5 text-2xl text-ink">{allEvents.length}</span>eventos
-            </span>
-            <span>
-              <span className="num mr-1.5 text-2xl text-ink-2">{allPlays.length}</span>jugadas
-            </span>
-          </span>
-        </div>
-      </div>
-
-      {/* The tabs are the steps of the analysis, in working order, each with where it stands. */}
-      <div className="enter mb-5 overflow-x-auto pb-1 print:hidden" style={{ "--d": "190ms" } as React.CSSProperties}>
-        <ol className="flex min-w-max gap-1.5" aria-label="Pasos del análisis del partido">
-          {TABS.map((t, n) => {
-            const I = t.icon;
-            const st = steps[t.id];
-            const on = tab === t.id;
-            return (
-              <li key={t.id} className="flex items-center gap-1.5">
-                {n > 0 && <span className="h-px w-3 bg-line" aria-hidden />}
-                <button
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => setTab(t.id)}
-                  title={`${t.label}: ${STATE_STYLE[st.state].label} · ${st.text}`}
-                  className={`flex w-40 flex-col items-start gap-1 rounded-2xl px-3 py-2 text-left transition-colors ${
-                    on ? "bg-accent-900 text-accent-100 shadow-[inset_0_0_0_1px_rgba(74,114,255,.55)]" : "bg-surface text-ink-2 hover:bg-raised"
-                  }`}
-                >
-                  <span className="flex w-full items-center gap-1.5 text-sm font-medium">
-                    <I size={15} />
-                    <span className="truncate">{t.label}</span>
-                    <span className={`ml-auto h-2.5 w-2.5 shrink-0 rounded-full ${STATE_STYLE[st.state].dot}`} aria-label={STATE_STYLE[st.state].label} />
-                  </span>
-                  <span className={`w-full truncate text-[11px] ${on ? "text-accent-200" : "text-faint"}`}>{st.text}</span>
-                </button>
-              </li>
+      <EdgeReveal edge="top" enabled={focus} className="bg-bg/95 px-4 pt-3 backdrop-blur md:px-8">
+      <MatchHeader
+        match={match}
+        events={allEvents}
+        tab={tab}
+        onTab={setTab}
+        steps={steps}
+        status={<SaveStatus match={match} />}
+        badge={videoDl.items.some((i) => i.hasLink && i.state !== "ready" && i.state !== "unknown") ? <MissingTag /> : undefined}
+        video={
+          videos.length > 1 ? (
+            <Select
+              variant="field"
+              label="Video del partido"
+              value={video.video_id}
+              onChange={(v) => v && pickVideo(v)}
+              options={videos.map((v, i) => {
+                // Grouped by half: a title where the half changes (as in the match data, the first video is the 1st).
+                const half = (j: number) => (videos[j].full ? 0 : (videos[j].period ?? (j === 0 ? 1 : 2)));
+                return { value: v.video_id, label: v.label || v.video_id, hint: v.video_id, group: i === 0 || half(i) !== half(i - 1) ? (half(i) === 0 ? "Partido completo" : half(i) === 1 ? "1.er tiempo" : "2.º tiempo") : undefined };
+              })}
+              display={
+                <span className="inline-flex items-center gap-2">
+                  <FilmStrip size={15} className="text-faint" />
+                  <span className="max-w-[12rem] truncate text-ink">{video.label || video.video_id}</span>
+                  <span className="tc rounded bg-raised px-1.5 text-[10px] text-faint uppercase">{video.video_id}</span>
+                </span>
+              }
+            />
+          ) : null
+        }
+      >
+        {match.is_demo && <DemoBadge />}
+        <Dropdown label="Datos del partido y del video" trigger={<GearSix size={16} />} panelClass="w-[min(30rem,calc(100vw-2rem))] max-h-[85vh] overflow-y-auto">
+          {(closeMenu) => {
+            // One row of the panel: an icon and a short label on the left, the control on the right.
+            const row = (icon: React.ReactNode, label: string, control: React.ReactNode, hint?: string) => (
+              <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3" title={hint}>
+                <span className="flex items-center gap-2 text-faint">
+                  {icon}
+                  {label}
+                </span>
+                {control}
+              </div>
             );
-          })}
-        </ol>
-      </div>
+            const folderOk = match.folder ? isFolderName(match.folder) : null;
+            const ytOk = video.youtube_id !== "" && (ytDraft === null || parseYouTubeId(ytDraft) !== null);
+            const ytBad = ytDraft !== null && ytDraft.trim() !== "" && !parseYouTubeId(ytDraft);
+            const hasFile = fileUrls.has(fileKey);
+            const half = video.period ?? (videoIndex === 0 ? 1 : 2);
+            return (
+              <div className="text-xs text-muted">
+                {/* The match: its name as the title, then the two teams face to face. */}
+                <section className="p-4">
+                  <div className="flex items-start gap-2">
+                    <input
+                      className="font-display min-w-0 flex-1 rounded-lg bg-transparent px-2 py-1 -ml-2 text-xl text-ink hover:bg-bg/60 focus:bg-bg/60 focus:outline-none"
+                      aria-label="Nombre del partido"
+                      value={match.name}
+                      onChange={(e) => patch({ name: e.target.value })}
+                    />
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    <span className="tag">{allEvents.length} eventos</span>
+                    <span className="tag">{allPlays.length} jugadas</span>
+                    <span className="tag">
+                      {videos.length} video{videos.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+                    {(
+                      [
+                        ["focus_team", "Analizado", "bg-own"],
+                        ["other_team", "Contrario", "bg-opp"],
+                      ] as const
+                    ).map(([field, label, dot], n) => (
+                      <div key={field} className={`flex min-w-0 items-center gap-2 rounded-xl bg-bg/60 px-3 py-2 ${n === 1 ? "order-3" : ""}`}>
+                        <i className={`h-7 w-1 shrink-0 rounded-full ${dot}`} aria-hidden />
+                        <label className="min-w-0 flex-1">
+                          <span className="block text-[10px] tracking-wide text-faint uppercase">{label}</span>
+                          <input
+                            className="cond w-full bg-transparent text-sm font-bold text-ink uppercase focus:outline-none"
+                            value={match[field]}
+                            onChange={(e) => patch({ [field]: e.target.value })}
+                          />
+                        </label>
+                      </div>
+                    ))}
+                    <span className="cond order-2 text-[11px] font-bold text-faint">VS</span>
+                  </div>
+                  <div className="mt-4 space-y-2.5">
+                    {row(<CalendarBlank size={14} />, "Fecha", <input className={`${input} w-full`} type="date" value={match.date} onChange={(e) => patch({ date: e.target.value })} />)}
+                    {row(
+                      <MapPin size={14} />,
+                      "Sede",
+                      <span className="flex min-w-0 gap-1.5">
+                        <Select
+                          variant="field"
+                          label="Sede del partido"
+                          className="min-w-0 flex-1 justify-between"
+                          clearable
+                          placeholder="Sin sede"
+                          value={match.venue_id ?? null}
+                          onChange={(v) => patch({ venue_id: v ?? undefined })}
+                          options={allVenues(state.venues).map((v) => ({ value: v.venue_id, label: `${v.name} · ${v.length_m} × ${v.width_m} m` }))}
+                        />
+                        <Link
+                          href="/configuracion"
+                          className="btn h-9 w-9 shrink-0 !p-0"
+                          title="Añadir o editar sedes (Configuración › Sedes)"
+                          aria-label="Añadir sede"
+                          onClick={() => setPref("config:tab", "venues")}
+                        >
+                          <Plus size={14} />
+                        </Link>
+                      </span>,
+                      "La sede da las medidas y los puntos para calibrar",
+                    )}
+                    {row(
+                      <Folder size={14} />,
+                      "Carpeta",
+                      <span className="relative flex min-w-0">
+                        <input
+                          className={`${input} tc w-full pr-8 text-xs`}
+                          placeholder="aaaa_mm_dd_local_vs_visita"
+                          value={match.folder ?? ""}
+                          onChange={(e) => patch({ folder: e.target.value.trim() || undefined })}
+                        />
+                        {folderOk !== null && (
+                          <span className={`absolute top-1/2 right-2.5 -translate-y-1/2 ${folderOk ? "text-ok" : "text-warn"}`} title={folderOk ? "Sigue la convención" : `No sigue la convención ${FOLDER_RULE}`}>
+                            {folderOk ? <CheckCircle size={15} weight="fill" /> : <WarningCircle size={15} weight="fill" />}
+                          </span>
+                        )}
+                      </span>,
+                      "matches/<carpeta> en el repositorio: ahí viven el video, los tramos y el tracking",
+                    )}
+                    <FolderTools match={match} sync={yamlSync} />
+                  </div>
+                </section>
+
+                <ShootoutPanel match={match} events={allEvents} />
+
+                {/* The videos: one pill each (choosing one opens it), then the data of the one open. */}
+                <section className="border-t border-line p-4" title="Cada video tiene sus propios tiempos, tramos, eventos y jugadas; Análisis e Informe los juntan">
+                  <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                    <h3 className="cond mr-1 text-sm font-bold tracking-wide text-ink uppercase">Videos</h3>
+                    {videos.map((v) => (
+                      <button
+                        key={v.video_id}
+                        type="button"
+                        aria-pressed={v.video_id === video.video_id}
+                        onClick={() => pickVideo(v.video_id)}
+                        className={`tc rounded-full px-2.5 py-1 text-[11px] uppercase transition-colors ${
+                          v.video_id === video.video_id ? "bg-own text-[var(--on-own)]" : "bg-bg/60 text-ink-2 hover:bg-raised"
+                        }`}
+                      >
+                        {v.video_id}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="grid h-6 w-6 place-items-center rounded-full bg-bg/60 text-faint transition-colors hover:bg-raised hover:text-ink"
+                      title="Añadir otro video al partido (por ejemplo, uno por tiempo)"
+                      aria-label="Añadir otro video al partido"
+                      onClick={() => {
+                        const v = nextVideo(videos);
+                        setVideos([...videos, v]);
+                        pickVideo(v.video_id);
+                      }}
+                    >
+                      <Plus size={12} />
+                    </button>
+                    {videoIndex > 0 && usedBy(video.video_id) === 0 && (
+                      <button
+                        type="button"
+                        className="ml-auto inline-flex items-center gap-1 text-faint transition-colors hover:text-danger"
+                        title="Solo se puede quitar un video sin eventos, jugadas ni tramos"
+                        onClick={() => {
+                          setVideos(videos.filter((v) => v.video_id !== video.video_id));
+                          pickVideo(videos[0].video_id);
+                        }}
+                      >
+                        <Trash size={12} />
+                        Quitar
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-2.5">
+                    {row(
+                      <FilmStrip size={14} />,
+                      "Nombre",
+                      <span className="flex min-w-0 gap-1.5">
+                        <input className={`${input} min-w-0 flex-1`} aria-label="Nombre de este video" placeholder={video.video_id} value={video.label} onChange={(e) => patchVideo({ label: e.target.value })} />
+                        <span className="seg shrink-0" role="group" aria-label="Tiempo del partido de este video" title="A qué tiempo pertenece: los eventos de este video lo toman de aquí">
+                          {([1, 2] as const).map((p) => (
+                            <button key={p} type="button" aria-pressed={half === p} className="seg-opt tc !px-2.5" onClick={() => patchVideo({ period: p })}>
+                              {p}T
+                            </button>
+                          ))}
+                        </span>
+                      </span>,
+                    )}
+                    {row(<FilmStrip size={14} />, "Tiempos", <FullVideoMarks video={video} now={time} onChange={(v) => patchVideo(v)} />)}
+                    {row(
+                      <YoutubeLogo size={14} />,
+                      "YouTube",
+                      <span className="relative flex min-w-0">
+                        <input
+                          className={`${input} w-full pr-8`}
+                          placeholder="https://youtube.com/…"
+                          value={ytInput}
+                          onChange={(e) => {
+                            setYtDraft(e.target.value);
+                            const parsed = parseYouTubeId(e.target.value);
+                            if (parsed || e.target.value.trim() === "") patchVideo({ youtube_id: parsed });
+                          }}
+                        />
+                        {(ytOk || ytBad) && (
+                          <span className={`absolute top-1/2 right-2.5 -translate-y-1/2 ${ytBad ? "text-danger" : "text-ok"}`} title={ytBad ? "No reconozco ese enlace: pega la URL completa" : "Enlace reconocido"}>
+                            {ytBad ? <WarningCircle size={15} weight="fill" /> : <CheckCircle size={15} weight="fill" />}
+                          </span>
+                        )}
+                      </span>,
+                    )}
+                    {row(
+                      <FolderOpen size={14} />,
+                      "Archivo",
+                      <span className="flex min-w-0 items-center gap-2 rounded-lg bg-bg/60 py-1 pr-1 pl-3">
+                        <i className={`h-2 w-2 shrink-0 rounded-full ${hasFile ? "bg-ok" : "bg-line-strong"}`} aria-hidden />
+                        <span className="min-w-0 flex-1 truncate text-ink-2">{hasFile ? "Abierto en esta computadora" : "Sin archivo local"}</span>
+                        {hasFile && (
+                          <button
+                            type="button"
+                            className="rounded-md px-2 py-1 text-faint transition-colors hover:text-ink"
+                            onClick={() => {
+                              const old = fileUrls.get(fileKey) as string;
+                              if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+                              fileUrls.delete(fileKey);
+                              bump((n) => n + 1);
+                            }}
+                          >
+                            Quitar
+                          </button>
+                        )}
+                        <label className="btn relative cursor-pointer !px-2.5 !py-1 text-xs has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400">
+                          {hasFile ? "Cambiar" : "Abrir"}
+                          <input
+                            type="file"
+                            accept="video/*"
+                            className="sr-only"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              const old = fileUrls.get(fileKey);
+                              if (old) URL.revokeObjectURL(old);
+                              fileUrls.set(fileKey, URL.createObjectURL(f));
+                              bump((n) => n + 1);
+                            }}
+                          />
+                        </label>
+                      </span>,
+                      "El video original completo (sin recortar), para que los tiempos coincidan con YouTube. No se sube a ningún lado.",
+                    )}
+                  </div>
+                </section>
+
+                {/* Technical settings and the evaluation tools: out of the steps of the analysis, one click from the gear. */}
+                <section className="flex flex-wrap items-center gap-2 border-t border-line p-4">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      closeMenu();
+                      setTechOpen(true);
+                    }}
+                    title="Parámetros con los que se calcula la posesión de este partido (y, con ella, el informe)"
+                  >
+                    <SlidersHorizontal size={14} />
+                    Detalles técnicos
+                    {techChanged(match).length > 0 && <span className="tag tag-accent">{techChanged(match).length} cambiados</span>}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      closeMenu();
+                      setProcOpen(true);
+                    }}
+                    title="Todo el tracking, relleno y balón automático, y detección de eventos: lanzarlos y ver en qué van"
+                  >
+                    <ListChecks size={14} />
+                    Procesos
+                  </button>
+                  <Link href={`/partido/playground?id=${encodeURIComponent(match.match_id)}`} className="btn btn-ghost text-faint" title="Comprobar el balón, la posesión, los pases y los eventos detectados">
+                    <Flask size={14} />
+                    Herramientas de evaluación
+                  </Link>
+                </section>
+              </div>
+            );
+          }}
+        </Dropdown>
+      </MatchHeader>
+      <VideoFilesBar match={match} dl={videoDl} />
+      {procOpen && (
+        <Modal title="Procesos del partido" wide onClose={() => setProcOpen(false)}>
+          <ProcessesPanel match={match} />
+        </Modal>
+      )}
+      {techOpen && (
+        <Modal title="Detalles técnicos" wide onClose={() => setTechOpen(false)}>
+          <TechPanel match={match} />
+        </Modal>
+      )}
+      </EdgeReveal>
 
       {/* The video takes the room; the working panel keeps a fixed, narrower width (wider for the pitch animation). */}
       <div
+        ref={fitRef}
         className={
           !withVideo
             ? ""
-            : tab === "plays"
-              ? "grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
-              : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_26rem]"
+            : fitOn
+                ? "grid gap-6 xl:-mb-12 xl:grid-cols-[minmax(0,1fr)_var(--side-w)]"
+                : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_26rem]"
         }
+        style={fitOn ? ({ "--side-w": `${segSideW}px` } as React.CSSProperties) : undefined}
       >
         {/* The player stays mounted on every tab so the video keeps its position. */}
-        <div className={withVideo ? "space-y-3 xl:sticky xl:top-4 xl:self-start" : "hidden"}>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="seg" role="group" aria-label="Video del partido">
-              {videos.map((v) => (
-                <button key={v.video_id} type="button" aria-pressed={v.video_id === video.video_id} onClick={() => pickVideo(v.video_id)} className="seg-opt">
-                  <span className="tc mr-1.5 opacity-70">{v.video_id}</span>
-                  {v.label}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              title="Un partido puede venir en varios videos, por ejemplo uno por tiempo"
-              onClick={() => {
-                const v = nextVideo(videos);
-                setVideos([...videos, v]);
-                pickVideo(v.video_id);
-              }}
-            >
-              <Plus size={14} />
-              Añadir video
-            </button>
-            {videos.length > 1 && (
-              <span className="ml-auto flex items-center gap-2 text-[11px] text-faint">
-                <input className={`${input} w-32`} aria-label="Nombre de este video" value={video.label} onChange={(e) => patchVideo({ label: e.target.value })} />
-                <select
-                  className={input}
-                  aria-label="Tiempo del partido de este video"
-                  title="A qué tiempo pertenece este video: un tiempo puede venir en varias partes"
-                  value={video.period ?? (videoIndex === 0 ? 1 : 2)}
-                  onChange={(e) => patchVideo({ period: Number(e.target.value) as 1 | 2 })}
-                >
-                  <option value={1}>1.er tiempo</option>
-                  <option value={2}>2.º tiempo</option>
-                </select>
-                {videoIndex > 0 && usedBy(video.video_id) === 0 && (
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 transition-colors hover:text-danger"
-                    title="Solo se puede quitar un video sin eventos, jugadas ni tramos"
-                    onClick={() => {
-                      setVideos(videos.filter((v) => v.video_id !== video.video_id));
-                      pickVideo(videos[0].video_id);
-                    }}
-                  >
-                    <X size={12} />
-                    quitar
-                  </button>
-                )}
-              </span>
-            )}
-          </div>
-
+        <div ref={setVideoColEl} className={withVideo ? "space-y-3 xl:sticky xl:top-4 xl:self-start" : "hidden"}>
           {/* The width is capped by the height of the window, so the video and its controls always fit on screen. */}
-          <div className="relative mx-auto w-full xl:max-w-[calc((100vh-15rem)*16/9)]">
+          <div
+            className="relative mx-auto w-full xl:max-w-[calc((100vh-15rem)*16/9)]"
+            style={fitOn && fitH ? { maxWidth: Math.max(320, Math.floor((fitH - underH - 12) * (16 / 9))) } : undefined}
+          >
             <div ref={setOverlaySlot} className={tab === "tag" ? "pointer-events-none absolute inset-0 z-10" : "hidden"} />
             <VideoPlayer key={video.video_id} ref={playerRef} youtubeId={video.youtube_id || undefined} fileUrl={fileUrls.get(fileKey)} onTime={onTime} onPlayState={setPlaying} />
           </div>
+          <div ref={setUnderEl} className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className={`${btn} h-9 w-9 !p-0`} title="−5 s (←)" aria-label="Retroceder 5 segundos" onClick={() => jump(-5)}>
               <Rewind size={16} />
@@ -456,67 +740,31 @@ function MatchPage() {
               />
             </span>
           </div>
-          <div ref={setBelowSlot} className={tab === "tag" ? "" : "hidden"} />
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-            <input
-              className={`${input} min-w-0 flex-1`}
-              placeholder={`Pega aquí el enlace de YouTube de ${video.label.toLowerCase()}`}
-              value={ytInput}
-              onChange={(e) => {
-                setYtDraft(e.target.value);
-                const parsed = parseYouTubeId(e.target.value);
-                if (parsed || e.target.value.trim() === "") patchVideo({ youtube_id: parsed });
-              }}
-            />
-            <label className={`${btn} relative cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400`}>
-              <FolderOpen size={15} />
-              Abrir archivo local
-              <input
-                type="file"
-                accept="video/*"
-                className="sr-only"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  const old = fileUrls.get(fileKey);
-                  if (old) URL.revokeObjectURL(old);
-                  fileUrls.set(fileKey, URL.createObjectURL(f));
-                  bump((n) => n + 1);
-                }}
-              />
-            </label>
-            {fileUrls.has(fileKey) && (
-              <button
-                type="button"
-                className="link"
-                onClick={() => {
-                  const old = fileUrls.get(fileKey) as string;
-                  if (old.startsWith("blob:")) URL.revokeObjectURL(old);
-                  fileUrls.delete(fileKey);
-                  bump((n) => n + 1);
-                }}
-              >
-                quitar archivo
-              </button>
-            )}
+          <div ref={setBelowSlot} className={tab === "tag" || tab === "segments" || tab === "plays" ? "" : "hidden"} />
           </div>
-          {ytDraft !== null && ytDraft.trim() !== "" && !parseYouTubeId(ytDraft) && (
-            <p className="text-xs text-danger">No reconozco ese enlace. Pega la URL completa del video de YouTube.</p>
-          )}
-          <p className="text-xs text-faint">
-            El archivo local debe ser el video original completo (sin recortar), para que los tiempos coincidan con YouTube. No se sube a
-            ningún lado.
-            {videos.length > 1 && " Cada video tiene sus propios tiempos, tramos, eventos y jugadas; Análisis e Informe los juntan."}
-          </p>
         </div>
 
-        <div className="min-w-0">
+        <div className={fitOn ? "relative min-h-0 min-w-0" : "min-w-0"} style={fitOn && fitH ? { height: tab === "plays" && videoColH > 0 ? Math.min(fitH, videoColH) : fitH } : undefined}>
+          {fitOn && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Ancho del panel (arrastra; doble clic: el de siempre)"
+              title="Arrastra para cambiar el ancho del panel · doble clic: el de siempre"
+              className="group absolute top-0 -left-4 hidden h-full w-2 cursor-col-resize touch-none xl:block"
+              onPointerDown={dragSegSide}
+              onDoubleClick={() => setPref(`${tab}:sideW`, String(sideDefault))}
+            >
+              <span className="mx-auto block h-full w-px rounded-full transition-colors group-hover:bg-line-strong" />
+            </div>
+          )}
           {tab === "tag" && (
             <TagTab
               key={video.video_id}
               match={match}
               videoId={video.video_id}
               defaultPeriod={video.period ?? (videoIndex === 0 ? 1 : 2)}
+              periodAt={(t) => periodAt(video, videoIndex, t)}
               events={events}
               segments={segments}
               time={time}
@@ -525,7 +773,6 @@ function MatchPage() {
               playClip={playClip}
               overlaySlot={overlaySlot}
               belowSlot={belowSlot}
-              tableSlot={tableSlot}
             />
           )}
           {tab === "segments" && (
@@ -536,11 +783,28 @@ function MatchPage() {
               videoIds={videos.map((v) => v.video_id)}
               segmentsByVideo={segmentsByVideo}
               time={time}
+              duration={duration}
               playerRef={playerRef}
+              belowSlot={belowSlot}
             />
           )}
           {tab === "plays" && (
-            <PlaysTab key={video.video_id} match={match} videoId={video.video_id} plays={plays} time={time} playerRef={playerRef} playClip={playClip} />
+            <PlaysTab
+              key={video.video_id}
+              match={match}
+              videoId={video.video_id}
+              plays={plays}
+              allPlays={allPlays}
+              videos={videos}
+              events={allEvents}
+              onGoTo={goToPlay}
+              initialPlayId={focusPlay}
+              time={time}
+              duration={duration}
+              playerRef={playerRef}
+              playClip={playClip}
+              belowSlot={belowSlot}
+            />
           )}
           {tab === "analysis" && (
             <AnalysisTab
@@ -549,6 +813,7 @@ function MatchPage() {
               segments={timeline.segments}
               videoIds={videos.map((v) => v.video_id)}
               videoEvents={allEvents}
+              segmentsByVideo={segmentsByVideo}
               // On the joined axis the times are no longer video times: tooltips show the original ones.
               timeLabel={
                 videos.length > 1
@@ -564,7 +829,7 @@ function MatchPage() {
         </div>
       </div>
 
-      {(tab === "calibration" || tab === "tracking") &&
+      {(tab === "calibration" || tab === "tracking" || tab === "ball") &&
         (!match.folder ? (
           <Card title="Falta la carpeta del partido">
             <p className="text-sm text-pretty text-muted">
@@ -586,20 +851,6 @@ function MatchPage() {
           </Card>
         ) : (
           <>
-            {/* Calibration and tracking work on one video at a time: which one, chosen here. */}
-            {videos.length > 1 && (
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted">Video</span>
-                <div className="seg" role="group" aria-label="Video del partido">
-                  {videos.map((v) => (
-                    <button key={v.video_id} type="button" aria-pressed={v.video_id === video.video_id} onClick={() => pickVideo(v.video_id)} className="seg-opt">
-                      <span className="tc mr-1.5 opacity-70">{v.video_id}</span>
-                      {v.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
             {tab === "calibration" ? (
           <Calibration
             key={`${match.folder}|${video.video_id}`}
@@ -607,46 +858,25 @@ function MatchPage() {
             folder={match.folder}
             video={video.video_id}
             venue={match.venue_id}
-            onVenue={(venue_id) => patch({ venue_id })}
+            teams={{ own: match.focus_team, opp: match.other_team }}
           />
         ) : (
-          <Correction key={`${match.folder}|${video.video_id}`} embedded folder={match.folder} video={video.video_id} matchAppId={match.match_id} />
+          <Correction
+            key={`${match.folder}|${video.video_id}`}
+            embedded
+            folder={match.folder}
+            video={video.video_id}
+            matchAppId={match.match_id}
+            step={tab === "ball" ? "ball" : "players"}
+          />
             )}
           </>
         ))}
 
-      {/* Full width, under both columns: the events table of the tagging tab is drawn here. */}
-      <div ref={setTableSlot} className={tab === "tag" ? "mt-6" : "hidden"} />
+      {tab === "board" && <BoardsWorkspace embedded />}
 
-      <div className="mt-12 text-xs text-faint print:hidden">
-        {confirmDelete ? (
-          <span>
-            ¿Borrar este partido con sus {allEvents.length} eventos y {allPlays.length} jugadas?{" "}
-            <button
-              type="button"
-              className="font-medium text-danger underline"
-              onClick={() =>
-                mutate((s) => ({
-                  ...s,
-                  matches: s.matches.filter((m) => m.match_id !== match.match_id),
-                  events: s.events.filter((e) => e.match_id !== match.match_id),
-                  plays: s.plays.filter((p) => p.match_id !== match.match_id),
-                  segments: s.segments.filter((g) => g.match_id !== match.match_id),
-                }))
-              }
-            >
-              Sí, borrar
-            </button>{" "}
-            <button type="button" className="underline" onClick={() => setConfirmDelete(false)}>
-              cancelar
-            </button>
-          </span>
-        ) : (
-          <button type="button" className="underline" onClick={() => setConfirmDelete(true)}>
-            Borrar partido
-          </button>
-        )}
-      </div>
+      {/* Full width, under both columns: the events table of the tagging tab is drawn here. */}
+
     </div>
   );
 }
