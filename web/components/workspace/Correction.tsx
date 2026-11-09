@@ -161,7 +161,13 @@ function useBox() {
   const [box, setBox] = useState({ w: 0, h: 0 });
   const ref = useCallback((el: HTMLElement | null) => {
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => setBox({ w: Math.round(e.contentRect.width), h: Math.round(e.contentRect.height) }));
+    // A change of one pixel is ignored: the sizes of other panels are computed from these measures, and with rounded
+    // values a 1 px difference flips back and forth (the panels "tremble" without anything changing).
+    const ro = new ResizeObserver(([e]) => {
+      const w = Math.round(e.contentRect.width);
+      const h = Math.round(e.contentRect.height);
+      setBox((b) => (Math.abs(b.w - w) < 2 && Math.abs(b.h - h) < 2 && b.w > 0 ? b : { w, h }));
+    });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);

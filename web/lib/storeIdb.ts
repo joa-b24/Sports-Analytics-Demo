@@ -44,7 +44,9 @@ export function writeText(db: IDBDatabase, text: string, key = STATE_KEY): Promi
   return new Promise((resolve, reject) => {
     let tx: IDBTransaction;
     try {
-      tx = db.transaction(STORE_NAME, "readwrite");
+      // "strict": the browser waits for the data to be on the disk before it reports the write as done. The default
+      // ("relaxed" in Chromium) may leave the last writes in the operating system's memory, and a power cut loses them.
+      tx = db.transaction(STORE_NAME, "readwrite", { durability: "strict" });
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error("No se pudo escribir en IndexedDB"));
       tx.onabort = () => reject(tx.error ?? new Error("Escritura cancelada (¿cuota llena?)"));

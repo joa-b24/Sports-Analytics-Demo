@@ -6,7 +6,7 @@ import { COLORS, Pitch } from "@/components/Pitch";
 import { Card, input } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
 import { MAX_COMPARE, NO_DATA, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
-import { heatmap, type Oriented } from "@/lib/positions";
+import { heatmapSmooth, type Oriented } from "@/lib/positions";
 import type { Segment } from "@/lib/segments";
 import { setPref, usePref, useStore } from "@/lib/store";
 import { PITCH, type Match, type MatchEvent } from "@/lib/types";
@@ -222,7 +222,7 @@ function MetricRow({ m, rows, per10 }: { m: Metric; rows: PlayerRow[]; per10: bo
 }
 
 function PlayerHeat({ parts, row, color, name }: { parts: Oriented[]; row: PlayerRow; color: string; name: string }) {
-  const h = useMemo(() => heatmap(parts, row.team, row.id, 21, 14), [parts, row.team, row.id]);
+  const h = useMemo(() => heatmapSmooth(parts, row.team, row.id), [parts, row.team, row.id]);
   const max = Math.max(...h.seconds, 1e-9);
   const cw = PITCH.length / h.nx;
   const ch = PITCH.width / h.ny;

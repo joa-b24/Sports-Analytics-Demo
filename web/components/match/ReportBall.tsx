@@ -60,9 +60,6 @@ export function BallBlock({ data }: { data: ReportData }) {
           <span className="h-full rounded-full bg-line" style={{ width: `${(100 * b.possession.unassigned) / Math.max(1, total)}%` }} />
           <span className="h-full flex-1 rounded-full" style={{ background: COLORS.opp }} />
         </div>
-        <p className="mt-1 text-xs text-faint">
-          Sobre el tiempo con dueño. Sin asignar (gris: disputado, suelto o sin toque medido): {min(b.possession.unassigned)}, {pct(b.possession.unassigned, total)} del tiempo seguido.
-        </p>
       </div>
 
       <div className="break-inside-avoid">

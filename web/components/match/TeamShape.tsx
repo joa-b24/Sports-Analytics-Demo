@@ -98,7 +98,7 @@ export function TeamShapeCard({ match, videoIds, segmentsByVideo = {} }: { match
     const unit = shape.clock === "play" ? "min de juego" : "min de video";
     const rows = shape.bins.map((b) => ({ label: `${b.from_min}–${b.to_min}`, a: r1(b.own[measure]), b: r1(b.opp[measure]) }));
     return (
-      <Card title="Altura y anchura del bloque" note={`C4 · calculado en la app · ${unit}`}>
+      <Card title="Altura y anchura del bloque" note={unit}>
         {header}
         <BinChart key={`${binMin}-${measure}-${rows.length}`} bins={rows} aLabel={match.focus_team} bLabel={match.other_team} />
         <p className="mt-3 text-xs text-pretty text-faint">
@@ -121,7 +121,7 @@ export function TeamShapeCard({ match, videoIds, segmentsByVideo = {} }: { match
     });
     const noHeights = files.some((f) => !f.own_attacks) && (measure === "line_height" || measure === "block_height");
     return (
-      <Card title="Altura y anchura del bloque" note={`C4 · archivo ${files.map((f) => `${f.video_id}: ${f.parts} partes`).join(" · ")}`}>
+      <Card title="Altura y anchura del bloque" note={`tramos de ${binMin} min`}>
         {header}
         {noHeights ? (
           <p className="text-sm text-warn">Este archivo no sabe hacia dónde ataca el equipo, así que no tiene alturas, solo ancho y largo.</p>

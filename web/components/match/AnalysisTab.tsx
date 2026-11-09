@@ -192,7 +192,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
 
       <Section title="Ataque organizado">
         <div className="grid gap-5 xl:grid-cols-2">
-          <Card title="¿Desde dónde tiran?" note="A1">
+          <Card title="¿Desde dónde tiran?">
             <ShotMap
               events={evs}
               aLabel={A}
@@ -209,22 +209,22 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             {shotsPlayer.panel}
           </Card>
           <div className="space-y-5">
-            <Card title="¿Cuántos tiros van a puerta?" note="A1" delay={80}>
+            <Card title="¿Cuántos tiros van a puerta?" delay={80}>
               <PartsDuo rows={shotRows} unknownLabel="sin resultado anotado" />
             </Card>
-            <Card title="¿Cuántas entradas al área acaban en tiro?" note={`A3 · tiro en menos de ${SHOT_WINDOW_S} s`} delay={140}>
+            <Card title="¿Cuántas entradas al área acaban en tiro?" note={`tiro en menos de ${SHOT_WINDOW_S} s`} delay={140}>
               <RateDuo a={boxEntries(evs, "own")} b={boxEntries(evs, "opp")} aLabel={A} bLabel={B} unit="entradas al área" />
             </Card>
           </div>
-          <Card title="¿Por qué carril llegan al último tercio?" note="A2 · visto por quien ataca">
+          <Card title="¿Por qué carril llegan al último tercio?" note="visto por quien ataca">
             <PartsDuo rows={laneRows((s) => finalThirdEntries(evs, s))} unknownLabel="sin posición" />
           </Card>
-          <Card title="¿Cómo salen desde su portería?" note="A4" delay={80}>
+          <Card title="¿Cómo salen desde su portería?" delay={80}>
             <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).length, EVENT_DETAILS.goal_kick ?? {})} />
             <div className="hr-fade my-4" />
             <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).outcome, EVENT_OUTCOMES.goal_kick ?? {})} />
           </Card>
-          <Card title="Centros: ¿desde qué banda y cuántos se rematan?" note="A5" className="xl:col-span-2">
+          <Card title="Centros: ¿desde qué banda y cuántos se rematan?" className="xl:col-span-2">
             <div className="grid gap-6 md:grid-cols-2">
               <PartsDuo rows={laneRows((s) => crosses(evs, s).lanes)} unknownLabel="sin posición" />
               <PartsDuo rows={tallyRows((s) => crosses(evs, s).outcome, EVENT_OUTCOMES.cross ?? {})} />
@@ -235,16 +235,16 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
 
       <Section title="Transiciones" note="al perder y al recuperar el balón">
         <div className="grid gap-5 xl:grid-cols-3">
-          <Card title="Pérdidas que acaban en tiro del contrario" note={`B2 · en menos de ${SHOT_WINDOW_S} s`}>
+          <Card title="Pérdidas que acaban en tiro del contrario" note={`en menos de ${SHOT_WINDOW_S} s`}>
             <RateDuo a={tr.own.lossToShotAgainst} b={tr.opp.lossToShotAgainst} aLabel={A} bLabel={B} unit="pérdidas" />
           </Card>
-          <Card title="Pérdidas que recuperan enseguida" note={`B3 · en menos de ${COUNTERPRESS_WINDOW_S} s`} delay={80}>
+          <Card title="Pérdidas que recuperan enseguida" note={`en menos de ${COUNTERPRESS_WINDOW_S} s`} delay={80}>
             <RateDuo a={tr.own.counterpress} b={tr.opp.counterpress} aLabel={A} bLabel={B} unit="pérdidas" />
           </Card>
-          <Card title="Recuperaciones que acaban en tiro propio" note={`D1 · en menos de ${SHOT_WINDOW_S} s`} delay={160}>
+          <Card title="Recuperaciones que acaban en tiro propio" note={`en menos de ${SHOT_WINDOW_S} s`} delay={160}>
             <RateDuo a={tr.own.recoveryToShot} b={tr.opp.recoveryToShot} aLabel={A} bLabel={B} unit="recuperaciones" />
           </Card>
-          <Card title="¿Desde dónde salen las recuperaciones que acaban en tiro?" note="D2" className="xl:col-span-2">
+          <Card title="¿Desde dónde salen las recuperaciones que acaban en tiro?" className="xl:col-span-2">
             <div className="mb-3 seg">
               {SIDES.map((s) => (
                 <button key={s} type="button" aria-pressed={counterTeam === s} onClick={() => setCounterTeam(s)} className="seg-opt">
@@ -260,7 +260,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
               </div>
             )}
           </Card>
-          <Card title="Tras recuperar, ¿adelante o atrás?" note="D3 · primer pase" delay={80}>
+          <Card title="Tras recuperar, ¿adelante o atrás?" note="primer pase" delay={80}>
             <PartsDuo rows={tallyRows((s) => firstPass(evs, s), EVENT_DETAILS.recovery ?? {})} />
           </Card>
         </div>
@@ -268,14 +268,14 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
 
       <Section title="Defensa organizada">
         <div className="grid gap-5 xl:grid-cols-2">
-          <Card title="¿A qué altura recuperan?" note="C1">
+          <Card title="¿A qué altura recuperan?">
             <PartsDuo rows={heightRows} unknownLabel="sin posición" />
             <p className="mt-4 text-xs text-pretty text-faint">
               Los tiros en contra de cada equipo están en el mapa de tiros de arriba, y por qué carril les llegan, en las entradas al último
               tercio del contrario (C2).
             </p>
           </Card>
-          <Card title="¿Dónde ocurre? Zonas de la cancha" note="B1, C3 · elige el evento" delay={80}>
+          <Card title="¿Dónde ocurre? Zonas de la cancha" note="elige el evento" delay={80}>
             <div className="mb-2 flex flex-wrap gap-2">
               <select className={input} value={zoneType} aria-label="Tipo de evento" onChange={(e) => setZoneType(e.target.value as EventType)}>
                 {EVENT_TYPES.map((t) => (
@@ -296,13 +296,13 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
 
       <Section title="Balón parado">
         <div className="grid gap-5 xl:grid-cols-3">
-          <Card title="Córners: ¿cómo acaban?" note="E1">
+          <Card title="Córners: ¿cómo acaban?">
             <PartsDuo rows={tallyRows((s) => setPieces(evs, s).corners, EVENT_OUTCOMES.corner ?? {})} />
           </Card>
-          <Card title="Córners: ¿cómo los mandan?" note="E2" delay={80}>
+          <Card title="Córners: ¿cómo los mandan?" delay={80}>
             <PartsDuo rows={tallyRows((s) => setPieces(evs, s).delivery, EVENT_DETAILS.corner ?? {})} />
           </Card>
-          <Card title="Tiros libres: ¿cómo acaban?" note="E1" delay={160}>
+          <Card title="Tiros libres: ¿cómo acaban?" delay={160}>
             <PartsDuo rows={tallyRows((s) => setPieces(evs, s).freeKicks, EVENT_OUTCOMES.free_kick ?? {})} />
           </Card>
         </div>
@@ -318,8 +318,8 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             title="¿En qué tramo generan y reciben más?"
             note={
               bins.basis === "juego"
-                ? `F1 · minutos de juego${bins.skipped ? ` · ${bins.skipped} evento(s) en pausa fuera` : ""}`
-                : "F1 · minutos de video desde el primer evento: marca los tramos para contar minutos de juego"
+                ? `minutos de juego${bins.skipped ? ` · ${bins.skipped} evento(s) en pausa fuera` : ""}`
+                : "minutos de video desde el primer evento: marca los tramos para contar minutos de juego"
             }
           >
             <div className="mb-4 flex flex-wrap items-center gap-3">

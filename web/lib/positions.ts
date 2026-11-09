@@ -158,6 +158,43 @@ export function heatmap(parts: Oriented[], team: "own" | "opp", playerId: string
   return { nx, ny, seconds, total };
 }
 
+// Smooths a heat map with a Gaussian blur (sigma in cells), so a fine grid reads as a surface and not as squares.
+// Cells near the edge are divided by the weight of the kernel that fits, so they do not look colder than the rest.
+// The total is kept as it was (the blur only moves time around).
+export function smoothHeat(h: Heat, sigma = 1.3): Heat {
+  if (sigma <= 0) return h;
+  const r = Math.max(1, Math.ceil(sigma * 3));
+  const k: number[] = [];
+  for (let d = -r; d <= r; d++) k.push(Math.exp(-(d * d) / (2 * sigma * sigma)));
+  const pass = (src: number[], nx: number, ny: number, horizontal: boolean) => {
+    const out = new Array(nx * ny).fill(0);
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        let acc = 0;
+        let w = 0;
+        for (let d = -r; d <= r; d++) {
+          const a = horizontal ? i + d : i;
+          const b = horizontal ? j : j + d;
+          if (a < 0 || a >= nx || b < 0 || b >= ny) continue;
+          acc += src[b * nx + a] * k[d + r];
+          w += k[d + r];
+        }
+        out[j * nx + i] = acc / w;
+      }
+    return out;
+  };
+  const blurred = pass(pass(h.seconds, h.nx, h.ny, true), h.nx, h.ny, false);
+  const sum = blurred.reduce((a, b) => a + b, 0);
+  const have = h.seconds.reduce((a, b) => a + b, 0);
+  const scale = sum > 0 ? have / sum : 1;
+  return { ...h, seconds: blurred.map((v) => v * scale) };
+}
+
+// The heat map as the screens draw it: a 42 x 28 grid (2.5 m cells) smoothed.
+export function heatmapSmooth(parts: Oriented[], team: "own" | "opp", playerId: string | null = null): Heat {
+  return smoothHeat(heatmap(parts, team, playerId, 42, 28));
+}
+
 // Named players of a team across the parts (names come from the correction table), by time seen.
 export function namedPlayers(parts: Oriented[], team: "own" | "opp"): { name: string; seconds: number }[] {
   const out = new Map<string, number>();

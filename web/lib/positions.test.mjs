@@ -285,3 +285,20 @@ test("un equipo sin nombres (el rival) cuenta pases a nivel de equipo, marcados 
   assert.equal(rep.passes.opp.approx, 1);
   assert.equal(rep.passes.own.approx, 0);
 });
+
+test("smoothHeat keeps the total time, spreads a single cell and does not cool the edges", async () => {
+  const { smoothHeat } = await import("./positions.ts");
+  const nx = 10;
+  const ny = 6;
+  const seconds = new Array(nx * ny).fill(0);
+  seconds[0] = 10; // a corner cell
+  seconds[3 * nx + 5] = 10; // an inner cell
+  const h = { nx, ny, seconds, total: 20 };
+  const s = smoothHeat(h, 1.2);
+  const sum = s.seconds.reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(sum - 20) < 1e-9, "the blur only moves time around");
+  assert.ok(s.seconds[1] > 0 && s.seconds[nx] > 0, "the corner spreads to its neighbours");
+  assert.ok(s.seconds[3 * nx + 5] < 10 && s.seconds[3 * nx + 5] > s.seconds[3 * nx + 7], "the peak drops but stays the highest nearby");
+  assert.ok(s.seconds[0] > s.seconds[3 * nx + 5] * 0.9, "an edge cell is not colder than an inner one with the same time");
+  assert.deepEqual(smoothHeat(h, 0).seconds, seconds);
+});

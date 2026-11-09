@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal } from "@/components/Modal";
-import { resultText, saveAll, type Ask, type Choice, type Progress } from "@/lib/saveMatch";
-import { useStore } from "@/lib/store";
+import { AUTOSAVE_MS, AUTOSAVE_PREF, resultText, saveAll, type Ask, type Choice, type Progress } from "@/lib/saveMatch";
+import { useStore, usePref } from "@/lib/store";
 import type { Match } from "@/lib/types";
+
+const IDLE_MS = 30_000;
 
 // A file of the folder newer than the last save: asked one by one (or the same answer for the rest of this save).
 export function useAsk(): [Ask, React.ReactNode, () => void] {
@@ -85,6 +87,29 @@ export function SaveStatus({ match }: { match: Match }) {
   useEffect(() => {
     runRef.current = run;
   }, [run]);
+
+  // Autosave: every AUTOSAVE_MS, and only once nothing has changed for IDLE_MS (saving a part rebuilds its files, which
+  // takes a moment: never while she is marking). It saves what changed; a file newer on disk is skipped, not asked.
+  // Off with the preference `autosave` = "off".
+  const autosave = usePref(AUTOSAVE_PREF, "on") !== "off";
+  const lastChange = useRef(0);
+  const lastTry = useRef(0);
+  useEffect(() => {
+    lastTry.current = Date.now();
+  }, []);
+  useEffect(() => {
+    lastChange.current = Date.now();
+  }, [state]);
+  useEffect(() => {
+    if (!autosave || !folder) return;
+    const t = setInterval(() => {
+      const now = Date.now();
+      if (document.visibilityState === "hidden" || now - lastChange.current < IDLE_MS || now - lastTry.current < AUTOSAVE_MS) return;
+      lastTry.current = now;
+      void runRef.current(true);
+    }, 30_000);
+    return () => clearInterval(t);
+  }, [autosave, folder]);
 
   // Ctrl+S: before any other key handler (the table's «s» accepts a suggestion), and instead of the browser's save.
   useEffect(() => {

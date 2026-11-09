@@ -304,16 +304,46 @@ export function ReviewPanel({
               )}
             </div>
           )}
-          <div className="mt-3">
-            <PlayerPicker
-              value={e.player_id ?? ""}
-              onChange={(v) => update(e.event_id, { player_id: v || null })}
-              choices={players}
-              near={near}
-              picking={picking}
-              onPickVideo={onPickVideo ?? undefined}
-            />
-          </div>
+          {e.type === "substitution" ? (
+            // A substitution has two players: who leaves (player_id, the one that can also be picked on the video) and
+            // who comes in (player_in).
+            <div className="mt-3 space-y-2">
+              <div>
+                <span className="mb-1 block text-[11px] font-semibold tracking-wide text-faint uppercase">Sale</span>
+                <PlayerPicker
+                  value={e.player_id ?? ""}
+                  onChange={(v) => update(e.event_id, { player_id: v || null })}
+                  choices={players}
+                  near={near}
+                  picking={picking}
+                  onPickVideo={onPickVideo ?? undefined}
+                  label="Jugadora que sale"
+                  placeholder="Quién sale"
+                />
+              </div>
+              <div>
+                <span className="mb-1 block text-[11px] font-semibold tracking-wide text-faint uppercase">Entra</span>
+                <PlayerPicker
+                  value={e.player_in ?? ""}
+                  onChange={(v) => update(e.event_id, { player_in: v || null })}
+                  choices={players.filter((p) => p.player_id !== e.player_id)}
+                  label="Jugadora que entra"
+                  placeholder="Quién entra"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3">
+              <PlayerPicker
+                value={e.player_id ?? ""}
+                onChange={(v) => update(e.event_id, { player_id: v || null })}
+                choices={players}
+                near={near}
+                picking={picking}
+                onPickVideo={onPickVideo ?? undefined}
+              />
+            </div>
+          )}
           <input className={`${input} mt-2 w-full`} placeholder="Nota" aria-label="Nota" value={e.note ?? ""} onChange={(ev) => update(e.event_id, { note: ev.target.value || null })} />
         </>
       )}

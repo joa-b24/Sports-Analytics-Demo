@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, Eye, EyeSlash, Lock } from "@phosphor-icons/react";
 import { useState } from "react";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { physical, teamBlock } from "@/lib/physical";
-import { heatmap, passArrows, type Oriented } from "@/lib/positions";
+import { heatmapSmooth, passArrows, type Oriented } from "@/lib/positions";
 import { NEED_TEXT, REPORT_SECTIONS, moveSection, toggleSection } from "@/lib/reportSections";
 import type { Segment } from "@/lib/segments";
 import { PITCH } from "@/lib/types";
@@ -47,7 +47,7 @@ export function StatList({ items, title }: { items: { label: string; value: Reac
 // Bloque: where the team spent its time (heat), each player's average position and the block measures.
 export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; side: Side; team: string }) {
   const b = teamBlock(parts, side);
-  const h = heatmap(parts, side, null, 21, 14);
+  const h = heatmapSmooth(parts, side);
   const max = Math.max(...h.seconds, 1e-9);
   const cw = PITCH.length / h.nx;
   const ch = PITCH.width / h.ny;

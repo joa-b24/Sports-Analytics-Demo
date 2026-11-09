@@ -5,7 +5,7 @@ import Link from "next/link";
 import { DownloadSimple, FilmStrip, PencilSimple, Printer, Plus, Trash } from "@phosphor-icons/react";
 import { BinChart, Legend, MirrorBars, ZoneMap } from "@/components/charts";
 import { GoalFrame } from "@/components/match/GoalFrame";
-import { BallBlock, LeftoversList, NetworkBlock, TouchesBlock, coverageText } from "@/components/match/ReportBall";
+import { BallBlock, NetworkBlock, TouchesBlock, coverageText } from "@/components/match/ReportBall";
 import { FigureRow, PassMapSection, PhysicalSection, SectionsEditor, StatList, TeamBlockSection } from "@/components/match/ReportExtra";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { btn, btnPrimary, input } from "@/components/Shell";
@@ -302,15 +302,6 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
         </p>
       )}
 
-      <footer className="break-inside-avoid border-t border-line pt-3 text-xs text-faint">
-        <div className="mb-1 font-medium text-muted">Método</div>
-        <ul className="space-y-0.5">
-          {data.method.map((l) => (
-            <li key={l}>{l}</li>
-          ))}
-        </ul>
-        {data.summary.ball && <LeftoversList b={data.summary.ball} team={A} other={B} />}
-      </footer>
     </div>
   );
 }
