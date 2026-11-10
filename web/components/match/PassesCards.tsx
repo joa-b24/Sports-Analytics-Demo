@@ -22,7 +22,6 @@ type Side = "own" | "opp";
 // Events counted per player in the table, in this order.
 const PER_PLAYER: EventType[] = ["shot", "goal", "key_pass", "loss", "recovery", "foul"];
 
-const pct = (done: number, of: number) => (of ? `${Math.round((100 * done) / of)} %` : "–");
 
 export function PassesCards({
   match,
