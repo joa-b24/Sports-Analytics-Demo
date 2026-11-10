@@ -30,7 +30,7 @@ const LOAD_METRICS: [string, string][] = [
 ];
 
 // The steps a match can finish by itself, in the order of its modes (the board is not tied to one match).
-const STEP_ORDER = MODES.flatMap((m) => m.steps.map(([id, label]) => [id, label] as [StepId, string])).filter(([id]) => (id as string) !== "board" && stepVisible(id));
+const STEP_ORDER = MODES.flatMap((m) => m.steps.map(([id, label]) => [id, label] as [StepId, string])).filter(([id]) => (id as string) !== "board" && (id as string) !== "deck" && stepVisible(id));
 
 const fmtDate = (d: string, year = true) =>
   d ? new Date(`${d}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}) }) : "Sin fecha";
