@@ -97,8 +97,8 @@ export function matchSteps(i: StepInput): Record<StepId, StepStatus> {
       : { state: withBall === parts.length ? "done" : withBall > 0 ? "partial" : "todo", text: `${of(withBall, parts.length)} partes con balón` };
 
   const toReview = i.events.filter((e) => missingReview(e).length > 0).length;
-  const withEnd = i.events.filter((e) => missingEnd(e) !== null);
-  const toEnd = withEnd.filter((e) => missingEnd(e)).length;
+  const withEnd = i.events.filter((e) => missingEnd(e, i.events) !== null);
+  const toEnd = withEnd.filter((e) => missingEnd(e, i.events)).length;
   const tag: StepStatus =
     i.events.length === 0
       ? { state: "todo", text: "sin eventos" }

@@ -86,6 +86,7 @@ export const EVENT_OUTCOMES: Partial<Record<EventType, Record<string, string>>> 
 };
 export const EVENT_DETAILS: Partial<Record<EventType, Record<string, string>>> = {
   corner: { inswing: "Cerrado", outswing: "Abierto", short: "En corto" },
+  free_kick: { short: "En corto", long: "Pase largo", cross: "Centro", direct: "Tiro directo" },
   goal_kick: { short: "En corto", long: "En largo" },
   recovery: { forward: "Pase adelante", backward: "Pase atrás" },
   duel: { aerial: "Aéreo", ground: "En el suelo" },
@@ -94,6 +95,7 @@ export const EVENT_DETAILS: Partial<Record<EventType, Record<string, string>>> =
 };
 export const DETAIL_TITLES: Partial<Record<EventType, string>> = {
   corner: "Envío",
+  free_kick: "Cobro",
   goal_kick: "Salida",
   recovery: "Primer pase",
   duel: "Tipo",
@@ -102,7 +104,7 @@ export const DETAIL_TITLES: Partial<Record<EventType, string>> = {
 };
 // Keys for the options of the last tagged event, in order.
 export const OUTCOME_KEYS = ["1", "2", "3"];
-export const DETAIL_KEYS = ["7", "8", "9"];
+export const DETAIL_KEYS = ["7", "8", "9", "0"];
 
 // Event types with an end position, and which kind (same as END_TYPES / GOAL_TYPES in schema.py).
 export const END_TYPES: readonly EventType[] = ["cross", "corner"];

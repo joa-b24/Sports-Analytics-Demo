@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import { Modal } from "@/components/Modal";
 import { COLORS } from "@/components/Pitch";
 import { Card, btn } from "@/components/Shell";
+import { TeamSwap } from "@/components/match/TeamSwap";
 import type { PlayerHandle } from "@/components/VideoPlayer";
 import { useFixedParts } from "@/lib/fixed";
 import { fmtT, isTyping } from "@/lib/format";
@@ -20,6 +21,7 @@ import { EventSuggestions } from "./EventSuggestions";
 import { EventsCompact, EventsTable } from "./EventsTable";
 import { teamColor } from "./eventOptions";
 import type { PlayerChoice } from "./PlayerPicker";
+import { completeDuels } from "@/lib/duels";
 import { ReviewPanel, type BallView } from "./ReviewPanel";
 import { VideoTimeline } from "./VideoTimeline";
 
@@ -94,7 +96,8 @@ export function TagTab({ match, videoId, defaultPeriod, periodAt, events, segmen
       t_video: Math.round(now() * 10) / 10,
       period: periodAt ? periodAt(now()) : defaultPeriod,
       type,
-      team,
+      // A duel has no team to choose: it is always ours (the rival has no names), with who won noted afterwards.
+      team: type === "duel" ? "own" : team,
       player_id: null,
       x: null,
       y: null,
@@ -204,8 +207,9 @@ export function TagTab({ match, videoId, defaultPeriod, periodAt, events, segmen
     setCurrent(e.event_id);
   };
   const toReview = events.filter((e) => missingReview(e).length > 0).length;
-  const withEnd = events.filter((e) => missingEnd(e) !== null);
-  const toEnd = withEnd.filter((e) => missingEnd(e)).length;
+  const [duelMsg, setDuelMsg] = useState<string | null>(null);
+  const withEnd = events.filter((e) => missingEnd(e, events) !== null);
+  const toEnd = withEnd.filter((e) => missingEnd(e, events)).length;
   const filtered = JSON.stringify(filter) !== JSON.stringify(NO_FILTER);
 
   // ---------------------------------------------------------------- tracking (when the match has it)
@@ -242,6 +246,8 @@ export function TagTab({ match, videoId, defaultPeriod, periodAt, events, segmen
     }
     return { now: positionsAt(part, time)?.ball ?? null, trail };
   })();
+  // Duels of this video with no player: the ones the tracking can name.
+  const duelsToFill = useMemo(() => completeDuels(events.filter((e) => (e.video_id ?? "v1") === videoId), fixed?.parts ?? []), [events, fixed, videoId]);
   const fps = fixed?.parts.find((p) => p.file.video_id === videoId)?.file.fps ?? 29.97;
   const screen = useScreenBoxes(match.folder, videoId, Math.round(time * fps), pass === 2);
   const canPick = pass === 2 && !!reviewing && !!screen && screen.boxes.length > 0;
@@ -330,21 +336,6 @@ export function TagTab({ match, videoId, defaultPeriod, periodAt, events, segmen
     />
   );
 
-  const teamBtn = (t: "own" | "opp", label: string, key: string) => (
-    <button
-      type="button"
-      onClick={() => setTeam(t)}
-      aria-pressed={team === t}
-      className={`flex flex-1 items-center justify-center gap-2 rounded-full border px-4 py-2.5 text-sm font-medium transition-[background-color,border-color,box-shadow] duration-200 ${
-        team === t ? "border-accent bg-accent/20 text-accent-100" : "border-line bg-transparent text-ink-2 hover:border-line-strong"
-      }`}
-    >
-      <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: t === "own" ? COLORS.own : COLORS.opp }} />
-      <span className="truncate">{label}</span>
-      <kbd className="kbd">{key}</kbd>
-    </button>
-  );
-
   const keysCard = (
     <div className="enter rounded-2xl bg-raised p-3 shadow-[0_0_0_1px_var(--color-line-strong)]">
       <div className="mb-2 flex items-center justify-between text-xs text-ink-2">
@@ -405,10 +396,7 @@ export function TagTab({ match, videoId, defaultPeriod, periodAt, events, segmen
 
       {pass === 1 && (
         <Card className="shrink-0" title="Nuevo evento" note={<span className="tc">{fmtT(time)}</span>}>
-          <div className="flex gap-2">
-            {teamBtn("own", match.focus_team, "A")}
-            {teamBtn("opp", match.other_team, "S")}
-          </div>
+          <TeamSwap match={match} value={team} onChange={setTeam} hint="A / S" className="w-full" />
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button type="button" className={btn} aria-expanded={showKeys} onClick={() => setShowKeys((v) => !v)}>
               <Keyboard size={15} />
@@ -496,6 +484,30 @@ export function TagTab({ match, videoId, defaultPeriod, periodAt, events, segmen
             }
           />
         </div>
+      )}
+
+      {pass === 2 && duelsToFill.pending > 0 && (
+        <Card className="shrink-0" title="Duelos sin jugadora" note={<span className="tc">{duelsToFill.pending}</span>}>
+          <p className="text-xs text-pretty text-muted">
+            {duelsToFill.patches.length > 0
+              ? `${duelsToFill.patches.length} se pueden completar con la jugadora de ${match.focus_team} más cercana al lugar del duelo (la del tracking con nombre).`
+              : "El tracking de este video no alcanza para decir quién fue (sin nombres cerca o sin tracking)."}
+          </p>
+          {duelsToFill.patches.length > 0 && (
+            <button
+              type="button"
+              className={`${btn} mt-2`}
+              onClick={() => {
+                const byId = new Map(duelsToFill.patches.map((p) => [p.event_id, p.patch]));
+                mutate((s) => ({ ...s, events: s.events.map((e) => (byId.has(e.event_id) ? { ...e, ...byId.get(e.event_id) } : e)) }));
+                setDuelMsg(`Se completaron ${byId.size} duelos. Revísalos: se eligió a la jugadora más cercana, no se vio el duelo.`);
+              }}
+            >
+              Completar {duelsToFill.patches.length} duelos
+            </button>
+          )}
+          {duelMsg && <p className="mt-2 text-xs text-ok">{duelMsg}</p>}
+        </Card>
       )}
 
       {pass === 2 && <EventSuggestions match={match} videoId={videoId} events={events} defaultPeriod={defaultPeriod} periodAt={periodAt} playClip={playClip} />}

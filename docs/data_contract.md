@@ -100,7 +100,7 @@ Resultado de la calibración de cada frame: `n_keypoints` (visibles y confiables
 |---|---|---|
 | shot | `on_target`, `off_target`, `blocked` (el gol es el tipo `goal`) | `saved`: solo con `on_target`, cuando la atajó la portera (si lo sacó otra jugadora, no se anota) |
 | corner | `shot` (acaba en remate), `cleared`, `play_on` | `inswing` (cerrado), `outswing` (abierto), `short` |
-| free_kick | `shot`, `cleared`, `play_on` | |
+| free_kick | `shot`, `cleared`, `play_on` | `short` (en corto), `long` (pase largo), `cross` (centro al área), `direct` (tiro directo) |
 | cross | `shot`, `cleared`, `play_on` | |
 | goal_kick | `kept` (conservan el balón), `lost` | `short`, `long` |
 | recovery | | `forward`, `backward` (primer pase tras recuperar) |

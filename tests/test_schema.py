@@ -272,3 +272,19 @@ def test_possession_load_csv_as_written_by_app(tmp_path):
     assert df.loc[1, "flags"] == "ball_interp,ball_source=interp,flight"
     assert pd.isna(df.loc[1, "first_player"])
     assert len(load_possession(tmp_path)) == 3
+
+
+def test_tiro_libre_admite_como_se_cobro(mock_dir):
+    ev = load_events(mock_dir)
+    corner = ev["type"] == "corner"
+    ok = ev.copy()
+    ok.loc[corner, ["x_end", "y_end"]] = float("nan")
+    ok.loc[corner, "type"] = "free_kick"
+    ok.loc[ok["type"] == "free_kick", "outcome"] = None
+    for detail in ("short", "long", "cross", "direct"):
+        ok.loc[ok["type"] == "free_kick", "detail"] = detail
+        validate_events(ok)
+    bad = ok.copy()
+    bad.loc[bad["type"] == "free_kick", "detail"] = "inswing"  # eso es de un córner
+    with pytest.raises(SchemaError, match="detail"):
+        validate_events(bad)

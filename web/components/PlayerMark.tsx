@@ -43,11 +43,18 @@ export function PlayerMark({ box, color, label, style, unit, strong = false, das
     paintOrder: "stroke" as const,
   };
   if (style === "box") {
+    // The look of the boxes of the tagging tab: rounded, lightly filled in the team's colour, and the name in white with a
+    // dark edge above it (readable over grass, lines and shirts of any colour).
     return (
       <g pointerEvents="none">
-        <rect x={x1} y={y1} width={w} height={y2 - y1} fill="transparent" stroke={color} strokeWidth={stroke} strokeDasharray={dash} />
+        <rect x={x1} y={y1} width={w} height={y2 - y1} rx={unit * 0.8} fill={color} fillOpacity={strong ? 0.2 : 0.12} stroke={color} strokeWidth={stroke} strokeDasharray={dash} />
         {label && (
-          <text x={cx} y={y1 - unit / 2} textAnchor="middle" style={text}>
+          <text
+            x={cx}
+            y={y1 - unit / 2}
+            textAnchor="middle"
+            style={{ ...text, fill: "#ffffff", stroke: "#000000", strokeWidth: unit / 3, strokeOpacity: 0.85, fontWeight: 600 }}
+          >
             {label}
           </text>
         )}

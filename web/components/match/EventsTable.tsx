@@ -15,7 +15,7 @@ import { outcomePatch } from "@/lib/tagging";
 import { PlayerPicker, type PlayerChoice } from "./PlayerPicker";
 
 const isFiltered = (f: EventFilter) => JSON.stringify(f) !== JSON.stringify(NO_FILTER);
-const missingOf = (e: MatchEvent) => [...missingReview(e), ...(missingEnd(e) ? ["destino"] : [])];
+const missingOf = (e: MatchEvent, all: MatchEvent[]) => [...missingReview(e), ...(missingEnd(e, all) ? ["destino"] : [])];
 
 // The filters of the events, shared by the table and the review passes: types (one drop-down instead of a chip per
 // type), team, player and only what is still missing.
@@ -36,7 +36,7 @@ export function EventFilters({
 }) {
   const typesHere = EVENT_TYPES.filter((t) => events.some((e) => e.type === t));
   const count = (t: EventType) => events.filter((e) => e.type === t).length;
-  const missingCount = events.filter((e) => (pass === 3 ? missingEnd(e) === true : missingReview(e).length > 0)).length;
+  const missingCount = events.filter((e) => (pass === 3 ? missingEnd(e, events) === true : missingReview(e).length > 0)).length;
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <Select
@@ -143,7 +143,7 @@ export function EventsTable({
             </thead>
             <tbody>
               {shown.map((e) => {
-                const missing = missingOf(e);
+                const missing = missingOf(e, events);
                 const dup = duplicatesOf(events, e).length > 0;
                 const outs = outcomeOptions(e.type);
                 const dets = detailOptions(e);
@@ -304,7 +304,7 @@ export function EventsCompact({
         ) : (
           <ul>
             {rows.map((e) => {
-              const missing = missingOf(e);
+              const missing = missingOf(e, events);
               return (
                 <li key={e.event_id} style={{ height: ROW_H }}>
                   <button

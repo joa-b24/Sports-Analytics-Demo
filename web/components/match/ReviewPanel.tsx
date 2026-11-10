@@ -10,7 +10,8 @@ import { fmtT, isTyping } from "@/lib/format";
 import { endKind, missingEnd, missingReview, retype } from "@/lib/tagging";
 import { DETAIL_KEYS, DETAIL_TITLES, EVENT_LABELS, EVENT_OUTCOMES, OUTCOME_KEYS, type Match, type MatchEvent } from "@/lib/types";
 import { GoalFrame } from "./GoalFrame";
-import { TYPE_OPTIONS, teamColor, teamOptions } from "./eventOptions";
+import { TeamSwap } from "./TeamSwap";
+import { TYPE_OPTIONS, teamColor } from "./eventOptions";
 import { PlayerPicker, type PlayerChoice } from "./PlayerPicker";
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
@@ -175,7 +176,7 @@ export function ReviewPanel({
   }
   if (!e) return null;
 
-  const missing = pass === 2 ? missingReview(e) : missingEnd(e) ? ["destino"] : [];
+  const missing = pass === 2 ? missingReview(e) : missingEnd(e, all) ? ["destino"] : [];
   const kind = endKind(e.type);
   const offBy = r2(time - e.t_video);
 
@@ -204,7 +205,7 @@ export function ReviewPanel({
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Select variant="field" label="Tipo de evento" value={e.type} options={TYPE_OPTIONS} onChange={(t) => t && update(e.event_id, retype(e, t))} />
-        <Select variant="field" label="Equipo" value={e.team === "own" || e.team === "opp" ? e.team : null} options={teamOptions(match)} onChange={(t) => t && update(e.event_id, { team: t })} />
+        {e.type !== "duel" && <TeamSwap match={match} value={e.team === "opp" ? "opp" : "own"} onChange={(t) => update(e.event_id, { team: t })} />}
       </div>
 
       {/* The moment of the event: nudged, or taken from the frame on screen. */}

@@ -112,8 +112,9 @@ test("set pieces, crosses, goal kicks and first pass keep the untagged apart", (
   assert.deepEqual(sp.delivery, { total: 3, counts: { inswing: 1, outswing: 0, short: 0 }, unknown: 2 });
   assert.equal(sp.freeKicks.counts.play_on, 1);
   const cr = crosses(events, "own");
-  assert.equal(cr.outcome.counts.shot, 1);
-  assert.deepEqual(cr.lanes, { left: 1, center: 0, right: 1, missing: 0 });
+  // Los dos centros de juego y el córner cerrado (aéreo al área, sin posición anotada) son centros.
+  assert.equal(cr.outcome.counts.shot, 2);
+  assert.deepEqual(cr.lanes, { left: 1, center: 0, right: 1, missing: 1 });
   const gk = goalKicks(events, "own");
   assert.deepEqual(gk.length.counts, { short: 1, long: 1 });
   assert.deepEqual(gk.outcome, { total: 2, counts: { kept: 0, lost: 1 }, unknown: 1 });
@@ -189,4 +190,22 @@ test("momentum: events outside a play stretch are left out and counted", () => {
   assert.equal(m.basis, "juego");
   assert.equal(m.skipped, 1);
   assert.ok(m.points.every((p) => p.opp === 0));
+});
+
+test("crosses: an aerial corner and a free kick taken as a cross count; short corners and other free kicks do not", () => {
+  const events = [
+    ev(10, "cross", "own"),
+    ev(20, "corner", "own", { detail: "inswing" }),
+    ev(30, "corner", "own", { detail: "outswing" }),
+    ev(40, "corner", "own", { detail: "short" }), // en corto: no
+    ev(50, "corner", "own"), // sin anotar cómo: no se sabe, no se cuenta
+    ev(60, "free_kick", "own", { detail: "cross" }),
+    ev(70, "free_kick", "own", { detail: "direct" }),
+    ev(80, "free_kick", "own", { detail: "short" }),
+    ev(90, "free_kick", "own", { detail: "long" }),
+    ev(100, "cross", "opp"),
+  ];
+  const c = crosses(events, "own");
+  assert.equal(Object.values(c.outcome.counts).reduce((a, b) => a + b, 0) + c.outcome.unknown, 4, "cross + 2 corners + 1 free kick");
+  assert.equal(crosses(events, "opp").outcome.unknown, 1);
 });

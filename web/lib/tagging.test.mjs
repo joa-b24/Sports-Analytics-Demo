@@ -80,3 +80,18 @@ test("un cambio no pide posición, pide quién entra", () => {
   assert.deepEqual(missingReview(base), ["quién entra"]);
   assert.deepEqual(missingReview({ ...base, player_in: "Entra" }), []);
 });
+
+test("pasada 3: un gol con su tiro no pide destino dos veces; el tiro lo pide por los dos", () => {
+  const shot = ev("s", 100, "shot", "own", { outcome: "on_target" });
+  const goal = ev("g", 101, "goal", "own");
+  const lone = ev("g2", 500, "goal", "own"); // un gol sin tiro (autogol, desvío) sí pide el suyo
+  const all = [shot, goal, lone];
+  assert.equal(missingEnd(shot, all), true);
+  assert.equal(missingEnd(goal, all), null, "el gol toma el destino del tiro");
+  assert.equal(missingEnd(lone, all), true);
+  assert.equal(missingEnd(goal), true, "sin la lista de eventos no se sabe que tiene tiro");
+  assert.deepEqual(eventsFor(3, all, NO_FILTER).map((e) => e.event_id), ["s", "g2"]);
+  // Ya marcado en el tiro: el gol no queda pendiente y no se vuelve a pedir.
+  const marked = [{ ...shot, goal_y: 3, goal_z: 1 }, goal, lone];
+  assert.equal(missingEnd(marked[0], marked), false);
+});

@@ -38,6 +38,7 @@ EVENT_OUTCOMES = {
 }
 EVENT_DETAILS = {
     "corner": ("inswing", "outswing", "short"),
+    "free_kick": ("short", "long", "cross", "direct"),   # cómo se cobró: en corto, pase largo, centro al área o tiro directo
     "goal_kick": ("short", "long"),
     "recovery": ("forward", "backward"),      # primer pase tras recuperar
     "duel": ("aerial", "ground"),

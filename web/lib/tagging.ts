@@ -1,3 +1,4 @@
+import { finishes } from "./analysis.ts";
 import { END_TYPES, EVENT_DETAILS, EVENT_OUTCOMES, GOAL_TYPES, type EventType, type MatchEvent, type Team } from "./types.ts";
 
 // Rules of the three tagging passes. Pure functions: no storage, no React.
@@ -69,9 +70,24 @@ export function asksEnd(e: Pick<MatchEvent, "type" | "outcome">): boolean {
   return true;
 }
 
-// What pass 3 still has to fill in: where it ended. Null when the event does not ask for an end (asksEnd).
-export function missingEnd(e: MatchEvent): boolean | null {
+// The goals that have their shot tagged too: one finish, tagged twice. In pass 3 only the shot asks where it went in (the
+// goal takes it from there: lib/analysis.ts finishEvents), so the goal frame is marked once and not twice.
+const pairedGoals = new WeakMap<MatchEvent[], Set<string>>();
+export function goalsWithShot(all: MatchEvent[]): Set<string> {
+  let out = pairedGoals.get(all);
+  if (!out) {
+    out = new Set();
+    for (const team of ["own", "opp"] as const) for (const f of finishes(all, team)) if (f.shot && f.goal) out.add(f.goal.event_id);
+    pairedGoals.set(all, out);
+  }
+  return out;
+}
+
+// What pass 3 still has to fill in: where it ended. Null when the event does not ask for an end (asksEnd). With `all`
+// (every event of the match), a goal that has its shot does not ask: the shot does.
+export function missingEnd(e: MatchEvent, all?: MatchEvent[]): boolean | null {
   if (!asksEnd(e)) return null;
+  if (all && e.type === "goal" && goalsWithShot(all).has(e.event_id)) return null;
   const kind = endKind(e.type);
   if (kind === "goal") return e.goal_y == null || e.goal_z == null;
   if (kind === "landing") return e.x_end == null || e.y_end == null;
@@ -90,11 +106,11 @@ export const NO_FILTER: EventFilter = { types: [], team: "all", player: "", only
 export function eventsFor(pass: Pass, events: MatchEvent[], f: EventFilter): MatchEvent[] {
   const player = f.player.trim().toLowerCase();
   return events
-    .filter((e) => (pass === 3 ? asksEnd(e) : true))
+    .filter((e) => (pass === 3 ? asksEnd(e) && !(e.type === "goal" && goalsWithShot(events).has(e.event_id)) : true))
     .filter((e) => f.types.length === 0 || f.types.includes(e.type))
     .filter((e) => f.team === "all" || e.team === f.team)
     .filter((e) => !player || (e.player_id ?? "").toLowerCase().includes(player))
-    .filter((e) => !f.onlyMissing || (pass === 3 ? missingEnd(e) === true : missingReview(e).length > 0))
+    .filter((e) => !f.onlyMissing || (pass === 3 ? missingEnd(e, events) === true : missingReview(e).length > 0))
     .sort((a, b) => a.t_video - b.t_video);
 }
 

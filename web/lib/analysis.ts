@@ -232,9 +232,12 @@ function tally(events: MatchEvent[], field: "outcome" | "detail", keys: string[]
 
 const SET_PIECE = ["shot", "cleared", "play_on"];
 
-// A5
+// A5: the crosses of a team. A corner played in the air (inswing / outswing) and a free kick taken as a cross are crosses
+// into the box too; a short corner or a free kick played short, long or shot directly are not.
+export const isCrossLike = (e: MatchEvent) =>
+  e.type === "cross" || (e.type === "corner" && (e.detail === "inswing" || e.detail === "outswing")) || (e.type === "free_kick" && e.detail === "cross");
 export function crosses(events: MatchEvent[], team: Side): { outcome: Tally; lanes: Lanes } {
-  const es = events.filter((e) => e.team === team && e.type === "cross");
+  const es = events.filter((e) => e.team === team && isCrossLike(e));
   return { outcome: tally(es, "outcome", SET_PIECE), lanes: lanes(es) };
 }
 
