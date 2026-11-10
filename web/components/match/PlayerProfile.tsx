@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo } from "react";
-import { ShotMap } from "@/components/charts";
+import { Select } from "@/components/Select";
+import { PlayerMap } from "@/components/match/PlayerMap";
 import { PlayerHeat, fmt, usePlayersData } from "@/components/match/PlayersCompare";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
 import { Panel } from "@/components/match/Panel";
 import { COLORS } from "@/components/Pitch";
-import { Card, input } from "@/components/Shell";
+import { Card } from "@/components/Shell";
 import { fmtT } from "@/lib/format";
 import { momentOfEvent } from "@/lib/moments";
 import { METRICS, NO_DATA, metricValue, type PlayerRow } from "@/lib/players";
@@ -68,23 +69,19 @@ export function PlayerProfile({
             {row.events > 0 ? ` · ${row.events} eventos con su nombre` : ""}
           </div>
         </div>
-        <label className="ml-auto inline-flex items-center gap-2 text-sm text-muted">
-          <span className="sr-only">Jugadora</span>
-          <select className={input} value={row.key} aria-label="Elegir jugadora" onChange={(e) => setPref(prefKey, e.target.value)}>
-            {(["own", "opp"] as const).map((s) => {
-              const list = rows.filter((r) => r.team === s);
-              return list.length === 0 ? null : (
-                <optgroup key={s} label={team(s)}>
-                  {list.map((r) => (
-                    <option key={r.key} value={r.key}>
-                      {label(r)}
-                    </option>
-                  ))}
-                </optgroup>
-              );
-            })}
-          </select>
-        </label>
+        <div className="ml-auto">
+          <Select
+            variant="field"
+            label="Elegir jugadora"
+            value={row.key}
+            onChange={(v) => v && setPref(prefKey, v)}
+            options={(["own", "opp"] as const).flatMap((side) =>
+              rows
+                .filter((r) => r.team === side)
+                .map((r, i) => ({ value: r.key, label: label(r), color: side === "own" ? COLORS.own : COLORS.opp, group: i === 0 ? team(side) : undefined })),
+            )}
+          />
+        </div>
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
@@ -121,8 +118,8 @@ export function PlayerProfile({
           {row.minutes ? <PlayerHeat parts={parts} row={row} color={color} name={label(row)} /> : <p className="text-sm text-faint">No hay posiciones con su nombre en el tracking corregido.</p>}
         </Panel>
 
-        <Panel title="Sus tiros" note="clic en uno para verlo">
-          <ShotMap events={mine} aLabel={label(row)} bLabel="" onPick={open} />
+        <Panel title="Su mapa" note="elige qué ver; atacando hacia la derecha">
+          <PlayerMap row={row} events={mine} parts={parts} segmentsByVideo={segmentsByVideo} color={color} onPick={open} />
         </Panel>
 
         <Panel title="Sus jugadas" note={`${mine.length} evento(s) con su nombre`}>

@@ -11,6 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import { IconButton } from "@/components/Modal";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { Select } from "@/components/Select";
 import { ClipEditor } from "@/components/clip/ClipEditor";
 import { TimeRange } from "@/components/TimeRange";
 import { ViewShade } from "@/components/ViewShade";
@@ -286,19 +287,13 @@ export function PlaysTab({
               <i className={`absolute top-1 right-1 h-1.5 w-1.5 rounded-full ${loopOn ? "bg-ok" : "bg-line-strong"}`} aria-hidden />
             </button>
             {loopOn && (
-              <select
-                className="shrink-0 rounded-md bg-raised px-1.5 py-1.5 text-xs text-ink-2"
-                aria-label="Segundos extra antes y después de la jugada al repetirla"
-                title="Segundos que se añaden antes y después de la jugada cuando se repite"
-                value={loopMargin}
-                onChange={(e) => setPref(LOOP_MARGIN_PREF, e.target.value)}
-              >
-                {[0, 1, 2, 3].map((m) => (
-                  <option key={m} value={m}>
-                    ± {m} s
-                  </option>
-                ))}
-              </select>
+              <Select
+                variant="field"
+                label="Segundos extra antes y después de la jugada al repetirla"
+                value={String(loopMargin)}
+                onChange={(v) => v && setPref(LOOP_MARGIN_PREF, v)}
+                options={[0, 1, 2, 3].map((m) => ({ value: String(m), label: `± ${m} s` }))}
+              />
             )}
             <input
               className={`${input} min-w-0 flex-1 font-medium`}
@@ -576,7 +571,6 @@ function PlaysBin({
   const end = Math.max(duration ?? 0, ...plays.map((p) => p.t_end), time, 1);
   const x = (t: number) => `${(Math.min(end, Math.max(0, t)) / end) * 100}%`;
   const types = typesPresent(list);
-  const sel = "rounded-md bg-raised px-1.5 py-1 text-xs text-ink-2";
   const filtered = filter.video || filter.kind || filter.team;
   return (
     <section className="mt-3 rounded-xl bg-surface p-3" aria-label="Jugadas">
@@ -587,31 +581,38 @@ function PlaysBin({
         {list.length > 0 && (
           <>
             {multi && (
-              <select className={sel} aria-label="Filtrar por video" value={filter.video} onChange={(e) => onFilter({ ...filter, video: e.target.value })}>
-                <option value="">Todos los videos</option>
-                {[...new Map(list.map((m) => [m.video_id, m.video_label])).entries()].map(([id, label]) => (
-                  <option key={id} value={id}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+              <Select
+                variant="field"
+                label="Filtrar por video"
+                value={filter.video || "all"}
+                onChange={(v) => onFilter({ ...filter, video: !v || v === "all" ? "" : v })}
+                options={[{ value: "all", label: "Todos los videos" }, ...[...new Map(list.map((m) => [m.video_id, m.video_label])).entries()].map(([id, label]) => ({ value: id, label }))]}
+              />
             )}
-            <select className={sel} aria-label="Filtrar por tipo" value={filter.kind} onChange={(e) => onFilter({ ...filter, kind: e.target.value })}>
-              <option value="">Todos los tipos</option>
-              <option value="abp">ABP</option>
-              <option value="edited">Con dibujos</option>
-              {types.map((t) => (
-                <option key={t} value={t}>
-                  {EVENT_LABELS[t]}
-                </option>
-              ))}
-            </select>
-            <select className={sel} aria-label="Filtrar por equipo" value={filter.team} onChange={(e) => onFilter({ ...filter, team: e.target.value })}>
-              <option value="">Ambos equipos</option>
-              <option value="own">Nuestro equipo</option>
-              <option value="opp">Rival</option>
-              <option value="none">Sin evento marcado</option>
-            </select>
+            <Select
+              variant="field"
+              label="Filtrar por tipo"
+              value={filter.kind || "all"}
+              onChange={(v) => onFilter({ ...filter, kind: !v || v === "all" ? "" : v })}
+              options={[
+                { value: "all", label: "Todos los tipos" },
+                { value: "abp", label: "ABP" },
+                { value: "edited", label: "Con dibujos" },
+                ...types.map((t) => ({ value: t as string, label: EVENT_LABELS[t] })),
+              ]}
+            />
+            <Select
+              variant="field"
+              label="Filtrar por equipo"
+              value={filter.team || "all"}
+              onChange={(v) => onFilter({ ...filter, team: !v || v === "all" ? "" : v })}
+              options={[
+                { value: "all", label: "Ambos equipos" },
+                { value: "own", label: "Nuestro equipo", color: "var(--color-own)" },
+                { value: "opp", label: "Rival", color: "var(--color-opp)" },
+                { value: "none", label: "Sin evento marcado" },
+              ]}
+            />
             {filtered && (
               <button type="button" className="link text-xs" onClick={() => onFilter(NO_FILTER)}>
                 Quitar filtros

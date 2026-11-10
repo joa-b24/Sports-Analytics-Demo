@@ -1,20 +1,24 @@
 "use client";
 
+import { Crosshair, ShieldCheck, SquaresFour, UserFocus } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { Fold } from "@/components/match/Fold";
+import { Select } from "@/components/Select";
+import { useHeaderSlot } from "@/lib/stepBus";
 import { useFixedParts } from "@/lib/fixed";
 import { trackedPasses } from "@/lib/passSources";
-import { BinChart, CompareBars, EventTimeline, MomentumChart, PartsDuo, RateDuo, ScoreStrip, ShotMap, ZoneMap, type PartsRow } from "@/components/charts";
+import { BinChart, CompareBars, EventTimeline, FigureList, MomentumChart, PartsDuo, ScoreStrip, ShotMap, ZoneMap, type PartsRow } from "@/components/charts";
 import { GoalsList } from "@/components/match/GoalsList";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
 import { PassesCards } from "@/components/match/PassesCards";
 import { PlayerProfile } from "@/components/match/PlayerProfile";
 import { PlayersCompare } from "@/components/match/PlayersCompare";
 import { Panel, PanelMatch } from "@/components/match/Panel";
-import { PositionsCards } from "@/components/match/PositionsCards";
 import { TeamShapeCard } from "@/components/match/TeamShape";
 import { COLORS } from "@/components/Pitch";
 import { Reveal } from "@/components/motion";
-import { Card, Section, input } from "@/components/Shell";
+import { Card, Section } from "@/components/Shell";
 import { setPref, usePref } from "@/lib/store";
 import {
   BIN_MEASURES,
@@ -42,10 +46,10 @@ import { EVENT_DETAILS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, type EventTyp
 
 // The sections of the dashboard, from the general reading to the individual one.
 const VIEWS = [
-  ["general", "General"],
-  ["ataque", "Ataque"],
-  ["defensa", "Defensa"],
-  ["individual", "Rendimiento individual"],
+  ["general", "General", SquaresFour],
+  ["ataque", "Ataque", Crosshair],
+  ["defensa", "Defensa", ShieldCheck],
+  ["individual", "Rendimiento individual", UserFocus],
 ] as const;
 type ViewId = (typeof VIEWS)[number][0];
 
@@ -78,6 +82,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const [binMeasure, setBinMeasure] = useState<BinMeasure>("shots");
   const [counterTeam, setCounterTeam] = useState<Side>("own");
   const shotsPlayer = useMomentPlayer(match);
+  const headerSlot = useHeaderSlot();
   // Passes completed (read from the tracking): the headline row counts them with possession.
   const fixed = useFixedParts(match.folder, videoIds);
   const passTotals = useMemo(() => {
@@ -108,17 +113,14 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             etiquetado»; los de posiciones, abajo, salen de las partes corregidas.
           </p>
         </Card>
-      <Section title="Rendimiento individual" note="hasta 4 jugadoras, propias y rivales">
-          <PlayersCompare match={match} events={[]} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
-        </Section>
-        <Section title="Pases y jugadoras" note="del tracking y a mano">
+        <Section title="Pases y jugadoras" note="pases del tracking">
           <PassesCards match={match} events={[]} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
         </Section>
-      <Section title="Con posiciones medidas" note="desde el tracking">
-          <div className="mb-4">
-            <TeamShapeCard match={match} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
-          </div>
-          <PositionsCards match={match} videoIds={videoIds} events={[]} />
+        <Section title="Bloque" note="forma del equipo, desde el tracking">
+          <TeamShapeCard match={match} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
+        </Section>
+        <Section title="Perfil comparativo" note="hasta 4 jugadoras, propias y rivales">
+          <PlayersCompare match={match} events={[]} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
         </Section>
       </div>
     );
@@ -176,203 +178,111 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
     };
   });
 
-  return (
-    <PanelMatch.Provider value={match.match_id}>
-    <div className="space-y-12">
-      <div className="space-y-8">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
-          <div className="seg">
-            {([0, 1, 2] as const).map((p) => (
-              <button key={p} type="button" aria-pressed={period === p} onClick={() => setPeriod(p)} className="seg-opt">
-                {p === 0 ? "Todo el partido" : `${p}.º tiempo`}
-              </button>
-            ))}
-          </div>
-        </div>
+  // Headline figures of each section. A share is null when its base is empty (never a made-up 0).
+  const pct = (k: number, n: number) => (n > 0 ? Math.round((100 * k) / n) : null);
+  const shotsN = { own: shotBreakdown(evs, "own"), opp: shotBreakdown(evs, "opp") };
+  const conversion = (s: Side) => pct(s === "own" ? a.goal : b.goal, shotsN[s].total);
+  const onTargetPct = (s: Side) => pct(shotsN[s].onTarget, shotsN[s].total);
+  // Field tilt from the events: the share of the entries to the last third and the box that each team makes (the share
+  // of touches in the last third needs the ball followed everywhere).
+  const entries = { own: a.final_third_entry + a.box_entry, opp: b.final_third_entry + b.box_entry };
+  const tilt = (s: Side) => pct(entries[s], entries.own + entries.opp);
+  const rate = (r: { k: number; n: number }) => pct(r.k, r.n);
+  const box = { own: boxEntries(evs, "own"), opp: boxEntries(evs, "opp") };
+  const recH = { own: recoveryHeight(evs, "own"), opp: recoveryHeight(evs, "opp") };
+  const highPct = (s: Side) => pct(recH[s].rival, recH[s].rival + recH[s].middle + recH[s].own);
+  const recZones = zoneCounts(evs.filter((e) => e.type === "recovery" && e.team === counterTeam));
 
-        {/* The score is the one big figure; the other headline numbers go in one row under it. Only when tagged: a zero
-            would read as "none" when it was not noted. */}
-        <Reveal>
-          {(() => {
-            const cards = (t: Side, c: string) => evs.filter((e) => e.type === "foul" && e.team === t && e.detail === c).length;
-            const saves = (shooter: Side) => evs.filter((e) => e.type === "shot" && e.team === shooter && e.detail === "saved").length;
-            // Possession (share of the time the ball was followed) and completed passes lead the row: they say who ran the game.
-            const held = match.possession ? match.possession.own + match.possession.opp : 0;
-            const ownPct = held > 0 && match.possession ? Math.round((100 * match.possession.own) / held) : null;
-            const pct = (p: { completed: number; cut: number }) => (p.completed + p.cut > 0 ? Math.round((100 * p.completed) / (p.completed + p.cut)) : null);
-            const stats = [
-              ...(ownPct !== null ? [{ label: "Posesión", a: ownPct, b: 100 - ownPct, unit: "%" }] : []),
-              ...(passTotals
-                ? [
-                    {
-                      label: "Pases completados",
-                      a: passTotals.own.completed,
-                      b: passTotals.opp.completed,
-                      note: `acierto ${pct(passTotals.own) ?? "–"} % · ${pct(passTotals.opp) ?? "–"} %`,
-                    },
-                  ]
-                : []),
-              { label: "Tiros", a: shotsOf(evs, "own").length, b: shotsOf(evs, "opp").length },
-              { label: "Recuperaciones", a: a.recovery, b: b.recovery },
-              { label: "Pérdidas", a: a.loss, b: b.loss },
-              ...(cards("own", "yellow") + cards("opp", "yellow") > 0 ? [{ label: "Amarillas", a: cards("own", "yellow"), b: cards("opp", "yellow") }] : []),
-              ...(cards("own", "red") + cards("opp", "red") > 0 ? [{ label: "Rojas", a: cards("own", "red"), b: cards("opp", "red") }] : []),
-              ...(a.offside + b.offside > 0 ? [{ label: "Fueras de lugar", a: a.offside, b: b.offside }] : []),
-              ...(saves("own") + saves("opp") > 0 ? [{ label: "Atajadas", a: saves("opp"), b: saves("own") }] : []),
-            ];
-            return <ScoreStrip aLabel={A} bLabel={B} goals={[a.goal, b.goal]} stats={stats} />;
-          })()}
-        </Reveal>
-      </div>
-
-      {/* One topic at a time instead of one long page. */}
-      <div className="seg flex-wrap" role="group" aria-label="Qué analizar">
-        {VIEWS.map(([id, label]) => (
-          <button key={id} type="button" aria-pressed={view === id} onClick={() => setPref("analysis:view", id)} className="seg-opt">
+  const tabs = (
+    <div role="tablist" aria-label="Secciones del dashboard" className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-lg bg-surface p-1">
+      {VIEWS.map(([id, label, Icon]) => {
+        const on = view === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            onClick={() => setPref("analysis:view", id)}
+            className={`relative inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors duration-150 ${
+              on ? "bg-raised text-ink shadow-[inset_0_-2px_0_var(--color-own)]" : "text-muted hover:bg-raised/50 hover:text-ink"
+            }`}
+          >
+            <Icon size={15} weight={on ? "fill" : "regular"} aria-hidden />
             {label}
           </button>
-        ))}
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <PanelMatch.Provider value={match.match_id}>
+    {headerSlot ? createPortal(tabs, headerSlot) : <div className="mb-4">{tabs}</div>}
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
+        <div className="seg">
+          {([0, 1, 2] as const).map((p) => (
+            <button key={p} type="button" aria-pressed={period === p} onClick={() => setPeriod(p)} className="seg-opt">
+              {p === 0 ? "Todo el partido" : `${p}.º tiempo`}
+            </button>
+          ))}
+        </div>
       </div>
-
-      {view === "ataque" && (
-        <>
-      <Section title="Ataque organizado">
-        <div className="grid gap-5 xl:grid-cols-2">
-          <Panel title="¿Desde dónde tiran?">
-            <ShotMap
-              events={evs}
-              aLabel={A}
-              bLabel={B}
-              onPick={(e) => shotsPlayer.show(momentOfEvent(e, ownTimes, `${EVENT_LABELS[e.type]} de ${name(e.team === "own" ? "own" : "opp")}${e.player_id ? ` · ${e.player_id}` : ""}`))}
-            />
-            <GoalsList
-              goals={evs.filter((e) => e.type === "goal")}
-              aLabel={A}
-              bLabel={B}
-              timeLabel={timeLabel}
-              onPick={(e) => shotsPlayer.show(momentOfEvent(e, ownTimes, `Gol de ${name(e.team === "own" ? "own" : "opp")}${e.player_id ? ` · ${e.player_id}` : ""}`))}
-            />
-            {shotsPlayer.panel}
-          </Panel>
-          <div className="space-y-5">
-            <Panel title="¿Cuántos tiros van a puerta?" delay={80}>
-              <PartsDuo rows={shotRows} unknownLabel="sin resultado anotado" />
-            </Panel>
-            <Panel title="¿Cuántas entradas al área acaban en tiro?" note={`tiro en menos de ${SHOT_WINDOW_S} s`} delay={140}>
-              <RateDuo a={boxEntries(evs, "own")} b={boxEntries(evs, "opp")} aLabel={A} bLabel={B} unit="entradas al área" />
-            </Panel>
-          </div>
-          <Panel title="¿Por qué carril llegan al último tercio?" note="visto por quien ataca">
-            <PartsDuo rows={laneRows((s) => finalThirdEntries(evs, s))} unknownLabel="sin posición" />
-          </Panel>
-          <Panel title="¿Cómo salen desde su portería?" delay={80}>
-            <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).length, EVENT_DETAILS.goal_kick ?? {})} />
-            <div className="hr-fade my-4" />
-            <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).outcome, EVENT_OUTCOMES.goal_kick ?? {})} />
-          </Panel>
-          <Panel title="Centros: ¿desde qué banda y cuántos se rematan?" className="xl:col-span-2">
-            <div className="grid gap-6 md:grid-cols-2">
-              <PartsDuo rows={laneRows((s) => crosses(evs, s).lanes)} unknownLabel="sin posición" />
-              <PartsDuo rows={tallyRows((s) => crosses(evs, s).outcome, EVENT_OUTCOMES.cross ?? {})} />
-            </div>
-          </Panel>
-        </div>
-      </Section>
-
-      <Section title="Balón parado">
-        <div className="grid gap-5 xl:grid-cols-3">
-          <Panel title="Córners: ¿cómo acaban?">
-            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).corners, EVENT_OUTCOMES.corner ?? {})} />
-          </Panel>
-          <Panel title="Córners: ¿cómo los mandan?" delay={80}>
-            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).delivery, EVENT_DETAILS.corner ?? {})} />
-          </Panel>
-          <Panel title="Tiros libres: ¿cómo acaban?" delay={160}>
-            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).freeKicks, EVENT_OUTCOMES.free_kick ?? {})} />
-          </Panel>
-        </div>
-        <p className="mt-3 text-xs text-pretty text-faint">
-          Quién los cobra y a quién buscan, y cómo defienden en contra, se anotan en el número de jugadora y en la nota de cada evento:
-          se leen en la tabla de eventos, no se cuentan.
-        </p>
-      </Section>
-        </>
-      )}
-
-      {view === "defensa" && (
-        <>
-      <Section title="Transiciones" note="al perder y al recuperar el balón">
-        <div className="grid gap-5 xl:grid-cols-3">
-          <Panel title="Pérdidas que acaban en tiro del contrario" note={`en menos de ${SHOT_WINDOW_S} s`}>
-            <RateDuo a={tr.own.lossToShotAgainst} b={tr.opp.lossToShotAgainst} aLabel={A} bLabel={B} unit="pérdidas" />
-          </Panel>
-          <Panel title="Pérdidas que recuperan enseguida" note={`en menos de ${COUNTERPRESS_WINDOW_S} s`} delay={80}>
-            <RateDuo a={tr.own.counterpress} b={tr.opp.counterpress} aLabel={A} bLabel={B} unit="pérdidas" />
-          </Panel>
-          <Panel title="Recuperaciones que acaban en tiro propio" note={`en menos de ${SHOT_WINDOW_S} s`} delay={160}>
-            <RateDuo a={tr.own.recoveryToShot} b={tr.opp.recoveryToShot} aLabel={A} bLabel={B} unit="recuperaciones" />
-          </Panel>
-          <Panel title="¿Desde dónde salen las recuperaciones que acaban en tiro?" className="xl:col-span-2">
-            <div className="mb-3 seg">
-              {SIDES.map((s) => (
-                <button key={s} type="button" aria-pressed={counterTeam === s} onClick={() => setCounterTeam(s)} className="seg-opt">
-                  {name(s)}
-                </button>
-              ))}
-            </div>
-            {tr[counterTeam].recoveriesToShot.length === 0 ? (
-              <p className="text-sm text-faint">Ninguna recuperación de {name(counterTeam)} acabó en tiro en esta selección.</p>
-            ) : (
-              <div className="mx-auto max-w-xl">
-                <ZoneMap grid={counterZones.grid} missing={counterZones.missing} />
-              </div>
-            )}
-          </Panel>
-          <Panel title="Tras recuperar, ¿adelante o atrás?" note="primer pase" delay={80}>
-            <PartsDuo rows={tallyRows((s) => firstPass(evs, s), EVENT_DETAILS.recovery ?? {})} />
-          </Panel>
-        </div>
-      </Section>
-
-      <Section title="Defensa organizada">
-        <div className="grid gap-5 xl:grid-cols-2">
-          <Panel title="¿A qué altura recuperan?">
-            <PartsDuo rows={heightRows} unknownLabel="sin posición" />
-            <p className="mt-4 text-xs text-pretty text-faint">
-              Los tiros en contra de cada equipo están en el mapa de tiros de arriba, y por qué carril les llegan, en las entradas al último
-              tercio del contrario.
-            </p>
-          </Panel>
-          <Panel title="¿Dónde ocurre? Zonas de la cancha" note="elige el evento" delay={80}>
-            <div className="mb-2 flex flex-wrap gap-2">
-              <select className={input} value={zoneType} aria-label="Tipo de evento" onChange={(e) => setZoneType(e.target.value as EventType)}>
-                {EVENT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {EVENT_LABELS[t]}
-                  </option>
-                ))}
-              </select>
-              <select className={input} value={zoneTeam} aria-label="Equipo" onChange={(e) => setZoneTeam(e.target.value as Side)}>
-                <option value="own">{A}</option>
-                <option value="opp">{B}</option>
-              </select>
-            </div>
-            <ZoneMap grid={zones.grid} missing={zones.missing} />
-          </Panel>
-        </div>
-      </Section>
-        </>
-      )}
-
 
       {view === "general" && (
         <>
-      <Section title="A lo largo del partido">
-        <div className="space-y-5">
+      {/* The score is the one big figure; the other headline numbers go in one row under it. Only when tagged: a zero
+          would read as "none" when it was not noted. */}
+      <Reveal>
+        {(() => {
+          const cards = (t: Side, c: string) => evs.filter((e) => e.type === "foul" && e.team === t && e.detail === c).length;
+          const saves = (shooter: Side) => evs.filter((e) => e.type === "shot" && e.team === shooter && e.detail === "saved").length;
+          // Possession (share of the time the ball was followed) and completed passes lead the row: they say who ran the game.
+          const held = match.possession ? match.possession.own + match.possession.opp : 0;
+          const ownPct = held > 0 && match.possession ? Math.round((100 * match.possession.own) / held) : null;
+          const passPct = (p: { completed: number; cut: number }) => (p.completed + p.cut > 0 ? Math.round((100 * p.completed) / (p.completed + p.cut)) : null);
+          const stats = [
+            ...(ownPct !== null ? [{ label: "Posesión", a: ownPct, b: 100 - ownPct, unit: "%" }] : []),
+            ...(passTotals
+              ? [{ label: "Pases completados", a: passTotals.own.completed, b: passTotals.opp.completed, note: `acierto ${passPct(passTotals.own) ?? "–"} % · ${passPct(passTotals.opp) ?? "–"} %` }]
+              : []),
+            { label: "Tiros", a: shotsOf(evs, "own").length, b: shotsOf(evs, "opp").length },
+            { label: "Recuperaciones", a: a.recovery, b: b.recovery },
+            { label: "Pérdidas", a: a.loss, b: b.loss },
+            ...(cards("own", "yellow") + cards("opp", "yellow") > 0 ? [{ label: "Amarillas", a: cards("own", "yellow"), b: cards("opp", "yellow") }] : []),
+            ...(cards("own", "red") + cards("opp", "red") > 0 ? [{ label: "Rojas", a: cards("own", "red"), b: cards("opp", "red") }] : []),
+            ...(a.offside + b.offside > 0 ? [{ label: "Fueras de lugar", a: a.offside, b: b.offside }] : []),
+            ...(saves("own") + saves("opp") > 0 ? [{ label: "Atajadas", a: saves("opp"), b: saves("own") }] : []),
+          ];
+          return <ScoreStrip aLabel={A} bLabel={B} goals={[a.goal, b.goal]} stats={stats} />;
+        })()}
+      </Reveal>
+
+      <Section title="Cómo se jugó" note="quién creó más peligro y con qué eficacia">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <Panel title="Momentum" note="quién crea más peligro, y cuánto dura" defaultWide>
             <MomentumChart curve={mom} aLabel={A} bLabel={B} />
-            <p className="mt-2 text-xs text-pretty text-faint">Cada evento de ataque suma peligro (gol 5, tiro 3, entrada al área 2, último tercio, córner y centro 1) y se va apagando con los minutos (vida media de 1.5 min); la curva es la diferencia entre equipos, suavizada, y su mayor oscilación vale ±100. Pasa el cursor por un minuto para ver las cifras.</p>
+            <p className="mt-2 text-xs text-pretty text-faint">
+              Cada evento de ataque suma peligro (gol 5, tiro 3, entrada al área 2, último tercio, córner y centro 1) y se va apagando con los minutos (vida media de 1.5 min); la curva es la diferencia entre equipos, suavizada, y su mayor oscilación vale ±100. Pasa el cursor por un minuto para ver las cifras.
+            </p>
           </Panel>
+          <Panel title="Eficacia" note="quién aprovecha mejor lo que genera" delay={80}>
+            <FigureList
+              aLabel={A}
+              bLabel={B}
+              rows={[
+                { label: "Dominio territorial (field tilt)", a: tilt("own"), b: tilt("opp"), unit: " %", note: "parte de las entradas al último tercio y al área" },
+                { label: "Conversión de gol", a: conversion("own"), b: conversion("opp"), unit: " %", note: "goles entre tiros" },
+                { label: "Tiros a puerta", a: onTargetPct("own"), b: onTargetPct("opp"), unit: " %", note: "entre todos los tiros" },
+              ]}
+            />
+          </Panel>
+        </div>
+      </Section>
+
+      <Section title="A lo largo del partido">
+        <div className="grid gap-5 xl:grid-cols-2">
           <Panel
             title="¿En qué tramo generan y reciben más?"
             note={
@@ -389,53 +299,199 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
                   </button>
                 ))}
               </div>
-              <select className={input} value={binMeasure} aria-label="Qué se cuenta" onChange={(e) => setBinMeasure(e.target.value as BinMeasure)}>
-                {Object.entries(BIN_MEASURES).map(([k, label]) => (
-                  <option key={k} value={k}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+              <Select
+                variant="field"
+                label="Qué se cuenta"
+                value={binMeasure}
+                onChange={(v) => v && setBinMeasure(v)}
+                options={Object.entries(BIN_MEASURES).map(([k, label]) => ({ value: k as BinMeasure, label }))}
+              />
             </div>
             <BinChart key={`${binMin}-${binMeasure}`} bins={bins.bins.map((x) => ({ label: x.label, a: x.own[binMeasure], b: x.opp[binMeasure] }))} aLabel={A} bLabel={B} />
-            <p className="mt-3 text-xs text-pretty text-faint">
-              Para ver si cambian tras el descanso, compara «1.º tiempo» y «2.º tiempo» con el selector de arriba.
-            </p>
           </Panel>
-          <Panel title="Línea de tiempo" note="un carril por tipo de evento">
+          <Panel title="Línea de tiempo" note="un carril por tipo de evento" delay={80}>
             <EventTimeline events={evs} segments={segments} aLabel={A} bLabel={B} timeLabel={timeLabel} />
           </Panel>
-          <Panel title="Todos los eventos por tipo">
+        </div>
+        <div className="mt-5">
+          <Fold id="general-eventos" title="Todos los eventos por tipo" note="el conteo completo de lo etiquetado">
             <CompareBars aLabel={A} bLabel={B} rows={EVENT_TYPES.map((t) => ({ label: EVENT_LABELS[t], a: a[t], b: b[t] }))} />
-          </Panel>
+          </Fold>
         </div>
       </Section>
         </>
       )}
 
+      {view === "ataque" && (
+        <>
+      <Section title="Cómo atacan" note="dónde tiran y qué tan bien lo aprovechan">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <Panel title="¿Desde dónde tiran?" defaultWide>
+            <ShotMap
+              events={evs}
+              aLabel={A}
+              bLabel={B}
+              onPick={(e) => shotsPlayer.show(momentOfEvent(e, ownTimes, `${EVENT_LABELS[e.type]} de ${name(e.team === "own" ? "own" : "opp")}${e.player_id ? ` · ${e.player_id}` : ""}`))}
+            />
+            <GoalsList
+              goals={evs.filter((e) => e.type === "goal")}
+              aLabel={A}
+              bLabel={B}
+              timeLabel={timeLabel}
+              onPick={(e) => shotsPlayer.show(momentOfEvent(e, ownTimes, `Gol de ${name(e.team === "own" ? "own" : "opp")}${e.player_id ? ` · ${e.player_id}` : ""}`))}
+            />
+            {shotsPlayer.panel}
+          </Panel>
+          <Panel title="La cifra" note="lo que dice el mapa" delay={80}>
+            <FigureList
+              aLabel={A}
+              bLabel={B}
+              rows={[
+                { label: "Tiros a puerta", a: onTargetPct("own"), b: onTargetPct("opp"), unit: " %", note: `${shotsN.own.onTarget} de ${shotsN.own.total} · ${shotsN.opp.onTarget} de ${shotsN.opp.total}` },
+                { label: "Conversión de gol", a: conversion("own"), b: conversion("opp"), unit: " %", note: "goles entre tiros" },
+                { label: "Entradas al área que acaban en tiro", a: rate(box.own), b: rate(box.opp), unit: " %", note: `tiro en menos de ${SHOT_WINDOW_S} s · ${box.own.n} y ${box.opp.n} entradas` },
+                { label: "Dominio territorial (field tilt)", a: tilt("own"), b: tilt("opp"), unit: " %" },
+              ]}
+            />
+          </Panel>
+        </div>
+      </Section>
+
+      <Fold id="ataque-detalle" title="Más detalle del ataque" note="a puerta, carriles, salidas, centros y balón parado">
+        <div className="grid gap-5 xl:grid-cols-2">
+          <Panel title="¿Cuántos tiros van a puerta?">
+            <PartsDuo rows={shotRows} unknownLabel="sin resultado anotado" />
+          </Panel>
+          <Panel title="¿Por qué carril llegan al último tercio?" note="visto por quien ataca">
+            <PartsDuo rows={laneRows((s) => finalThirdEntries(evs, s))} unknownLabel="sin posición" />
+          </Panel>
+          <Panel title="¿Cómo salen desde su portería?">
+            <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).length, EVENT_DETAILS.goal_kick ?? {})} />
+            <div className="hr-fade my-4" />
+            <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).outcome, EVENT_OUTCOMES.goal_kick ?? {})} />
+          </Panel>
+          <Panel title="Centros: ¿desde qué banda y cuántos se rematan?">
+            <div className="grid gap-6 md:grid-cols-2">
+              <PartsDuo rows={laneRows((s) => crosses(evs, s).lanes)} unknownLabel="sin posición" />
+              <PartsDuo rows={tallyRows((s) => crosses(evs, s).outcome, EVENT_OUTCOMES.cross ?? {})} />
+            </div>
+          </Panel>
+          <Panel title="Córners: ¿cómo acaban?">
+            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).corners, EVENT_OUTCOMES.corner ?? {})} />
+          </Panel>
+          <Panel title="Córners: ¿cómo los mandan?">
+            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).delivery, EVENT_DETAILS.corner ?? {})} />
+          </Panel>
+          <Panel title="Tiros libres: ¿cómo acaban?">
+            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).freeKicks, EVENT_OUTCOMES.free_kick ?? {})} />
+          </Panel>
+        </div>
+        <p className="text-xs text-pretty text-faint">
+          Quién cobra el balón parado y a quién busca, y cómo defienden en contra, se anotan en el número de jugadora y en la nota de cada evento:
+          se leen en la tabla de eventos, no se cuentan.
+        </p>
+      </Fold>
+        </>
+      )}
+
+      {view === "defensa" && (
+        <>
+      <Section title="Cómo defienden" note="dónde recuperan y qué pasa al perder y al recuperar">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <Panel title="¿Dónde recuperan el balón?" defaultWide>
+            <div className="mb-3 seg">
+              {SIDES.map((s) => (
+                <button key={s} type="button" aria-pressed={counterTeam === s} onClick={() => setCounterTeam(s)} className="seg-opt">
+                  {name(s)}
+                </button>
+              ))}
+            </div>
+            {recZones.grid.flat().every((v) => v === 0) ? (
+              <p className="text-sm text-faint">{name(counterTeam)} no tiene recuperaciones con posición en esta selección.</p>
+            ) : (
+              <div className="mx-auto max-w-xl">
+                <ZoneMap grid={recZones.grid} missing={recZones.missing} />
+              </div>
+            )}
+          </Panel>
+          <Panel title="La cifra" note="lo que dice el mapa" delay={80}>
+            <FigureList
+              aLabel={A}
+              bLabel={B}
+              rows={[
+                { label: "Recuperaciones en campo rival", a: highPct("own"), b: highPct("opp"), unit: " %", note: `${recH.own.rival} de ${a.recovery} · ${recH.opp.rival} de ${b.recovery}` },
+                { label: "Pérdidas que acaban en tiro del contrario", a: rate(tr.own.lossToShotAgainst), b: rate(tr.opp.lossToShotAgainst), unit: " %", note: `en menos de ${SHOT_WINDOW_S} s (menos es mejor)` },
+                { label: "Pérdidas que recuperan enseguida", a: rate(tr.own.counterpress), b: rate(tr.opp.counterpress), unit: " %", note: `en menos de ${COUNTERPRESS_WINDOW_S} s` },
+                { label: "Recuperaciones que acaban en tiro", a: rate(tr.own.recoveryToShot), b: rate(tr.opp.recoveryToShot), unit: " %", note: `en menos de ${SHOT_WINDOW_S} s` },
+              ]}
+            />
+          </Panel>
+        </div>
+      </Section>
+
+      <Fold id="defensa-detalle" title="Más detalle de la defensa" note="transiciones, altura y zonas por evento">
+        <div className="grid gap-5 xl:grid-cols-2">
+          <Panel title="¿Desde dónde salen las recuperaciones que acaban en tiro?">
+            {tr[counterTeam].recoveriesToShot.length === 0 ? (
+              <p className="text-sm text-faint">Ninguna recuperación de {name(counterTeam)} acabó en tiro en esta selección.</p>
+            ) : (
+              <div className="mx-auto max-w-xl">
+                <ZoneMap grid={counterZones.grid} missing={counterZones.missing} />
+              </div>
+            )}
+          </Panel>
+          <Panel title="Tras recuperar, ¿adelante o atrás?" note="primer pase">
+            <PartsDuo rows={tallyRows((s) => firstPass(evs, s), EVENT_DETAILS.recovery ?? {})} />
+          </Panel>
+          <Panel title="¿A qué altura recuperan?">
+            <PartsDuo rows={heightRows} unknownLabel="sin posición" />
+            <p className="mt-4 text-xs text-pretty text-faint">
+              Los tiros en contra de cada equipo están en el mapa de tiros de Ataque, y por qué carril les llegan, en las entradas al último tercio del contrario.
+            </p>
+          </Panel>
+          <Panel title="¿Dónde ocurre? Zonas de la cancha" note="elige el evento">
+            <div className="mb-2 flex flex-wrap gap-2">
+              <Select
+                variant="field"
+                label="Tipo de evento"
+                value={zoneType}
+                onChange={(v) => v && setZoneType(v)}
+                options={EVENT_TYPES.map((t) => ({ value: t, label: EVENT_LABELS[t] }))}
+              />
+              <Select
+                variant="field"
+                label="Equipo"
+                value={zoneTeam}
+                onChange={(v) => v && setZoneTeam(v)}
+                options={[
+                  { value: "own" as Side, label: A, color: COLORS.own },
+                  { value: "opp" as Side, label: B, color: COLORS.opp },
+                ]}
+              />
+            </div>
+            <ZoneMap grid={zones.grid} missing={zones.missing} />
+          </Panel>
+        </div>
+      </Fold>
+        </>
+      )}
+
       {view === "individual" && (
         <>
-      <Section title="Ficha de jugadora" note="su partido: cifras, zonas, tiros y jugadas">
+      <Section title="Pases y jugadoras" note="pases del tracking; eventos por jugadora">
+        <PassesCards match={match} events={videoEvents ?? events} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
+      </Section>
+
+      <Section title="Bloque" note="forma del equipo, desde el tracking">
+        <TeamShapeCard match={match} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
+      </Section>
+
+      <Section title="Ficha de jugadora" note="su partido: cifras, mapa y jugadas">
         <PlayerProfile match={match} events={evs} videoIds={videoIds} segmentsByVideo={segmentsByVideo} ownTimes={ownTimes} timeLabel={timeLabel} />
       </Section>
 
-      <Section title="Rendimiento individual" note="hasta 4 jugadoras, propias y rivales">
+      <Section title="Perfil comparativo" note="hasta 4 jugadoras, propias y rivales">
         <PlayersCompare match={match} events={evs} videoIds={videoIds} segmentsByVideo={segmentsByVideo} periodNote={period !== 0} />
-      </Section>
-
-      <Section title="Pases y jugadoras" note="pases del tracking y a mano; eventos por jugadora">
-        <PassesCards match={match} events={videoEvents ?? events} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
-      </Section>
-        </>
-      )}
-
-      {view === "individual" && (
-        <>
-      <Section title="Con posiciones medidas" note="desde el tracking">
-        <div className="mb-4">
-          <TeamShapeCard match={match} videoIds={videoIds} segmentsByVideo={segmentsByVideo} />
-        </div>
-        <PositionsCards match={match} videoIds={videoIds} events={videoEvents ?? events} />
       </Section>
         </>
       )}

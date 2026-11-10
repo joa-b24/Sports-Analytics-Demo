@@ -3,9 +3,10 @@
 import { useMemo } from "react";
 import { Plus, X } from "@phosphor-icons/react";
 import { COLORS, Pitch } from "@/components/Pitch";
-import { Card, input } from "@/components/Shell";
+import { Select } from "@/components/Select";
+import { Card } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
-import { MAX_COMPARE, NO_DATA, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
+import { MAX_COMPARE, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
 import { heatmapSmooth, type Oriented } from "@/lib/positions";
 import type { Segment } from "@/lib/segments";
 import { setPref, usePref, useStore } from "@/lib/store";
@@ -68,6 +69,7 @@ export function PlayersCompare({
   const prefKey = `players:${match.match_id}`;
   const saved = usePref(prefKey, "");
   const per10 = usePref("players:per10", "0") === "1";
+  const savedGroup = usePref("players:group", "Ataque");
 
 
   // The picked ones, in their slot order; by default the two of ours with most to show.
@@ -93,6 +95,9 @@ export function PlayersCompare({
     );
 
   const metrics = shownMetrics(picked, per10);
+  // One kind of figures at a time (the first that has any when the saved one has none), so the chart stays readable.
+  const group: Metric["group"] = GROUPS.includes(savedGroup as Metric["group"]) ? (savedGroup as Metric["group"]) : "Ataque";
+  const shown = metrics.filter((m) => m.group === group);
   const anyMinutes = picked.some((r) => r.minutes);
 
   return (
@@ -109,41 +114,39 @@ export function PlayersCompare({
           </span>
         ))}
         {picked.length < MAX_COMPARE && free.length > 0 && (
-          <label className="inline-flex items-center gap-1.5 text-sm text-muted">
-            <Plus size={14} />
-            <select
-              className={input}
-              value=""
-              aria-label="Añadir jugadora a la comparación"
-              onChange={(e) => {
-                const r = byKey.get(e.target.value);
-                if (r) setPicked([...picked, r]);
-              }}
-            >
-              <option value="">Añadir jugadora…</option>
-              {(["own", "opp"] as const).map((s) => {
-                const list = free.filter((r) => r.team === s);
-                return list.length === 0 ? null : (
-                  <optgroup key={s} label={team(s)}>
-                    {list.map((r) => (
-                      <option key={r.key} value={r.key}>
-                        {label(r)}
-                        {` · ${r.minutes_played != null ? `${Math.round(r.minutes_played)} min jugados` : `jugados: ${NO_DATA}`}`}
-                        {r.events ? ` · ${r.events} eventos` : ""}
-                      </option>
-                    ))}
-                  </optgroup>
-                );
-              })}
-            </select>
-          </label>
+          <Select
+            variant="field"
+            label="Añadir jugadora a la comparación"
+            value={null}
+            placeholder="Añadir jugadora…"
+            display={
+              <span className="inline-flex items-center gap-1.5 text-muted">
+                <Plus size={14} aria-hidden />
+                Añadir jugadora
+              </span>
+            }
+            onChange={(v) => {
+              const r = v ? byKey.get(v) : undefined;
+              if (r) setPicked([...picked, r]);
+            }}
+            options={(["own", "opp"] as const).flatMap((side) =>
+              free
+                .filter((r) => r.team === side)
+                .map((r, i) => ({
+                  value: r.key,
+                  label: `${label(r)}${r.minutes_played != null ? ` · ${Math.round(r.minutes_played)} min` : ""}${r.events ? ` · ${r.events} ev.` : ""}`,
+                  color: side === "own" ? COLORS.own : COLORS.opp,
+                  group: i === 0 ? team(side) : undefined,
+                })),
+            )}
+          />
         )}
         <div className="seg ml-auto" role="group" aria-label="Cómo contar">
           <button type="button" className="seg-opt" aria-pressed={!per10} onClick={() => setPref("players:per10", "0")}>
             Totales
           </button>
           <button type="button" className="seg-opt" aria-pressed={per10} disabled={!anyMinutes} onClick={() => setPref("players:per10", "1")} title={anyMinutes ? "" : "Hace falta tracking con su nombre"}>
-            Por 10 min vistos
+            Por 10 min
           </button>
         </div>
       </div>
@@ -153,41 +156,10 @@ export function PlayersCompare({
           <p className="text-sm text-muted">Elige hasta {MAX_COMPARE} jugadoras para compararlas, de los dos equipos.</p>
         </Card>
       ) : (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
-          <Card title="Cifra por cifra" note={per10 ? "por 10 minutos en cuadro" : "totales del partido"}>
-            {metrics.length === 0 ? (
-              <p className="text-sm text-faint">Sin cifras para estas jugadoras.</p>
-            ) : (
-              <div className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
-                {GROUPS.map((g) => {
-                  const ms = metrics.filter((m) => m.group === g);
-                  if (ms.length === 0) return null;
-                  return (
-                    <div key={g}>
-                      <div className="eyebrow mb-1.5">{g}</div>
-                      <div className="divide-y divide-line-soft">
-                        {ms.map((m) => (
-                          <MetricRow key={m.key} m={m} rows={picked} per10={per10} />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <p className="mt-4 text-xs text-pretty text-faint">
-              {picked.some((r) => r.fill_time_pct != null) &&
-                `Relleno (posición extrapolada, no medida): ${picked
-                  .filter((r) => r.fill_time_pct != null)
-                  .map((r) => `${label(r)} ${fmt(r.fill_time_pct ?? 0)} % del tiempo visto, ${r.fill_dist_pct != null ? fmt(r.fill_dist_pct) : NO_DATA} % de la distancia`)
-                  .join("; ")}. `}
-              Minutos jugados: reloj del partido por tiempo, del inicio al fin del juego de cada video (sin las pausas internas), menos lo que la jugadora estuvo fuera (sin dato si es suplente y no hay cambio etiquetado). «Tiempo visto»: solo lo que salió en cuadro. Eventos: solo los etiquetados con su nombre{periodNote ? " (en el tiempo elegido arriba)" : ""}; si su equipo no tiene eventos con nombre, «—». Toques, pases y físico: del tracking corregido,
-              solo el tiempo en cuadro{periodNote ? ", de todo el partido" : ""}; «—» es que no se midió, no que fuera 0.
-            </p>
-          </Card>
+        <div className="space-y-5">
           <Card title="Dónde jugó" note="tiempo en cada zona, atacando hacia la derecha">
             {anyMinutes ? (
-              <div className="grid grid-cols-2 gap-3 xl:grid-cols-1 2xl:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 {picked.map((r, i) => (
                   <PlayerHeat key={r.key} parts={parts} row={r} color={SLOTS[i]} name={label(r)} />
                 ))}
@@ -195,6 +167,27 @@ export function PlayersCompare({
             ) : (
               <p className="text-sm text-faint">Ninguna de las elegidas tiene posiciones con su nombre en el tracking corregido.</p>
             )}
+          </Card>
+          <Card title="Cifra por cifra" note={per10 ? "por 10 minutos en cuadro" : "totales del partido"}>
+            <div className="mb-4 seg flex-wrap" role="group" aria-label="Tipo de datos que se comparan">
+              {GROUPS.map((g) => (
+                <button key={g} type="button" className="seg-opt" aria-pressed={group === g} onClick={() => setPref("players:group", g)}>
+                  {g}
+                </button>
+              ))}
+            </div>
+            {shown.length === 0 ? (
+              <p className="text-sm text-faint">Sin cifras de «{group}» para estas jugadoras.</p>
+            ) : (
+              <div className="divide-y divide-line-soft">
+                {shown.map((m) => (
+                  <MetricRow key={m.key} m={m} rows={picked} per10={per10} />
+                ))}
+              </div>
+            )}
+            <p className="mt-4 text-xs text-pretty text-faint">
+              Minutos jugados: reloj del partido por tiempo, menos lo que la jugadora estuvo fuera (sin dato si es suplente y no hay cambio etiquetado). Eventos: solo los etiquetados con su nombre{periodNote ? " (en el tiempo elegido arriba)" : ""}; si su equipo no tiene eventos con nombre, «—». Toques, pases y físico: del tracking corregido, solo el tiempo en cuadro{periodNote ? ", de todo el partido" : ""}; «—» es que no se midió, no que fuera 0.
+            </p>
           </Card>
         </div>
       )}
@@ -234,13 +227,10 @@ export function PlayerHeat({ parts, row, color, name }: { parts: Oriented[]; row
   const ch = PITCH.width / h.ny;
   return (
     <figure className="min-w-0">
-      <figcaption className="mb-1 flex items-center justify-between gap-2 text-xs">
+      <figcaption className="mb-1 flex items-center gap-2 text-xs">
         <span className="inline-flex min-w-0 items-center gap-1.5 text-ink-2">
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
           <span className="truncate">{name}</span>
-        </span>
-        <span className="num text-faint" title="Tiempo visto en cuadro; los minutos jugados van en la cifra «Minutos jugados»">
-          {row.minutes ? `${Math.round(row.minutes)} min visto` : "—"}
         </span>
       </figcaption>
       {h.total === 0 ? (

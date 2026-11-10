@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { BinChart } from "@/components/charts";
+import { Select } from "@/components/Select";
 import { Locked } from "@/components/Locked";
-import { Card, input } from "@/components/Shell";
+import { Card } from "@/components/Shell";
 import { blockShape, MIN_VISIBLE, type ShapeMeasure } from "@/lib/blockShape";
 import { useFixedParts } from "@/lib/fixed";
 import { readLocal } from "@/lib/local";
@@ -84,13 +85,13 @@ export function TeamShapeCard({ match, videoIds, segmentsByVideo = {} }: { match
           </button>
         ))}
       </div>
-      <select className={input} value={measure} aria-label="Medida" onChange={(e) => setMeasure(e.target.value as ShapeMeasure)}>
-        {Object.entries(MEASURES).map(([k, v]) => (
-          <option key={k} value={k}>
-            {v}
-          </option>
-        ))}
-      </select>
+      <Select
+        variant="field"
+        label="Medida"
+        value={measure}
+        onChange={(v) => v && setMeasure(v)}
+        options={Object.entries(MEASURES).map(([k, v]) => ({ value: k as ShapeMeasure, label: v }))}
+      />
     </div>
   );
 

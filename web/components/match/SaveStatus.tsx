@@ -1,5 +1,6 @@
 "use client";
 
+import { WarningCircle } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal } from "@/components/Modal";
 import { AUTOSAVE_MS, AUTOSAVE_PREF, resultText, saveAll, type Ask, type Choice, type Progress } from "@/lib/saveMatch";
@@ -62,6 +63,7 @@ export function SaveStatus({ match }: { match: Match }) {
   const folder = match.folder;
   const [progress, setProgress] = useState<Progress | null>(null);
   const [result, setResult] = useState<{ text: string; bad: boolean } | null>(null);
+  const [autoWarn, setAutoWarn] = useState<{ text: string; bad: boolean } | null>(null);
   const [ask, dialog, resetAsk] = useAsk();
   const busy = useRef(false);
 
@@ -71,11 +73,17 @@ export function SaveStatus({ match }: { match: Match }) {
       busy.current = true;
       resetAsk();
       setResult(null);
+      if (!auto) setAutoWarn(null);
       setProgress({ done: 0, total: 1, label: "" });
       try {
         // An autosave never asks: a file newer on disk is skipped and stays marked as not saved.
         const r = await saveAll(state, match, auto ? async () => "skip" : ask, setProgress);
-        if (!auto || r.errors.length) setResult({ text: resultText(r), bad: r.errors.length > 0 });
+        // A manual save always says how it went. An autosave stays quiet unless something failed, and then it does not
+        // interrupt: a small warning in the bar opens the detail.
+        const out = { text: resultText(r), bad: r.errors.length > 0 };
+        if (!auto) setResult(out);
+        else if (r.errors.length) setAutoWarn(out);
+        else setAutoWarn(null);
       } finally {
         busy.current = false;
         setProgress(null);
@@ -133,6 +141,17 @@ export function SaveStatus({ match }: { match: Match }) {
         </span>
       )}
       {dialog}
+      {autoWarn && !result && (
+        <button
+          type="button"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-warn-900 px-2 text-xs text-warn"
+          title="El guardado automático tuvo errores: clic para verlos"
+          onClick={() => setResult(autoWarn)}
+        >
+          <WarningCircle size={15} weight="fill" aria-hidden />
+          Guardado automático con errores
+        </button>
+      )}
       {result && (
         <Modal title={result.bad ? "Guardado con errores" : "Guardado"} onClose={() => setResult(null)}>
           <p className={`text-sm ${result.bad ? "text-danger" : "text-ink"}`}>{result.text}</p>

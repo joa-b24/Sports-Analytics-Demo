@@ -1,6 +1,6 @@
 "use client";
 
-import { CaretDown, Check } from "@phosphor-icons/react";
+import { CaretDown, Check, MagnifyingGlass } from "@phosphor-icons/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -18,6 +18,8 @@ export interface SelectOption<T extends string> {
   // Starts a group: a small title over this option.
   group?: string;
 }
+
+const SEARCH_FROM = 8;
 
 type Common<T extends string> = {
   options: SelectOption<T>[];
@@ -44,9 +46,13 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
   const [pos, setPos] = useState<{ left: number; top: number; minW: number; up: boolean } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  // A long list (more than SEARCH_FROM options) gets a search box at the top that filters it as you type.
+  const [query, setQuery] = useState("");
+  const searchable = options.length > SEARCH_FROM;
+  const q = query.trim().toLowerCase();
   const items: { value: T | null; label: string; color?: string; hint?: string; group?: string }[] = [
-    ...(clearable && !props.multi ? [{ value: null, label: "—" }] : []),
-    ...options,
+    ...(clearable && !props.multi && !q ? [{ value: null, label: "—" }] : []),
+    ...(q ? options.filter((o) => o.label.toLowerCase().includes(q)).map((o, i) => (i === 0 ? { ...o, group: undefined } : o)) : options),
   ];
   const isOn = (v: T | null) => (props.multi ? v !== null && props.value.includes(v) : props.value === v);
   const chosen = props.multi ? null : (options.find((o) => o.value === props.value) ?? null);
@@ -91,6 +97,7 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
     }
   };
   const openAt = () => {
+    setQuery("");
     const i = items.findIndex((o) => isOn(o.value));
     setHi(Math.max(0, i));
     setOpen(true);
@@ -106,9 +113,11 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
       return;
     }
     if (e.key === "Escape" || e.key === "Tab") return setOpen(false);
+    // Typing in the search box is the box's: only the arrows and Enter move and pick.
+    if ((e.target as HTMLElement).tagName === "INPUT" && !["ArrowDown", "ArrowUp", "Enter"].includes(e.key)) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      setHi((h) => (h + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length);
+      setHi((h) => (h + (e.key === "ArrowDown" ? 1 : -1) + Math.max(1, items.length)) % Math.max(1, items.length));
     } else if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       pick(items[hi]?.value ?? null);
@@ -120,7 +129,7 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
 
   const base =
     variant === "field"
-      ? "h-9 rounded-lg bg-bg/60 px-3 text-sm shadow-[inset_0_0_0_1px_var(--color-line)] hover:shadow-[inset_0_0_0_1px_var(--color-line-strong)]"
+      ? "h-9 rounded-md bg-bg/60 px-3 text-sm shadow-[inset_0_0_0_1px_var(--color-line)] hover:shadow-[inset_0_0_0_1px_var(--color-line-strong)]"
       : "rounded-md px-2 py-0.5 text-xs hover:bg-raised";
   const empty = props.multi ? props.value.length === 0 : props.value === null;
   return (
@@ -140,7 +149,7 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
       >
         {chosen?.color && <i className="h-2 w-2 shrink-0 rounded-full" style={{ background: chosen.color }} />}
         <span className="min-w-0 truncate">{display ?? chosen?.label ?? placeholder}</span>
-        <CaretDown size={10} className={`shrink-0 text-faint transition-transform ${open ? "rotate-180" : ""}`} />
+        <CaretDown size={11} weight="bold" className={`shrink-0 text-faint transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
       </button>
       {open &&
         pos &&
@@ -153,7 +162,7 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
             aria-multiselectable={props.multi || undefined}
             tabIndex={-1}
             onKeyDown={onKey}
-            className="enter fixed z-[70] max-h-72 overflow-y-auto rounded-xl bg-raised p-1 text-sm shadow-[0_0_0_1px_var(--color-line),0_24px_48px_-16px_rgba(0,0,0,.7)]"
+            className="enter fixed z-[70] max-h-80 overflow-y-auto rounded-lg bg-raised p-1 text-sm shadow-[0_0_0_1px_var(--color-line-strong),0_24px_48px_-16px_rgba(0,0,0,.7)]"
             style={{
               left: align === "right" ? undefined : pos.left,
               right: align === "right" ? window.innerWidth - pos.left : undefined,
@@ -162,6 +171,23 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
               minWidth: Math.max(160, pos.minW),
             }}
           >
+            {searchable && (
+              <label className="sticky top-0 z-10 mb-1 flex items-center gap-2 rounded-md bg-bg/70 px-2.5 py-1.5 backdrop-blur">
+                <MagnifyingGlass size={13} className="shrink-0 text-faint" aria-hidden />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setHi(0);
+                  }}
+                  placeholder="Buscar…"
+                  aria-label="Buscar en la lista"
+                  className="min-w-0 flex-1 bg-transparent text-sm text-ink placeholder:text-faint focus:outline-none"
+                />
+              </label>
+            )}
+            {items.length === 0 && <div className="px-2.5 py-2 text-xs text-faint">Nada coincide con la búsqueda.</div>}
             {items.map((o, i) => (
               <div key={o.value ?? "_none"}>
                 {o.group && <div className="cond px-2.5 pt-2 pb-1 text-[10px] font-bold tracking-wide text-faint uppercase">{o.group}</div>}
@@ -172,7 +198,7 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
                   data-hi={i === hi ? "" : undefined}
                   onMouseEnter={() => setHi(i)}
                   onClick={() => pick(o.value)}
-                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${i === hi ? "bg-line-strong text-ink" : "text-ink-2"}`}
+                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors ${i === hi ? "bg-line-strong text-ink" : "text-ink-2"} ${isOn(o.value) ? "font-medium" : ""}`}
                 >
                   <span className="grid w-3.5 shrink-0 place-items-center text-accent-300">{isOn(o.value) && <Check size={12} weight="bold" />}</span>
                   {o.color && <i className="h-2 w-2 shrink-0 rounded-full" style={{ background: o.color }} />}

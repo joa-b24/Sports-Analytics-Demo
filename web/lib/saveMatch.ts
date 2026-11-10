@@ -123,6 +123,8 @@ export interface SaveAllResult {
   backup: string | null;
   errors: string[];
   skipped: string[];
+  // Corrections of parts whose tracks_ file is no longer in the folder (replaced or deleted): kept in the browser, not saved.
+  orphans: string[];
   cancelled: boolean;
   nothing: boolean;
 }
@@ -130,16 +132,26 @@ export interface SaveAllResult {
 // Everything of the match that changed: the parts (each with the same export as its «Guardar»), the events and a backup.
 // An error in one part does not stop the others.
 export async function saveAll(state: State, match: Match, ask: Ask, onProgress: (p: Progress) => void): Promise<SaveAllResult> {
-  const res: SaveAllResult = { parts: 0, events: null, backup: null, errors: [], skipped: [], cancelled: false, nothing: false };
+  const res: SaveAllResult = { parts: 0, events: null, backup: null, errors: [], skipped: [], orphans: [], cancelled: false, nothing: false };
   const folder = match.folder;
   if (!folder) return { ...res, errors: ["El partido no tiene carpeta."] };
   const attack = attackOf(folder);
   const items = matchItems(state, match, attack);
-  const dirty = dirtyItems(items, readLog(folder));
-  if (!dirty.length) return { ...res, nothing: true };
+  const dueAll = dirtyItems(items, readLog(folder));
+  if (!dueAll.length) return { ...res, nothing: true };
   const listings = new Map<string, LocalEntry[] | null>();
   const dir = `matches/${folder}/tracking`;
-  if (!(await listLocal(dir)) && dirty.some((d) => d.kind === "part")) return { ...res, errors: ["No se puede leer la carpeta del partido: la app no corre en esta computadora."] };
+  const inFolder = await listLocal(dir);
+  if (!inFolder && dueAll.some((d) => d.kind === "part")) return { ...res, errors: ["No se puede leer la carpeta del partido: la app no corre en esta computadora."] };
+  // A part whose tracks_ file is gone (the stretch was processed again with other limits) cannot be rebuilt: it is not an
+  // error of this save, so it is set aside and named apart.
+  const here = new Set((inFolder ?? []).map((e) => e.name));
+  const dirty = dueAll.filter((d) => {
+    if (d.kind !== "part" || here.has(`tracks_${d.video_id}_${d.start_frame}_${d.end_frame}.json`)) return true;
+    res.orphans.push(d.label);
+    return false;
+  });
+  if (!dirty.length) return { ...res, nothing: res.orphans.length === 0 };
   const events = state.events.filter((e) => e.match_id === match.match_id);
   const steps = dirty.length + 1;
   let n = 0;
@@ -223,6 +235,6 @@ export function resultText(r: SaveAllResult): string {
     r.events !== null ? `${r.events} ${r.events === 1 ? "evento" : "eventos"}` : "",
   ].filter(Boolean);
   const head = done.length ? `Guardé ${done.join(", ")}${r.backup ? ` y el respaldo ${r.backup}` : ""}.` : "No se guardó nada.";
-  const tail = [r.cancelled ? "Cancelado." : "", r.skipped.length ? `Saltados: ${r.skipped.join(", ")}.` : "", r.errors.length ? `Errores: ${r.errors.join(" · ")}` : ""].filter(Boolean);
+  const tail = [r.cancelled ? "Cancelado." : "", r.skipped.length ? `Saltados: ${r.skipped.join(", ")}.` : "", r.errors.length ? `Errores: ${r.errors.join(" · ")}` : "", r.orphans.length ? `Sin archivo en la carpeta (no se guardan; sus correcciones siguen en el navegador): ${r.orphans.join(", ")}.` : ""].filter(Boolean);
   return [head, ...tail].join(" ");
 }

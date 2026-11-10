@@ -124,6 +124,52 @@ export function ScoreStrip({
   );
 }
 
+// A column of headline figures, one per row: the label, the figure of each team (colour = team) and a bar with their share.
+// Next to a big map it is the «one figure» the map answers. `a`/`b` null = could not be computed (shown «–»).
+export interface FigureRow {
+  label: string;
+  a: number | null;
+  b: number | null;
+  unit?: string;
+  // Small line under the figures: what it is made of.
+  note?: string;
+}
+export function FigureList({ rows, aLabel, bLabel }: { rows: FigureRow[]; aLabel: string; bLabel: string }) {
+  return (
+    <div className="divide-y divide-line-soft">
+      {rows.map((r) => {
+        const sum = (r.a ?? 0) + (r.b ?? 0);
+        const show = (v: number | null) => (v === null ? "–" : `${v}${r.unit ?? ""}`);
+        return (
+          <div key={r.label} className="py-3 first:pt-0 last:pb-0" title={`${r.label} · ${aLabel}: ${show(r.a)} · ${bLabel}: ${show(r.b)}${r.note ? ` · ${r.note}` : ""}`}>
+            <div className="text-xs text-muted">{r.label}</div>
+            <div className="mt-1 flex items-baseline gap-3">
+              <span className="num text-3xl leading-none" style={{ color: COLORS.own }}>
+                {show(r.a)}
+              </span>
+              <span className="text-xs text-faint">|</span>
+              <span className="num text-3xl leading-none" style={{ color: COLORS.opp }}>
+                {show(r.b)}
+              </span>
+            </div>
+            <div className="mt-2 flex h-[3px] gap-0.5 overflow-hidden rounded-full">
+              {sum === 0 ? (
+                <span className="h-full w-full bg-line-soft" />
+              ) : (
+                <>
+                  <span className="h-full rounded-full" style={{ width: `${((r.a ?? 0) / sum) * 100}%`, background: COLORS.own }} />
+                  <span className="h-full flex-1 rounded-full" style={{ background: COLORS.opp }} />
+                </>
+              )}
+            </div>
+            {r.note && <div className="mt-1 text-[11px] text-faint">{r.note}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Momentum: one signed curve (lib/analysis.ts momentumCurve). Our team fills above the middle line, the opponent below;
 // goals are marked at their minute; the dashed line is half time. Move the pointer over it to read a minute.
 export function MomentumChart({ curve, aLabel, bLabel }: { curve: MomentumCurve; aLabel: string; bLabel: string }) {
