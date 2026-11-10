@@ -2,7 +2,7 @@
 
 import { shootoutText } from "@/lib/shootout";
 import { FileText, Monitor, Path, PlayCircle, Scissors, SoccerBall, Strategy, Tag, Target, type Icon } from "@phosphor-icons/react";
-import { stepVisible } from "@/lib/mobile";
+import { setHeaderSlot } from "@/lib/stepBus";
 import type { StepId, StepStatus } from "@/lib/steps";
 import type { Match, MatchEvent } from "@/lib/types";
 
@@ -17,7 +17,7 @@ export const MODES = [
     steps: [
       ["calibration", "Calibración"],
       ["segments", "Tramos"],
-      ["tracking", "Tracking"],
+      ["tracking", "Jugadoras"],
       ["ball", "Balón"],
       ["tag", "Eventos"],
     ],
@@ -120,6 +120,8 @@ export function MatchHeader({ match, events, tab, onTab, steps, video, status, b
       </h1>
       {badge}
       {video}
+      {/* Mode switches of the open step (captura: anchors / quick review / table) are drawn here. */}
+      <div ref={setHeaderSlot} className="flex items-center gap-2 empty:hidden" />
       <span className="flex-1" />
       {status}
       {children}

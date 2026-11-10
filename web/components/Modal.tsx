@@ -62,10 +62,10 @@ export function IconButton({
   label: string;
   onClick: () => void;
   children: React.ReactNode;
-  tone?: "default" | "danger" | "accent";
+  tone?: "default" | "danger" | "accent" | "ok";
   disabled?: boolean;
 }) {
-  const color = tone === "danger" ? "hover:text-danger" : tone === "accent" ? "text-accent-300 hover:text-accent-100" : "hover:text-ink";
+  const color = tone === "ok" ? "bg-ok/15 text-ok hover:text-ok" : tone === "danger" ? "hover:text-danger" : tone === "accent" ? "text-accent-300 hover:text-accent-100" : "hover:text-ink";
   return (
     <button
       type="button"
@@ -73,7 +73,7 @@ export function IconButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={`inline-grid h-7 w-7 place-items-center rounded-lg text-muted transition-colors hover:bg-raised disabled:opacity-30 ${color}`}
+      className={`inline-grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-raised disabled:opacity-30 ${color}`}
     >
       {children}
     </button>

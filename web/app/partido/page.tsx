@@ -36,7 +36,7 @@ import { TechPanel } from "@/components/match/TechPanel";
 import { MissingTag, VideoFilesBar } from "@/components/match/VideoDownload";
 import { Modal } from "@/components/Modal";
 import { techChanged } from "@/lib/tech";
-import { publishSteps } from "@/lib/stepBus";
+import { publishSteps, publishVideos } from "@/lib/stepBus";
 import { MODES, MatchHeader, isMode, mainOf, modeOf, type TabId } from "@/components/match/MatchHeader";
 import { BoardsWorkspace } from "@/components/board/BoardsWorkspace";
 import { ReportTab } from "@/components/match/ReportTab";
@@ -45,7 +45,6 @@ import { TagTab } from "@/components/match/TagTab";
 import { Card, DemoBadge, btn, btnPrimary, input } from "@/components/Shell";
 import { Dropdown } from "@/components/Dropdown";
 import { Select } from "@/components/Select";
-import { EdgeReveal, useFocusMode } from "@/components/FocusMode";
 import { Calibration } from "@/components/workspace/Calibration";
 import { Correction } from "@/components/workspace/Correction";
 import { SpeedControl } from "@/components/SpeedControl";
@@ -80,7 +79,6 @@ function MatchPage() {
   const linkT = Number(params.get("t"));
   const state = useStore();
   const hydrated = useHydrated();
-  const focus = useFocusMode();
   // With events, the match opens on its analysis (what the staff reads); without, on capture. A link to a moment
   // opens the events of that video.
   // The mode comes from the sidebar (?modo=captura|estudio|analisis); inside it the analyst picks the step.
@@ -351,11 +349,16 @@ function MatchPage() {
 
   return (
     <div>
-      <StepsPublisher matchId={match.match_id} steps={steps} />
+      <StepsPublisher
+        matchId={match.match_id}
+        steps={steps}
+        videos={videos.map((v) => ({ id: v.video_id, label: v.label || v.video_id }))}
+        selected={video.video_id}
+        pick={pickVideo}
+      />
       {presentEdit && (
         <ClipEditor match={match} edit={presentEdit} startPresenting onClose={() => router.replace(`/partido?id=${encodeURIComponent(match.match_id)}`, { scroll: false })} />
       )}
-      <EdgeReveal edge="top" enabled={focus} className="bg-bg/95 px-4 pt-3 backdrop-blur md:px-8">
       <MatchHeader
         match={match}
         events={allEvents}
@@ -364,28 +367,6 @@ function MatchPage() {
         steps={steps}
         status={<SaveStatus match={match} />}
         badge={videoDl.items.some((i) => i.hasLink && i.state !== "ready" && i.state !== "unknown") ? <MissingTag /> : undefined}
-        video={
-          videos.length > 1 ? (
-            <Select
-              variant="field"
-              label="Video del partido"
-              value={video.video_id}
-              onChange={(v) => v && pickVideo(v)}
-              options={videos.map((v, i) => {
-                // Grouped by half: a title where the half changes (as in the match data, the first video is the 1st).
-                const half = (j: number) => (videos[j].full ? 0 : (videos[j].period ?? (j === 0 ? 1 : 2)));
-                return { value: v.video_id, label: v.label || v.video_id, hint: v.video_id, group: i === 0 || half(i) !== half(i - 1) ? (half(i) === 0 ? "Partido completo" : half(i) === 1 ? "1.er tiempo" : "2.º tiempo") : undefined };
-              })}
-              display={
-                <span className="inline-flex items-center gap-2">
-                  <FilmStrip size={15} className="text-faint" />
-                  <span className="max-w-[12rem] truncate text-ink">{video.label || video.video_id}</span>
-                  <span className="tc rounded bg-raised px-1.5 text-[10px] text-faint uppercase">{video.video_id}</span>
-                </span>
-              }
-            />
-          ) : null
-        }
       >
         {match.is_demo && <DemoBadge />}
         <Dropdown label="Datos del partido y del video" trigger={<GearSix size={16} />} panelClass="w-[min(30rem,calc(100vw-2rem))] max-h-[85vh] overflow-y-auto">
@@ -669,7 +650,6 @@ function MatchPage() {
           <TechPanel match={match} />
         </Modal>
       )}
-      </EdgeReveal>
 
       {/* The video takes the room; the working panel keeps a fixed, narrower width (wider for the pitch animation). */}
       <div
@@ -890,9 +870,34 @@ export default function Page() {
 }
 
 // The sidebar ticks the finished steps of the mode from the state computed here.
-function StepsPublisher({ matchId, steps }: { matchId: string; steps: Parameters<typeof publishSteps>[1] }) {
+function StepsPublisher({
+  matchId,
+  steps,
+  videos,
+  selected,
+  pick,
+}: {
+  matchId: string;
+  steps: Parameters<typeof publishSteps>[1];
+  videos: { id: string; label: string }[];
+  selected: string;
+  pick: (id: string) => void;
+}) {
   useEffect(() => {
     publishSteps(matchId, steps);
+    publishVideos({ matchId, videos, selected, pick });
   });
+  // Alt+V: the next video of the match.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.code !== "KeyV" || videos.length < 2) return;
+      e.preventDefault();
+      const i = videos.findIndex((v) => v.id === selected);
+      pick(videos[(i + 1) % videos.length].id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+  useEffect(() => () => publishVideos(null), []);
   return null;
 }

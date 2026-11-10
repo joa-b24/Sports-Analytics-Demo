@@ -1,6 +1,8 @@
 "use client";
 
-import { ArrowClockwise, ArrowCounterClockwise, ArrowRight, ArrowUp, SignOut, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, WarningCircle, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Airplane, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, CornersOut, CornersIn, EyeSlash, BoundingBox, Keyboard, Anchor, Table, VideoCamera } from "@phosphor-icons/react";
+import { createPortal } from "react-dom";
+import { useHeaderSlot } from "@/lib/stepBus";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowRight, ArrowUp, SignOut, ArrowsMerge, ArrowsSplit, Broom, Broom as BroomIcon, Check, CheckCircle, Copy, Eraser, Eye, Eyedropper, FastForward, FloppyDisk, FolderOpen, WarningCircle, HandPointing, MagicWand, Pause, Play, Prohibit, Rewind, Scissors, SkipBack, SkipForward, SoccerBall, Airplane, Stack, TShirt, Trash, UsersThree, Warning, X, MagnifyingGlassPlus, Lightning, CircleDashed, GearSix, LineSegment, ArrowsOut, DotsThree, Crop, CircleNotch, Target, FlagCheckered, PushPin, DotsSixVertical, EyeSlash, BoundingBox, Keyboard, Anchor, Table, VideoCamera } from "@phosphor-icons/react";
 import { Pager } from "@/components/Paged";
 import { VideoMissingNotice } from "@/components/match/VideoDownload";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +15,6 @@ import { Select } from "@/components/Select";
 import { Command } from "@/components/Command";
 import { ProcessPanel } from "@/components/workspace/ProcessPanel";
 import { LoadingStage } from "@/components/workspace/LoadingStage";
-import { useFocusMode } from "@/components/FocusMode";
 import { Dropdown, MenuItem } from "@/components/Dropdown";
 import { Card, PageHeader, btn, btnPrimary, input } from "@/components/Shell";
 import { FilePicker, partLabel } from "@/components/LocalPick";
@@ -402,10 +403,10 @@ export function Correction({
   const belowPref = usePref("correction:below", "squad");
   const belowSet = new Set(belowPref.split(",").filter(Boolean));
   const [dragMod, setDragMod] = useState<ModuleId | null>(null);
-  // Focus mode (sidebar and the match bar hidden until the pointer reaches the edge of the window).
-  const focus = useFocusMode();
   // Every person marked, or only the selected one (the rest faint until the pointer is over them); h switches.
   const focusSel = usePref("correction:focus", "all") === "sel";
+  // The mode switches go up to the bar of the match when the step is inside one.
+  const headerSlot = useHeaderSlot();
   // How much of the top (sky) and bottom of the image is hidden, per video; nothing while it is being chosen.
   const cropKey = `correction:crop:${folder ?? matchIdText}:${video}`;
   const [cropTopPref, cropBottomPref] = usePref(cropKey, "0,0").split(",").map((v) => Math.min(0.45, Math.max(0, Number(v) || 0)));
@@ -848,8 +849,10 @@ export function Correction({
   const anomalies = useMemo(() => {
     if (!data) return [];
     const ok = new Set(edits.anomalyOk ?? []);
-    return [...playerAnomalies(data, edits), ...ballAnomalies(ball, data)].filter((a) => !ok.has(anomalyKey(a)));
-  }, [data, edits, ball]);
+    // Only the players of our team with a name are reviewed (the rest do not enter the analysis); camera jumps stay.
+    const ownNamed = new Set(ppl.filter((q) => q.team === "own" && q.player_id).map((q) => q.id));
+    return [...playerAnomalies(data, edits).filter((a) => a.kind !== "player" || a.person !== undefined && ownNamed.has(a.person)), ...ballAnomalies(ball, data)].filter((a) => !ok.has(anomalyKey(a)));
+  }, [data, edits, ball, ppl]);
   const ballOdd = anomalies.filter((a) => a.kind === "ball").sort((a, b) => a.frame - b.frame);
   const goAnomaly = (a: Anomaly) => {
     seekFrame(a.kind === "player" ? a.frame : Math.max(data?.start_frame ?? 0, a.frame - stride));
@@ -901,7 +904,7 @@ export function Correction({
     const extra = leftovers(ppl2, data.fps, data.stride).filter((id) => !next.removed.includes(id));
     return {
       edits: extra.length ? setRemovedMany(next, extra) : next,
-      note: `✓ Parte completa: descartadas ${extra.length} personas sin nombre (nuestras, rivales de menos de 1 s, árbitras y sin equipo). Ctrl + Z las recupera.`,
+      note: `Parte completa: descartadas ${extra.length} personas sin nombre (nuestras, rivales de menos de 1 s, árbitras y sin equipo). Ctrl + Z las recupera.`,
     };
   };
   const bStep = (n: number) => {
@@ -1371,15 +1374,12 @@ export function Correction({
       setFitH(Math.max(420, Math.floor(window.innerHeight - (el.getBoundingClientRect().top + window.scrollY) - 16)));
     };
     const raf = requestAnimationFrame(measure);
-    // Again once the bars of the focus mode have slid away.
-    const late = window.setTimeout(measure, 320);
     window.addEventListener("resize", measure);
     return () => {
       cancelAnimationFrame(raf);
-      window.clearTimeout(late);
       window.removeEventListener("resize", measure);
     };
-  }, [workspaceShown, focus]);
+  }, [workspaceShown]);
   // The controls and notices under the video: the video leaves them their room.
   const underRef = useCallback((el: HTMLDivElement | null) => {
     if (!el) return;
@@ -3997,18 +3997,10 @@ export function Correction({
       </div>
     );
   })();
-  return (
-    <>
-      <Head embedded={embedded}>
-        {(!embedded || !fileUrl) && (
-          <label className={fileLabel}>
-            <FolderOpen size={15} />
-            {fileUrl ? "Cambiar video" : "Abrir video"}
-            <input type="file" accept="video/*" className="sr-only" onChange={onVideo} />
-          </label>
-        )}
-        {!(embedded && partNames !== null && partNames.length === 0 && !data) && (
+  const showPartPicker = !(embedded && partNames !== null && partNames.length === 0 && !data);
+  const partPicker = (compact: boolean) => (
         <FilePicker
+          compact={compact}
           dir={`matches/${matchIdText}/tracking`}
           pattern={new RegExp(`^tracks_${data?.video_id ?? video}_\\d+_\\d+\\.json$`)}
           label={data ? "Otra parte" : "Abrir una parte"}
@@ -4019,8 +4011,13 @@ export function Correction({
             const m = n.match(/^tracks_(v\d+)_(\d+)_(\d+)\.json$/);
             const e = m ? state.trackEdits.find((x) => x.key === `${mid}|${m[1]}|${m[2]}_${m[3]}`) : undefined;
             const st = e && m ? partStatus(e, { start_frame: Number(m[2]), end_frame: Number(m[3]), fps: data?.fps ?? 29.97, stride: data?.stride ?? 3 }) : null;
-            const mark = st?.complete ? " ✓ completa" : st && (st.quick > 0 || st.players > 0 || st.ball > 0) ? ` · verificadas ${st.players} · balón ${Math.round(st.ball * 100)} %` : "";
+            const mark = !st?.complete && st && (st.quick > 0 || st.players > 0 || st.ball > 0) ? ` · verificadas ${st.players} · balón ${Math.round(st.ball * 100)} %` : "";
             return `${partLabel(n, data?.fps ?? 29.97)}${mark}`;
+          }}
+          done={(n) => {
+            const m = n.match(/^tracks_(v\d+)_(\d+)_(\d+)\.json$/);
+            const e = m ? state.trackEdits.find((x) => x.key === `${mid}|${m[1]}|${m[2]}_${m[3]}`) : undefined;
+            return !!e && !!m && partStatus(e, { start_frame: Number(m[2]), end_frame: Number(m[3]), fps: data?.fps ?? 29.97, stride: data?.stride ?? 3 }).complete;
           }}
           warn={(n) => {
             const m = n.match(/^tracks_(v\d+)_(\d+)_(\d+)\.json$/);
@@ -4032,9 +4029,9 @@ export function Correction({
             void onTracks(asEvent([f]));
           }}
         />
-        )}
-        {data && (
-          <>
+  );
+  const modeBar = data ? (
+    <>
             {!step && (
               <div className="seg" role="group" aria-label="Qué se corrige">
                 {(
@@ -4048,13 +4045,14 @@ export function Correction({
                     type="button"
                     aria-pressed={view === v || (v === "players" && view !== "ball")}
                     className="seg-opt inline-flex items-center gap-1.5"
+                    title={name}
+                    aria-label={name}
                     onClick={() => {
                       setView(v);
                       setMode(v === "ball" ? "ball" : null);
                     }}
                   >
-                    <Icon size={14} />
-                    {name}
+                    <Icon size={15} />
                   </button>
                 ))}
               </div>
@@ -4070,31 +4068,51 @@ export function Correction({
                     title={`${title} (Alt + ${key})`}
                     onClick={() => switchView(v)}
                   >
-                    <Icon size={14} weight={view === v ? "fill" : "regular"} />
-                    {name}
+                    <Icon size={15} weight={view === v ? "fill" : "regular"} />
+                    <span className="sr-only">{name}</span>
                     {v === "anchors" && anchorPending !== null && (
                       <span className={`tc rounded-full px-1.5 text-[10px] ${anchorPending ? "bg-warn-900/70 text-warn" : "text-ok"}`} title="Dudas pendientes del relleno">
                         {anchorPending}
                       </span>
                     )}
-                    <kbd className="tc hidden text-[10px] opacity-60 xl:inline">Alt+{key}</kbd>
                   </button>
                 ))}
               </div>
             )}
             {status && (
-              <span className={`tag ${status.complete ? "tag-accent" : ""}`} title={`Completa con al menos ${PLAYERS_DONE} jugadoras verificadas y balón en el 95 % del tiempo en juego.`}>
-                {status.complete ? "✓ Parte completa" : `Verificadas ${status.players} · balón ${Math.round(status.ball * 100)} %`}
+              <span
+                className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs ${status.complete ? "bg-ok/15 text-ok" : "bg-raised text-muted"}`}
+                title={status.complete ? "Parte completa" : `Completa con al menos ${PLAYERS_DONE} jugadoras verificadas y balón en el 95 % del tiempo en juego.`}
+              >
+                {status.complete ? (
+                  <CheckCircle size={16} weight="fill" aria-label="Parte completa" />
+                ) : (
+                  <>
+                    <UsersThree size={14} aria-hidden />
+                    <span className="tc">{status.players}</span>
+                    <SoccerBall size={14} aria-hidden />
+                    <span className="tc">{Math.round(status.ball * 100)}%</span>
+                  </>
+                )}
               </span>
             )}
+    </>
+  ) : null;
+  return (
+    <>
+      <Head embedded={embedded}>
+        {(!embedded || !fileUrl) && (
+          <label className={fileLabel}>
+            <FolderOpen size={15} />
+            {fileUrl ? "Cambiar video" : "Abrir video"}
+            <input type="file" accept="video/*" className="sr-only" onChange={onVideo} />
+          </label>
+        )}
+        {showPartPicker && !(embedded && data) && partPicker(false)}
+        {data && (
+          <>
+            {embedded && headerSlot ? createPortal(modeBar, headerSlot) : modeBar}
             <span className="ml-auto flex items-center gap-2">
-              <IconButton
-                label={focus ? "Salir del modo enfoque" : "Modo enfoque: oculta el menú y la barra del partido (vuelven al llevar el cursor arriba o a la izquierda)"}
-                tone={focus ? "accent" : "default"}
-                onClick={() => setPref("focus", focus ? "off" : "on")}
-              >
-                {focus ? <CornersIn size={17} /> : <CornersOut size={17} />}
-              </IconButton>
               <button
                 type="button"
                 className={`${btnPrimary} min-w-[8.5rem] justify-center transition-[background-color,border-color,color] duration-200 ${
@@ -4442,9 +4460,13 @@ export function Correction({
             <div ref={colRef} className="flex min-h-0 min-w-0 flex-col gap-3">
                 <div
                   ref={stageRef}
-                  className={isFull ? "relative flex h-full w-full items-center justify-center overflow-hidden bg-black" : "relative mx-auto w-full shrink-0 overflow-hidden rounded-2xl bg-black"}
+                  className={isFull ? "group/stage relative flex h-full w-full items-center justify-center overflow-hidden bg-black" : "group/stage relative mx-auto w-full shrink-0 overflow-hidden rounded-2xl bg-black"}
                   style={isFull || !stageW ? undefined : { width: stageW }}
                 >
+                  {/* The other parts of this video: a small arrow in the corner, only visible with the pointer over the video. */}
+                  {embedded && showPartPicker && (
+                    <div className="absolute top-2 left-2 z-30 opacity-0 transition-opacity duration-150 group-hover/stage:opacity-100 focus-within:opacity-100">{partPicker(true)}</div>
+                  )}
                   {/* What is shown: the image less its crop. The zoom moves the image inside it. */}
                   <div
                     className={`relative overflow-hidden ${dims ? "" : "aspect-video"}`}

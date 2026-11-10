@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowClockwise, CaretDown, Check, FolderOpen } from "@phosphor-icons/react";
+import { ArrowClockwise, CaretDown, Check, CheckCircle, FolderOpen } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listLocal, localFile } from "@/lib/local";
 
@@ -17,11 +17,14 @@ export function FilePicker({
   onFile,
   current,
   describe,
+  done,
   warn,
   flag,
   primary = false,
   title,
   subdirs = [],
+  openSignal = 0,
+  compact = false,
 }: {
   // Folder, repository-relative: "matches/<carpeta>/tracking".
   dir: string;
@@ -34,6 +37,8 @@ export function FilePicker({
   current?: string | null;
   // Text shown for each file instead of its name.
   describe?: (name: string) => string;
+  // A file that is finished: a tick at the right of its row.
+  done?: (name: string) => boolean;
   // Warning of a file (e.g. «Cambios sin guardar»): an amber dot with the text for screen readers; null: none.
   warn?: (name: string) => string | null;
   // Same warning on the button itself, when some part (maybe not the open one) has it.
@@ -42,6 +47,10 @@ export function FilePicker({
   title?: string;
   // Subfolders listed too (their files show as "subfolder/name").
   subdirs?: string[];
+  // Each increase opens the menu (for a button elsewhere that asks for a file).
+  openSignal?: number;
+  // Only a small arrow (the label stays for screen readers).
+  compact?: boolean;
 }) {
   const [names, setNames] = useState<string[] | null>(null);
   const [open, setOpen] = useState(false);
@@ -65,6 +74,13 @@ export function FilePicker({
     }
     setNames([...own, ...extra]);
   }, [dir, source, subKey]);
+  const lastSignal = useRef(openSignal);
+  useEffect(() => {
+    if (openSignal === lastSignal.current) return;
+    lastSignal.current = openSignal;
+    void refresh();
+    setOpen(true);
+  }, [openSignal, refresh]);
   useEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => {
@@ -94,7 +110,7 @@ export function FilePicker({
     <div ref={box} className="relative inline-block">
       <button
         type="button"
-        className={`${primary ? "btn btn-primary" : "btn"} gap-2`}
+        className={`${primary ? "btn btn-primary" : "btn"} ${compact ? "h-7 gap-1 !px-1.5 bg-black/60 backdrop-blur" : "gap-2"}`}
         aria-haspopup="menu"
         aria-expanded={open}
         title={title}
@@ -104,8 +120,7 @@ export function FilePicker({
           setOpen(!open);
         }}
       >
-        {icon}
-        {busy ? "Cargando…" : label}
+        {compact ? <span className="sr-only">{label}</span> : (<>{icon}{busy ? "Cargando…" : label}</>)}
         {flag && (
           <span className="flex items-center" title={flag}>
             <span className="h-2 w-2 rounded-full bg-warn" aria-hidden />
@@ -156,6 +171,7 @@ export function FilePicker({
                   >
                     <span className="grid w-3.5 shrink-0 place-items-center">{n === current && <Check size={12} weight="bold" />}</span>
                     <span className="tc min-w-0 flex-1 truncate">{describe ? describe(n) : n}</span>
+                    {done?.(n) && <CheckCircle size={15} weight="fill" className="shrink-0 text-ok" aria-label="Completa" />}
                     {warn?.(n) && (
                       <span className="flex shrink-0 items-center gap-1 text-[10px] text-warn" title={warn(n) ?? ""}>
                         <span className="h-2 w-2 rounded-full bg-warn" aria-hidden />

@@ -14,6 +14,8 @@ import {
   House,
   ListDashes,
   Moon,
+  SoccerBall,
+  FilmStrip,
   Sun,
   UsersThree,
   type Icon,
@@ -24,17 +26,16 @@ import { Suspense } from "react";
 import { revealRef } from "@/components/motion";
 import { setPref, usePref, useStore, useStoreReady } from "@/lib/store";
 import { StorageNotice } from "@/components/StorageNotice";
-import type { Match, MatchEvent } from "@/lib/types";
+import type { Match } from "@/lib/types";
 import { useThemeSync } from "@/lib/theme";
 import { useRosterFromFile } from "@/components/RosterCard";
 import { useRenamesFromFile } from "@/lib/renames";
 import { TEAM_SECTIONS } from "@/lib/features";
 import { MOBILE } from "@/lib/mobile";
 import { BRAND } from "@/lib/brand";
-import { EdgeReveal, useFocusMode } from "@/components/FocusMode";
 import { MODES, STEP_ICONS, mainOf, type ModeId } from "@/components/match/MatchHeader";
 import { stepVisible } from "@/lib/mobile";
-import { useStepStatus } from "@/lib/stepBus";
+import { useStepStatus, useVideoChoice } from "@/lib/stepBus";
 import type { StepId } from "@/lib/steps";
 
 type NavItem = { href: string; label: string; icon: Icon; locked?: string; disabled?: string; active: boolean };
@@ -114,45 +115,61 @@ function StepLinks({ match, mode, open, params }: { match: Match; mode: ModeId; 
   );
 }
 
+// The videos of the match as chips under Captura / Estudio (only when there is more than one). Alt+V picks the next.
+function VideoChips({ match, open }: { match: Match; open: boolean }) {
+  const choice = useVideoChoice(match.match_id);
+  if (!choice || choice.videos.length < 2) return null;
+  return (
+    <div className={`flex gap-1 md:flex-col ${open ? "ml-4 border-l border-line pl-1.5" : "md:items-center"}`} role="group" aria-label="Video del partido">
+      {open && (
+        <span className="flex items-center gap-1.5 px-1 pt-0.5 text-[10px] tracking-wide text-faint uppercase">
+          <FilmStrip size={11} aria-hidden />
+          Video <kbd className="tc opacity-60">Alt+V</kbd>
+        </span>
+      )}
+      <div className={`flex gap-1 ${open ? "flex-wrap px-1" : "md:flex-col"}`}>
+        {choice.videos.map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            aria-pressed={v.id === choice.selected}
+            title={v.label === v.id ? v.id : `${v.label} (${v.id})`}
+            onClick={() => choice.pick(v.id)}
+            className={`tc rounded-full px-2 py-0.5 text-[11px] uppercase transition-colors ${v.id === choice.selected ? "bg-own text-[var(--on-own)]" : "bg-raised text-ink-2 hover:text-ink"}`}
+          >
+            {v.id}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // The match the three modes below work on: its teams and score, as a small scoreboard. With the sidebar folded, the
 // score alone (or both initials before any goal), the name on hover.
-function CurrentMatch({ match, events, open, active }: { match: Match | undefined; events: MatchEvent[]; open: boolean; active: boolean }) {
+function CurrentMatch({ match, open, active }: { match: Match | undefined; open: boolean; active: boolean }) {
   if (!match) return open ? <p className="m-0 px-2 py-1 text-[11px] text-faint">Elige un partido en Resumen</p> : null;
-  const goals = events.filter((e) => e.match_id === match.match_id && e.type === "goal");
-  const own = goals.filter((e) => e.team === "own").length;
-  const opp = goals.filter((e) => e.team === "opp").length;
-  const initials = (s: string) => s.trim().split(/\s+/).map((w) => w[0]).join("").slice(0, 3).toUpperCase();
   const date = match.date ? new Date(`${match.date}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "short" }) : "";
-  const ring = active ? "shadow-[inset_0_0_0_1px_var(--color-own)]" : "shadow-[inset_0_0_0_1px_var(--color-line)] hover:shadow-[inset_0_0_0_1px_var(--color-line-strong)]";
   const href = `/partido?id=${encodeURIComponent(match.match_id)}`;
+  const title = `${match.focus_team} vs ${match.other_team}${date ? ` · ${date}` : ""}`;
+  const mark = `grid h-10 w-10 shrink-0 place-items-center rounded-lg ${active ? "text-own" : "text-faint"}`;
   if (!open)
     return (
-      <Link href={href} title={`${match.name}${date ? ` · ${date}` : ""}`} aria-label={`Partido elegido: ${match.name}`} className={`cond grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-bg/70 text-[11px] leading-none font-extrabold text-ink uppercase transition-shadow ${ring}`}>
-        {goals.length ? (
-          <span className="tabular-nums">
-            {own}–{opp}
-          </span>
-        ) : (
-          <span className="flex flex-col items-center gap-0.5">
-            <span className="text-own">{initials(match.focus_team)}</span>
-            <span className="text-faint">{initials(match.other_team)}</span>
-          </span>
-        )}
+      <Link href={href} title={title} aria-label={`Partido elegido: ${title}`} className={`${mark} transition-colors hover:bg-raised hover:text-ink`}>
+        <SoccerBall size={20} weight={active ? "fill" : "regular"} />
       </Link>
     );
   return (
-    <Link href={href} title="Abrir el partido" aria-label={`Partido elegido: ${match.name}`} className={`my-0.5 flex items-stretch gap-2 rounded-lg bg-bg/70 px-2 py-1.5 transition-shadow ${ring}`}>
-      <span className="flex flex-col justify-center gap-1" aria-hidden>
-        <i className="h-3 w-1 rounded-full bg-own" />
-        <i className="h-3 w-1 rounded-full bg-opp" />
+    <Link href={href} title="Abrir el partido" aria-label={`Partido elegido: ${title}`} className="flex items-center gap-2 rounded-lg px-1 py-1 transition-colors hover:bg-raised">
+      <span className={`${mark} !h-8 !w-8`}>
+        <SoccerBall size={20} weight={active ? "fill" : "regular"} />
       </span>
-      <span className="cond flex min-w-0 flex-1 flex-col justify-center text-[13px] leading-tight font-bold text-ink uppercase">
-        <span className="truncate">{match.focus_team}</span>
-        <span className="truncate text-ink-2">{match.other_team}</span>
-      </span>
-      <span className="flex flex-col items-end justify-center">
-        <span className="cond text-base leading-none font-extrabold text-ink tabular-nums">{goals.length ? `${own}–${opp}` : "–"}</span>
-        {date && <span className="mt-0.5 text-[10px] text-faint">{date}</span>}
+      <span className="flex min-w-0 flex-1 flex-col text-[12px] leading-tight text-ink-2">
+        <span className="truncate font-medium text-ink">{match.focus_team}</span>
+        <span className="truncate">
+          vs {match.other_team}
+          {date && <span className="text-faint"> · {date}</span>}
+        </span>
       </span>
     </Link>
   );
@@ -161,7 +178,7 @@ function CurrentMatch({ match, events, open, active }: { match: Match | undefine
 function Sidebar() {
   const path = usePathname();
   const params = useSearchParams();
-  const { matches, events } = useStore();
+  const { matches } = useStore();
   const light = usePref("theme", "dark") === "light";
   const open = usePref("sidebar", "icons") === "full";
   const current = usePref("currentMatch", "");
@@ -224,10 +241,11 @@ function Sidebar() {
         <div className={`flex gap-1 rounded-xl bg-surface p-1 md:my-2 md:flex-col ${open ? "" : "md:items-center"}`} role="group" aria-label="Partidos">
           {open && <div className="cond px-2 pt-1 text-xs font-bold text-faint uppercase">Partidos</div>}
           <NavLink n={matchNav[0]} open={open} />
-          <CurrentMatch match={match} events={events} open={open} active={onMatch} />
+          <CurrentMatch match={match} open={open} active={onMatch} />
           {matchNav.slice(1).map((n, i) => (
             <div key={n.label} className="contents md:flex md:flex-col md:gap-0.5">
               <NavLink n={n} open={open} />
+              {match && onMatch && modo === MODES[i].id && MODES[i].id !== "analisis" && <VideoChips match={match} open={open} />}
               {match && onMatch && modo === MODES[i].id && <StepLinks match={match} mode={MODES[i].id} open={open} params={params} />}
             </div>
           ))}
@@ -269,17 +287,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
   useRenamesFromFile();
   useThemeSync();
   const path = usePathname();
-  const focus = useFocusMode();
   const storeReady = useStoreReady();
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       <StorageNotice />
-      <EdgeReveal edge="left" enabled={focus}>
-        <Suspense fallback={<aside className="shrink-0 border-r border-line md:h-screen md:w-14" />}>
-          <Sidebar />
-        </Suspense>
-      </EdgeReveal>
+      <Suspense fallback={<aside className="shrink-0 border-r border-line md:h-screen md:w-14" />}>
+        <Sidebar />
+      </Suspense>
 
       <main className="relative min-w-0 flex-1 px-4 pt-5 pb-16 md:px-8 print:p-0">
         {/* Keyed by route so each screen starts from the top state. */}

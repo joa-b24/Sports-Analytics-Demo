@@ -1,6 +1,6 @@
 "use client";
 
-import { Anchor, Selection, Table, ArrowsOutCardinal, ArrowClockwise, ArrowCounterClockwise, CaretDown, CircleHalf, CaretLeft, CaretRight, CaretUp, Check, CheckCircle, Crop, Crosshair, DownloadSimple, Eraser, Eye, FastForward, FolderOpen, GearSix, Info, Keyboard, Pause, Play, Plus, Rewind, SkipBack, SkipForward, TerminalWindow, Trash, Warning, X } from "@phosphor-icons/react";
+import { Anchor, Selection, Table, ArrowsOutCardinal, ArrowClockwise, ArrowCounterClockwise, CaretDown, CircleHalf, CaretLeft, CaretRight, CaretUp, Check, CheckCircle, Crop, Crosshair, DownloadSimple, Eraser, Eye, FastForward, FolderOpen, GearSix, GridFour, Info, Keyboard, Pause, Play, Plus, Rewind, SkipBack, SkipForward, TerminalWindow, Trash, UsersThree, Warning, X } from "@phosphor-icons/react";
 import { Dropdown, MenuItem } from "@/components/Dropdown";
 import { IconButton, Modal } from "@/components/Modal";
 import { Select } from "@/components/Select";
@@ -209,7 +209,10 @@ export function Calibration({
   const mode = usePref("calib:mode", "calibrar") === "verificar" ? "verificar" : "calibrar";
   const setMode = (m: "calibrar" | "verificar") => setPref("calib:mode", m);
   // In verify, a processed part shows its players or only its calibration.
-  const [show, setShow] = useState<"players" | "calib">("players");
+  const [showPlayers, setShowPlayers] = useState(true);
+  const [showCal, setShowCal] = useState(true);
+  // Counts the times Verificar was chosen: the file menu opens by itself each time.
+  const [pickSignal, setPickSignal] = useState(0);
   const [help, setHelp] = useState(false);
   const sideW = Math.min(SIDE_MAX, Math.max(SIDE_MIN, Number(usePref("calib:sideW", String(SIDE_DEFAULT))) || SIDE_DEFAULT));
   // The Ajuste panel under the video can be hidden to give the player its room; the arrows of the fine adjustment float
@@ -967,7 +970,7 @@ export function Calibration({
     void onTrackFile(asEvent([f]));
     if (f.name.startsWith("tracks_")) {
       void onDetsFile(asEvent([f]));
-      setShow("players");
+      setShowPlayers(true);
     } else {
       setDets(null);
       setDetsMsg("");
@@ -1044,7 +1047,7 @@ export function Calibration({
     const i = fit.pairs.findIndex((x) => x.p.landmark_id === sel);
     return i >= 0 ? fit.quality?.residuals[i] : undefined;
   })();
-  const showBoxes = mode === "verificar" && show === "players";
+  const showBoxes = mode === "verificar" && showPlayers;
   // Runs of frames of the loaded calibration that read alike, for the strip under the video in Verificar.
   const qRuns = useMemo(() => {
     if (!track) return [];
@@ -1151,19 +1154,21 @@ export function Calibration({
 
       {/* One bar: the mode, then what that mode opens (anchors to edit, or a computed file to look at). */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="seg" role="group" aria-label="Modo de la calibración">
-          {(
-            [
-              ["calibrar", "Calibrar", Crosshair],
-              ["verificar", "Verificar", CheckCircle],
-            ] as const
-          ).map(([m, name, Icon]) => (
-            <button key={m} type="button" aria-pressed={mode === m} className="seg-opt inline-flex items-center gap-1.5" onClick={() => setMode(m)}>
-              <Icon size={14} />
-              {name}
-            </button>
-          ))}
-        </div>
+        {/* One button for the two modes: it shows the one you are in; a click goes to the other (Verificar asks for the file). */}
+        <button
+          type="button"
+          className="btn btn-primary h-9 w-9 !p-0"
+          aria-label={mode === "calibrar" ? "Calibrando: pasar a verificar" : "Verificando: volver a calibrar"}
+          title={mode === "calibrar" ? "Calibrando (marcar anclas). Clic: verificar una calibración o una parte procesada" : "Verificando. Clic: volver a calibrar"}
+          onClick={() => {
+            if (mode === "calibrar") {
+              setMode("verificar");
+              setPickSignal((n) => n + 1);
+            } else setMode("calibrar");
+          }}
+        >
+          {mode === "calibrar" ? <Crosshair size={17} /> : <CheckCircle size={17} />}
+        </button>
         {mode === "calibrar" ? (
           <>
             {anchorsMenu}
@@ -1198,23 +1203,22 @@ export function Calibration({
               subdirs={["revision", "revision/quick", "prueba"]}
               label="Previsualizar"
               icon={<Eye size={15} />}
+              openSignal={pickSignal}
               primary={!track && !dets}
               title="Una calibración (calib_…) o una parte procesada (tracks_…)"
               current={dets?.name ?? track?.name}
               onFile={onPreview}
             />
-            {dets && (
-              <div className="seg" role="group" aria-label="Qué se ve">
-                {(
-                  [
-                    ["players", "Jugadoras"],
-                    ["calib", "Solo calibración"],
-                  ] as const
-                ).map(([v, name]) => (
-                  <button key={v} type="button" aria-pressed={show === v} className="seg-opt" onClick={() => setShow(v)}>
-                    {name}
-                  </button>
-                ))}
+            {(dets || track) && (
+              <div className="flex items-center gap-1" role="group" aria-label="Qué se ve">
+                {dets && (
+                  <IconButton label={showPlayers ? "Ocultar jugadoras" : "Mostrar jugadoras"} tone={showPlayers ? "ok" : "default"} onClick={() => setShowPlayers((v) => !v)}>
+                    <UsersThree size={16} weight={showPlayers ? "fill" : "regular"} />
+                  </IconButton>
+                )}
+                <IconButton label={showCal ? "Ocultar la calibración" : "Mostrar la calibración"} tone={showCal ? "ok" : "default"} onClick={() => setShowCal((v) => !v)}>
+                  <GridFour size={16} weight={showCal ? "fill" : "regular"} />
+                </IconButton>
               </div>
             )}
             {(track || dets) && (
@@ -1442,7 +1446,7 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                         </g>
                       )}
                       {/* Computed calibration: dashed, so it is never mistaken for a hand-marked one. */}
-                      {trackLines.map((l, i) => (
+                      {showCal && trackLines.map((l, i) => (
                         <path key={`t${i}`} d={l.d} fill="none" stroke={OVERLAY[l.group]} strokeWidth={dotR / 3} strokeDasharray={`${dotR * 1.5} ${dotR}`} opacity={0.95} />
                       ))}
                       {showBoxes &&
@@ -2159,7 +2163,7 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                 </Card>
               )}
               {track && (
-                <Card title="Calibración" note={partLabel(track.name, fps)}>
+                <Card title="Métricas" note={partLabel(track.name, fps)}>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="rounded-xl bg-bg/60 px-3 py-2.5">
                       <div className="num text-2xl text-ink">{track.frames.size}</div>
@@ -2212,8 +2216,8 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                 </Card>
               )}
               {dets && (
-                <Card title="Tracking" note={partLabel(dets.name, fps)}>
-                  {dets.hasPositions && show === "players" && (
+                <Card title="Posiciones" note={partLabel(dets.name, fps)}>
+                  {dets.hasPositions && showPlayers && (
                     <Pitch showDirection={false} className="mb-4 rounded-xl">
                       {boxes
                         ?.filter((bx) => bx[11] && bx[9] !== null && bx[10] !== null)

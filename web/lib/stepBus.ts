@@ -24,3 +24,44 @@ export function useStepStatus(matchId: string): Steps | null {
   );
   return snap && snap.matchId === matchId ? snap.steps : null;
 }
+
+// A slot in the bar of the match where a step puts its own mode switches (anchors / quick review / table...), so the
+// step does not draw a second bar under it. Memory only.
+let headerSlot: HTMLElement | null = null;
+const slotListeners = new Set<() => void>();
+export function setHeaderSlot(el: HTMLElement | null) {
+  if (headerSlot === el) return;
+  headerSlot = el;
+  slotListeners.forEach((l) => l());
+}
+export function useHeaderSlot(): HTMLElement | null {
+  return useSyncExternalStore(
+    (cb) => (slotListeners.add(cb), () => void slotListeners.delete(cb)),
+    () => headerSlot,
+    () => null,
+  );
+}
+
+// The videos of the open match and which one is shown, so the sidebar draws them as chips (only with more than one)
+// and picks one. Published by the match screen.
+export type VideoChoice = { matchId: string; videos: { id: string; label: string }[]; selected: string; pick: (id: string) => void };
+let videoChoice: VideoChoice | null = null;
+const videoListeners = new Set<() => void>();
+export function publishVideos(v: VideoChoice | null) {
+  const same =
+    videoChoice && v && videoChoice.matchId === v.matchId && videoChoice.selected === v.selected && videoChoice.videos.length === v.videos.length && videoChoice.videos.every((x, i) => x.id === v.videos[i].id && x.label === v.videos[i].label);
+  if (same) {
+    if (videoChoice && v) videoChoice.pick = v.pick;
+    return;
+  }
+  videoChoice = v;
+  videoListeners.forEach((l) => l());
+}
+export function useVideoChoice(matchId: string): VideoChoice | null {
+  const snap = useSyncExternalStore(
+    (cb) => (videoListeners.add(cb), () => void videoListeners.delete(cb)),
+    () => videoChoice,
+    () => null,
+  );
+  return snap && snap.matchId === matchId ? snap : null;
+}
