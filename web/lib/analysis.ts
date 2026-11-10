@@ -384,3 +384,77 @@ export function momentum(events: MatchEvent[], segments: Segment[], windowMin = 
   }
   return { points, basis: hasPlay ? "juego" : "video", skipped, windowMin };
 }
+
+// Momentum as one signed curve (own above zero, opponent below): at each instant every team's threat is the sum of its
+// events, each worth its weight and fading with time (half-life MOMENTUM_HALF_LIFE_MIN); the curve is the difference,
+// smoothed, and scaled so the biggest swing of the match is ±100. Only past events count at each instant (momentum is
+// what has just happened), so a goal makes the curve jump at that minute and then fade. The method follows the idea of
+// recency-weighted threat (see README, «Referencias»); the weights are this project's own (MOMENTUM_WEIGHTS).
+export const MOMENTUM_HALF_LIFE_MIN = 1.5;
+const MOMENTUM_STEP_MIN = 0.25;
+const MOMENTUM_SMOOTH_SIGMA_MIN = 0.5;
+
+export interface MomentumCurve {
+  // Every MOMENTUM_STEP_MIN minutes: the signed value in [-100, 100] and the unscaled threat of each team.
+  points: { min: number; value: number; own: number; opp: number }[];
+  goals: { min: number; team: "own" | "opp" }[];
+  // Minute of the end of the first half, when both halves have events.
+  halfTime: number | null;
+  basis: "juego" | "video";
+  skipped: number;
+}
+
+export function momentumCurve(events: MatchEvent[], segments: Segment[]): MomentumCurve {
+  const hasPlay = segments.some((s) => s.tipo === "juego");
+  const t0 = events.length ? Math.min(...events.map((e) => e.t_video)) : 0;
+  const hits: { min: number; team: "own" | "opp"; w: number; half: number }[] = [];
+  const goals: MomentumCurve["goals"] = [];
+  let skipped = 0;
+  for (const e of events) {
+    const w = MOMENTUM_WEIGHTS[e.type];
+    if (!w || (e.team !== "own" && e.team !== "opp")) continue;
+    const t = hasPlay ? playTime(segments, e.t_video) : e.t_video - t0;
+    if (t === null) {
+      skipped++;
+      continue;
+    }
+    hits.push({ min: t / 60, team: e.team, w, half: e.period ?? 1 });
+    if (e.type === "goal") goals.push({ min: t / 60, team: e.team });
+  }
+  const basis = hasPlay ? "juego" : "video";
+  if (hits.length === 0) return { points: [], goals, halfTime: null, basis, skipped };
+  const last = Math.ceil(Math.max(...hits.map((h) => h.min))) + 1;
+  const n = Math.round(last / MOMENTUM_STEP_MIN);
+  const k = Math.LN2 / MOMENTUM_HALF_LIFE_MIN;
+  const own = new Array<number>(n + 1).fill(0);
+  const opp = new Array<number>(n + 1).fill(0);
+  for (let i = 0; i <= n; i++) {
+    const t = i * MOMENTUM_STEP_MIN;
+    for (const h of hits) {
+      if (h.min > t) continue;
+      const v = h.w * Math.exp(-k * (t - h.min));
+      if (h.team === "own") own[i] += v;
+      else opp[i] += v;
+    }
+  }
+  // Gaussian smoothing of the difference.
+  const radius = Math.ceil((3 * MOMENTUM_SMOOTH_SIGMA_MIN) / MOMENTUM_STEP_MIN);
+  const kernel = Array.from({ length: 2 * radius + 1 }, (_, j) => Math.exp(-0.5 * (((j - radius) * MOMENTUM_STEP_MIN) / MOMENTUM_SMOOTH_SIGMA_MIN) ** 2));
+  const diff = own.map((v, i) => v - opp[i]);
+  const smooth = diff.map((_, i) => {
+    let s = 0;
+    let wsum = 0;
+    for (let j = -radius; j <= radius; j++) {
+      const at = i + j;
+      if (at < 0 || at > n) continue;
+      s += diff[at] * kernel[j + radius];
+      wsum += kernel[j + radius];
+    }
+    return s / wsum;
+  });
+  const peak = Math.max(...smooth.map(Math.abs));
+  const points = smooth.map((v, i) => ({ min: i * MOMENTUM_STEP_MIN, value: peak > 0 ? (100 * v) / peak : 0, own: own[i], opp: opp[i] }));
+  const firstHalf = hits.filter((h) => h.half === 1);
+  const halfTime = firstHalf.length && firstHalf.length < hits.length ? Math.max(...firstHalf.map((h) => h.min)) : null;
+  return { points, goals, halfTime, basis, skipped };
+}

@@ -27,3 +27,7 @@ Más contexto: `CLAUDE.md`, `docs/architecture.md`, `docs/data_contract.md`, `do
 
 ## Tracking
 Corre en la laptop, por partes: `python -m sportsan.tracking.process` (pasos completos en `docs/mapa_del_repo.md`, sección 7.2). El cuaderno `notebooks/tracking_test.ipynb` es del pipeline antiguo de Colab y ya no se usa. Para trabajar con varios agentes en paralelo: `docs/parallel_workflow.md`.
+
+## Referencias
+
+- **Momentum** (Análisis › General). La curva de momentum se inspira en la idea de amenaza ponderada por recencia que publica [ameermasood/FIFAWorldCup2026MomentumAnalysis](https://github.com/ameermasood/FIFAWorldCup2026MomentumAnalysis): cada evento de ataque suma peligro, el peligro se va apagando con los minutos, la curva es la diferencia entre los dos equipos, se suaviza y se escala a ±100. Ese repositorio **no incluye archivo de licencia** y su README reserva los derechos de su código y sus diseños (uso personal y educativo), por eso aquí no se copió código ni diseño: la implementación (`momentumCurve` en `web/lib/analysis.ts` y `MomentumChart` en `web/components/charts.tsx`) es propia, con pesos de eventos propios (`MOMENTUM_WEIGHTS`) y vida media de 1.5 min. Si se quiere reutilizar algo más de ese repositorio, hay que pedir permiso a su autor.

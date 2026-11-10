@@ -81,17 +81,17 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --color-bg: #ecece9;
-  --color-surface: #ffffff;
-  --color-raised: #f3f3f1;
-  --color-pitch: #f6f6f4;
-  --color-ink: #101010;
+  --color-bg: #e9e3d4;
+  --color-surface: #f4efe3;
+  --color-raised: #efe9da;
+  --color-pitch: #f1ecde;
+  --color-ink: #1d1a14;
   --color-ink-2: #2a2a28;
-  --color-muted: #4b4b47;
-  --color-faint: #5c5c57;
-  --color-line-soft: #e4e4e0;
-  --color-line: #d6d6d1;
-  --color-line-strong: #bdbdb6;
+  --color-muted: #504a3e;
+  --color-faint: #62594a;
+  --color-line-soft: #ddd6c4;
+  --color-line: #cfc7b2;
+  --color-line-strong: #b5ac94;
   --color-accent-100: #121d47;
   --color-accent-200: #1f3fb3;
   --color-accent-300: #2448d8;
@@ -104,14 +104,14 @@
   --color-ok: #1f7a4a;
   --color-ball: #101010;
   --zone-ink-lo: #101010;
-  --zone-ink-hi: #ffffff;
-  --zone-0: color-mix(in srgb, var(--color-own) 10%, white);
-  --zone-1: color-mix(in srgb, var(--color-own) 25%, white);
-  --zone-2: color-mix(in srgb, var(--color-own) 45%, white);
-  --zone-3: color-mix(in srgb, var(--color-own) 70%, white);
+  --zone-ink-hi: #f9f5ea;
+  --zone-0: color-mix(in srgb, var(--color-own) 10%, var(--color-surface));
+  --zone-1: color-mix(in srgb, var(--color-own) 25%, var(--color-surface));
+  --zone-2: color-mix(in srgb, var(--color-own) 45%, var(--color-surface));
+  --zone-3: color-mix(in srgb, var(--color-own) 70%, var(--color-surface));
   --zone-4: color-mix(in srgb, var(--color-own) 85%, black);
   --zone-5: color-mix(in srgb, var(--color-own) 55%, black);
-  --pitch-line: #bdbdb6;
+  --pitch-line: #b5ac94;
   --slot-1: #1baf7a;
   --slot-2: #eda100;
   --slot-3: #e87ba4;

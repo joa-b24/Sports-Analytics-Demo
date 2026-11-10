@@ -9,6 +9,7 @@ import {
   goalKicks,
   laneOf,
   momentum,
+  momentumCurve,
   playTime,
   recoveryHeight,
   setPieces,
@@ -208,4 +209,17 @@ test("crosses: an aerial corner and a free kick taken as a cross count; short co
   const c = crosses(events, "own");
   assert.equal(Object.values(c.outcome.counts).reduce((a, b) => a + b, 0) + c.outcome.unknown, 4, "cross + 2 corners + 1 free kick");
   assert.equal(crosses(events, "opp").outcome.unknown, 1);
+});
+
+test("momentumCurve: signed, fades after an event, ±100 at the biggest swing, goals marked", () => {
+  const ev = (t, team, type) => ({ t_video: t, team, type });
+  const events = [ev(0, "own", "shot"), ev(60, "own", "goal"), ev(600, "opp", "shot")];
+  const m = momentumCurve(events, []);
+  assert.ok(m.points.length > 40);
+  assert.equal(Math.max(...m.points.map((p) => Math.abs(p.value))).toFixed(6), "100.000000");
+  const at = (min) => m.points.find((p) => Math.abs(p.min - min) < 1e-9).value;
+  assert.ok(at(1.5) > 0 && at(10) < 0);
+  assert.ok(at(1.5) > at(6));
+  assert.deepEqual(m.goals, [{ min: 1, team: "own" }]);
+  assert.deepEqual(momentumCurve([], []).points, []);
 });

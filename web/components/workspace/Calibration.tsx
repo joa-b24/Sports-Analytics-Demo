@@ -1,6 +1,6 @@
 "use client";
 
-import { Anchor, Selection, Table, ArrowsOutCardinal, ArrowClockwise, ArrowCounterClockwise, CaretDown, CircleHalf, CaretLeft, CaretRight, CaretUp, Check, CheckCircle, Crop, Crosshair, DownloadSimple, Eraser, Eye, FastForward, FolderOpen, GearSix, GridFour, Info, Keyboard, Pause, Play, Plus, Rewind, SkipBack, SkipForward, TerminalWindow, Trash, UsersThree, Warning, X } from "@phosphor-icons/react";
+import { CircleNotch, Anchor, Selection, Table, ArrowsOutCardinal, ArrowClockwise, ArrowCounterClockwise, CaretDown, CircleHalf, CaretLeft, CaretRight, CaretUp, Check, CheckCircle, Crop, Crosshair, DownloadSimple, Eraser, Eye, FastForward, FolderOpen, GearSix, GridFour, Info, Keyboard, Pause, Play, Plus, Rewind, SkipBack, SkipForward, TerminalWindow, Trash, UsersThree, Warning, X } from "@phosphor-icons/react";
 import { Dropdown, MenuItem } from "@/components/Dropdown";
 import { IconButton, Modal } from "@/components/Modal";
 import { Select } from "@/components/Select";
@@ -184,6 +184,8 @@ export function Calibration({
   const loupeRef = useRef<HTMLCanvasElement>(null);
 
   const [fileUrl, setFileUrl] = useState<string | null>(null);
+  // Inside a match the video is looked up in its folder: until that answers, the screen says it is loading (not «no video»).
+  const [looked, setLooked] = useState(!(embedded && folder));
   const [dims, setDims] = useState<{ w: number; h: number; duration: number } | null>(null);
   const [fps, setFps] = useState(29.97002997);
   // Where the fps comes from: match.yaml (exact, from ffprobe), typed by hand, or the default guess. Anchors keep the
@@ -816,7 +818,9 @@ export function Calibration({
     if (!embedded || !folder || fileUrl) return;
     let live = true;
     void localVideo(folder, videoId).then((url) => {
-      if (live && url) setFileUrl(url);
+      if (!live) return;
+      if (url) setFileUrl(url);
+      setLooked(true);
     });
     return () => {
       live = false;
@@ -1323,7 +1327,14 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
       <div ref={fitRef} className="grid gap-5 xl:-mb-12 xl:grid-cols-[minmax(0,1fr)_var(--side-w)]" style={{ "--side-w": `${sideW}px` } as React.CSSProperties}>
         <div ref={setColEl} className="min-w-0 space-y-4 self-start">
           <Card>
-            {!fileUrl ? (
+            {!fileUrl && !looked ? (
+              <div className="grid min-h-[22rem] place-items-center" role="status" aria-live="polite">
+                <div className="flex flex-col items-center gap-3 text-sm text-muted">
+                  <CircleNotch size={28} className="animate-spin text-own" aria-hidden />
+                  Cargando el video y la calibración…
+                </div>
+              </div>
+            ) : !fileUrl ? (
               <div className="flex flex-wrap items-center gap-3">
                 {embedded && folder ? (
                   <div className="min-w-0 flex-1">

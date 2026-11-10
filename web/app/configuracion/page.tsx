@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowCounterClockwise, ArrowsIn, ArrowsOut, FilmSlate, FloppyDisk, Lock, MagnifyingGlass, MapTrifold, Palette, PencilSimple, Plus, Trash, UsersThree } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, FilmSlate, FloppyDisk, Lock, MagnifyingGlass, MapTrifold, Palette, PencilSimple, Plus, Trash, UsersThree } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useState } from "react";
 import { Locked, SkBars } from "@/components/Locked";
@@ -34,7 +34,7 @@ const SECTIONS = [
   { id: "video", label: "Video y etiquetado", icon: FilmSlate },
   { id: "save", label: "Guardado", icon: FloppyDisk },
   { id: "venues", label: "Sedes", icon: MapTrifold },
-  { id: "roster", label: "Plantilla", icon: UsersThree },
+  { id: "roster", label: "Equipos y plantillas", icon: UsersThree },
   { id: "thresholds", label: "Umbrales y zonas", icon: Lock },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
@@ -160,7 +160,6 @@ export default function Page() {
   const tabPref = usePref("config:tab", "look");
   const tab: SectionId = VISIBLE.some((t) => t.id === tabPref) ? (tabPref as SectionId) : "look";
   const setTab = (t: SectionId) => setPref("config:tab", t);
-  const maximized = usePref("config:max", "off") === "on";
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<{ spec: VenueSpec; isNew: boolean } | null>(null);
   const own = usePref("ownColor", DEFAULT_OWN);
@@ -215,16 +214,12 @@ export default function Page() {
   };
 
   return (
-    <div className={maximized ? "" : "mx-auto max-w-6xl"}>
+    <div className="mx-auto max-w-7xl">
       <PageHeader title="Configuración">
         <label className="relative">
           <MagnifyingGlass size={14} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-faint" aria-hidden />
           <input className="input !w-64 !pl-8" placeholder="Buscar un ajuste" aria-label="Buscar un ajuste" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
-        <button type="button" className="btn" onClick={() => setPref("config:max", maximized ? "off" : "on")} aria-pressed={maximized} title={maximized ? "Volver al ancho normal" : "Usar todo el ancho"}>
-          {maximized ? <ArrowsIn size={14} /> : <ArrowsOut size={14} />}
-          {maximized ? "Reducir" : "Maximizar"}
-        </button>
       </PageHeader>
 
       <div className="grid gap-6 md:grid-cols-[13rem_minmax(0,1fr)]">
@@ -292,7 +287,12 @@ export default function Page() {
                 </>
               )}
               {current.id === "venues" && <Venues onEdit={(spec) => setEditing({ spec, isNew: false })} onNew={newVenue} />}
-              {current.id === "roster" && <RosterCard />}
+              {current.id === "roster" && (
+                <div className="space-y-5">
+                  <TeamsCard />
+                  <RosterCard />
+                </div>
+              )}
               {current.id === "thresholds" && (
                 <Locked
                   reason="dev"
@@ -344,6 +344,38 @@ function LabelGlyph({ kind }: { kind: string }) {
       {kind === "oval" && <ellipse cx={20} cy={34} rx={10} ry={3.2} fill="none" className="stroke-accent-300" strokeWidth={1.8} />}
       {kind === "arrow" && <path d="M20 4 L20 1 M15 1 L20 6 L25 1" fill="none" className="stroke-accent-300" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />}
     </svg>
+  );
+}
+
+// The teams of the app. For now there is one, Tec CCM (the analysed team): its squad is the one below.
+function TeamsCard() {
+  const { roster } = useStore();
+  const ownId = usePref("ownColor", DEFAULT_OWN);
+  const own = TEAM_COLORS.find((c) => c.id === ownId) ?? TEAM_COLORS[0];
+  return (
+    <section className="rounded-lg bg-surface p-4" aria-label="Equipos">
+      <div className="mb-3 flex items-center gap-3">
+        <h3 className="m-0 text-sm text-ink">Equipos</h3>
+        <span className="hr-fade-l min-w-8 flex-1" />
+        <button type="button" className="btn" disabled title="Por ahora solo existe Tec CCM: los equipos rivales se escriben en cada partido">
+          <Plus size={14} />
+          Añadir equipo
+        </button>
+      </div>
+      <ul className="m-0 list-none p-0">
+        <li className="flex items-center gap-3 rounded-lg bg-bg/50 px-3 py-2.5">
+          <i className="h-8 w-1 shrink-0 rounded-full" style={{ background: "var(--color-own)" }} aria-hidden />
+          <span className="min-w-0 flex-1">
+            <span className="cond block text-sm font-bold text-ink uppercase">Tec CCM</span>
+            <span className="block text-xs text-faint">
+              Equipo analizado · {(roster ?? []).length} jugadoras · color {own.label.toLowerCase()} (se cambia en Apariencia)
+            </span>
+          </span>
+          <span className="tag tag-accent">Por defecto</span>
+        </li>
+      </ul>
+      <p className="mt-3 mb-0 text-xs text-pretty text-faint">La plantilla de abajo es la de Tec CCM. Más equipos con su propia plantilla llegarán después.</p>
+    </section>
   );
 }
 

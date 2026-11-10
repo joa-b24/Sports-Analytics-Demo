@@ -1,9 +1,9 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useState } from "react";
 import { COLORS, Pitch } from "./Pitch";
 import { CountUp } from "./motion";
-import { finishEvents } from "@/lib/analysis";
+import { finishEvents, type MomentumCurve } from "@/lib/analysis";
 import { fmtT } from "@/lib/format";
 import type { Segment } from "@/lib/segments";
 import { EVENT_LABELS, EVENT_TYPES, PITCH, type MatchEvent } from "@/lib/types";
@@ -67,7 +67,8 @@ export function ScoreStrip({
   aLabel: string;
   bLabel: string;
   goals: [number, number];
-  stats: { label: string; a: number; b: number }[];
+  // `unit` goes after each figure (for instance «%»); `note` is the small line of the tooltip.
+  stats: { label: string; a: number; b: number; unit?: string; note?: string }[];
 }) {
   return (
     <div className="rounded-2xl bg-surface/60 px-4 py-5 sm:px-6">
@@ -91,15 +92,17 @@ export function ScoreStrip({
           {stats.map((s) => {
             const total = s.a + s.b;
             return (
-              <div key={s.label} className="min-w-[4.5rem]" title={`${s.label} · ${aLabel}: ${s.a} · ${bLabel}: ${s.b}`}>
+              <div key={s.label} className="min-w-[4.5rem]" title={`${s.label} · ${aLabel}: ${s.a}${s.unit ?? ""} · ${bLabel}: ${s.b}${s.unit ?? ""}${s.note ? ` · ${s.note}` : ""}`}>
                 <div className="truncate text-center text-[11px] text-muted">{s.label}</div>
                 <div className="mt-1 flex items-baseline justify-center gap-1.5">
                   <span className="num text-2xl" style={{ color: COLORS.own }}>
                     {s.a}
+                    {s.unit && <span className="text-sm">{s.unit}</span>}
                   </span>
                   <span className="text-xs text-faint">|</span>
                   <span className="num text-2xl" style={{ color: COLORS.opp }}>
                     {s.b}
+                    {s.unit && <span className="text-sm">{s.unit}</span>}
                   </span>
                 </div>
                 <div className="mt-1.5 flex h-[3px] gap-0.5 overflow-hidden rounded-full">
@@ -121,46 +124,115 @@ export function ScoreStrip({
   );
 }
 
-// Momentum: the threat each team creates minute by minute. One team grows above the middle line, the other below.
-export function MomentumChart({ points, aLabel, bLabel }: { points: { min: number; own: number; opp: number }[]; aLabel: string; bLabel: string }) {
-  if (points.length < 2) return <p className="text-sm text-faint">Faltan eventos de ataque (tiros, goles, entradas, córners) para dibujar el momentum.</p>;
-  const W = 640;
-  const H = 190;
-  const padX = 8;
-  const mid = H / 2 - 6;
-  const maxV = Math.max(1, ...points.flatMap((p) => [p.own, p.opp]));
-  const k = (mid - 14) / maxV;
-  const last = points[points.length - 1].min;
-  const x = (m: number) => padX + (m / Math.max(1, last)) * (W - 2 * padX);
-  const area = (get: (p: (typeof points)[number]) => number, dir: 1 | -1) =>
-    `M${x(points[0].min)},${mid} ` + points.map((p) => `L${x(p.min).toFixed(1)},${(mid - dir * get(p) * k).toFixed(1)}`).join(" ") + ` L${x(last)},${mid} Z`;
+// Momentum: one signed curve (lib/analysis.ts momentumCurve). Our team fills above the middle line, the opponent below;
+// goals are marked at their minute; the dashed line is half time. Move the pointer over it to read a minute.
+export function MomentumChart({ curve, aLabel, bLabel }: { curve: MomentumCurve; aLabel: string; bLabel: string }) {
+  const uid = useId().replace(/:/g, "");
+  const [hover, setHover] = useState<number | null>(null);
+  const pts = curve.points;
+  if (pts.length < 2) return <p className="text-sm text-faint">Faltan eventos de ataque (tiros, goles, entradas, córners) para dibujar el momentum.</p>;
+  const W = 720;
+  const H = 260;
+  const padL = 34;
+  const padR = 10;
+  const top = 26;
+  const bottom = 24;
+  const mid = top + (H - top - bottom) / 2;
+  const half = (H - top - bottom) / 2;
+  const last = pts[pts.length - 1].min;
+  const x = (m: number) => padL + (m / last) * (W - padL - padR);
+  const y = (v: number) => mid - (v / 100) * (half - 4);
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${x(p.min).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
+  const area = `${line} L${x(last).toFixed(1)},${mid} L${x(0)},${mid} Z`;
+  const step = last > 60 ? 15 : 10;
   const ticks: number[] = [];
-  for (let m = 0; m <= last; m += last > 60 ? 15 : 10) ticks.push(m);
+  for (let m = 0; m <= last; m += step) ticks.push(m);
+  const near = hover === null ? null : pts.reduce((best, p) => (Math.abs(p.min - hover) < Math.abs(best.min - hover) ? p : best), pts[0]);
   return (
     <div>
       <Legend
         items={[
-          { color: COLORS.own, label: aLabel },
-          { color: COLORS.opp, label: bLabel },
+          { color: COLORS.own, label: `${aLabel} (arriba)` },
+          { color: COLORS.opp, label: `${bLabel} (abajo)` },
         ]}
       />
-      <svg viewBox={`0 0 ${W} ${H}`} className="mt-3 w-full" role="img" aria-label={`Momentum de ${aLabel} y ${bLabel} minuto a minuto`}>
-        <path d={area((p) => p.own, 1)} fill={COLORS.own} fillOpacity={0.55} stroke={COLORS.own} strokeWidth={1.5} strokeLinejoin="round" />
-        <path d={area((p) => p.opp, -1)} fill={COLORS.opp} fillOpacity={0.55} stroke={COLORS.opp} strokeWidth={1.5} strokeLinejoin="round" />
-        <line x1={padX} x2={W - padX} y1={mid} y2={mid} stroke="var(--color-line)" strokeWidth={1} />
-        {ticks.map((m) => (
-          <g key={m}>
-            <line x1={x(m)} x2={x(m)} y1={mid - 3} y2={mid + 3} stroke="var(--color-faint)" strokeWidth={1} />
-            <text x={x(m)} y={H - 6} textAnchor="middle" fontSize={10} fill="var(--color-faint)">
-              {m}′
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="mt-3 w-full"
+        role="img"
+        aria-label={`Momentum de ${aLabel} y ${bLabel} minuto a minuto`}
+        onPointerMove={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          const px = ((e.clientX - r.left) / r.width) * W;
+          setHover(Math.min(last, Math.max(0, ((px - padL) / (W - padL - padR)) * last)));
+        }}
+        onPointerLeave={() => setHover(null)}
+      >
+        <defs>
+          <clipPath id={`${uid}-up`}>
+            <rect x={0} y={0} width={W} height={mid} />
+          </clipPath>
+          <clipPath id={`${uid}-down`}>
+            <rect x={0} y={mid} width={W} height={H - mid} />
+          </clipPath>
+        </defs>
+        {[-100, -50, 0, 50, 100].map((v) => (
+          <g key={v}>
+            <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="var(--color-line)" strokeWidth={v === 0 ? 1.2 : 0.6} strokeDasharray={v === 0 ? undefined : "2 4"} />
+            <text x={padL - 6} y={y(v) + 3} textAnchor="end" fontSize={9} fill="var(--color-faint)">
+              {v}
             </text>
           </g>
         ))}
-        {points.map((p) => (
-          <rect key={p.min} x={x(p.min) - (W - 2 * padX) / Math.max(1, last) / 2} y={0} width={(W - 2 * padX) / Math.max(1, last)} height={H} fill="transparent">
-            <title>{`${p.min}′ · ${aLabel}: ${p.own} · ${bLabel}: ${p.opp}`}</title>
-          </rect>
+        <g clipPath={`url(#${uid}-up)`}>
+          <path d={area} fill={COLORS.own} fillOpacity={0.28} />
+          <path d={line} fill="none" stroke={COLORS.own} strokeWidth={2.6} strokeLinejoin="round" strokeLinecap="round" />
+        </g>
+        <g clipPath={`url(#${uid}-down)`}>
+          <path d={area} fill={COLORS.opp} fillOpacity={0.28} />
+          <path d={line} fill="none" stroke={COLORS.opp} strokeWidth={2.6} strokeLinejoin="round" strokeLinecap="round" />
+        </g>
+        {curve.halfTime !== null && (
+          <g>
+            <line x1={x(curve.halfTime)} x2={x(curve.halfTime)} y1={top - 8} y2={H - bottom} stroke="var(--color-faint)" strokeWidth={1} strokeDasharray="5 3" opacity={0.7} />
+            <text x={x(curve.halfTime)} y={top - 12} textAnchor="middle" fontSize={9} fontWeight={700} fill="var(--color-faint)">
+              DESC
+            </text>
+          </g>
+        )}
+        {curve.goals.map((g, n) => {
+          const gy = g.team === "own" ? top - 2 : H - bottom + 2;
+          const c = g.team === "own" ? COLORS.own : COLORS.opp;
+          return (
+            <g key={n}>
+              <line x1={x(g.min)} x2={x(g.min)} y1={gy} y2={mid} stroke={c} strokeWidth={1} strokeDasharray="3 3" opacity={0.5} />
+              <circle cx={x(g.min)} cy={gy} r={6.5} fill="var(--color-bg)" stroke={c} strokeWidth={1.8} />
+              <text x={x(g.min)} y={gy + 3.4} textAnchor="middle" fontSize={9} fontWeight={800} fill={c}>
+                G
+              </text>
+            </g>
+          );
+        })}
+        {ticks.map((m) => (
+          <text key={m} x={x(m)} y={H - 7} textAnchor="middle" fontSize={10} fill="var(--color-faint)">
+            {m}′
+          </text>
         ))}
+        {near && (
+          <g pointerEvents="none">
+            <line x1={x(near.min)} x2={x(near.min)} y1={top - 4} y2={H - bottom} stroke="var(--color-ink)" strokeWidth={0.8} opacity={0.5} />
+            <circle cx={x(near.min)} cy={y(near.value)} r={3.5} fill={near.value >= 0 ? COLORS.own : COLORS.opp} stroke="var(--color-bg)" strokeWidth={1.2} />
+            <g transform={`translate(${Math.min(W - 150, Math.max(padL, x(near.min) + 8))},${top + 4})`}>
+              <rect width={142} height={42} rx={4} fill="var(--color-raised)" stroke="var(--color-line-strong)" />
+              <text x={8} y={15} fontSize={10} fontWeight={700} fill="var(--color-ink)">
+                {Math.floor(near.min)}′ · {near.value >= 0 ? aLabel : bLabel} {Math.abs(Math.round(near.value))}
+              </text>
+              <text x={8} y={30} fontSize={9} fill="var(--color-muted)">
+                peligro {aLabel.slice(0, 10)} {near.own.toFixed(1)} · {bLabel.slice(0, 10)} {near.opp.toFixed(1)}
+              </text>
+            </g>
+          </g>
+        )}
       </svg>
     </div>
   );

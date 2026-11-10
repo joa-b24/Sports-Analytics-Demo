@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useFixedParts } from "@/lib/fixed";
+import { trackedPasses } from "@/lib/passSources";
 import { BinChart, CompareBars, EventTimeline, MomentumChart, PartsDuo, RateDuo, ScoreStrip, ShotMap, ZoneMap, type PartsRow } from "@/components/charts";
 import { GoalsList } from "@/components/match/GoalsList";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
@@ -23,7 +25,7 @@ import {
   finalThirdEntries,
   firstPass,
   goalKicks,
-  momentum,
+  momentumCurve,
   recoveryHeight,
   setPieces,
   shotBreakdown,
@@ -76,6 +78,15 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const [binMeasure, setBinMeasure] = useState<BinMeasure>("shots");
   const [counterTeam, setCounterTeam] = useState<Side>("own");
   const shotsPlayer = useMomentPlayer(match);
+  // Passes completed (read from the tracking): the headline row counts them with possession.
+  const fixed = useFixedParts(match.folder, videoIds);
+  const passTotals = useMemo(() => {
+    const parts = fixed?.parts ?? [];
+    if (parts.length === 0) return null;
+    const own = trackedPasses(parts, "own", segmentsByVideo);
+    const opp = trackedPasses(parts, "opp", segmentsByVideo);
+    return own.completed + own.cut + opp.completed + opp.cut > 0 ? { own, opp } : null;
+  }, [fixed, segmentsByVideo]);
   // Analysis works on a joined axis: a moment is looked up by event id among the events with their own video times.
   const ownTimes = useMemo(() => (videoEvents ? new Map(videoEvents.map((e) => [e.event_id, e])) : null), [videoEvents]);
 
@@ -115,7 +126,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
 
   const tr = { own: transitions(evs, "own"), opp: transitions(evs, "opp") };
   const bins = timeBins(evs, segments, binMin);
-  const mom = momentum(evs, segments, 5);
+  const mom = momentumCurve(evs, segments);
   const counterZones = zoneCounts(tr[counterTeam].recoveriesToShot);
 
   // Rows for the split charts: one per team, with the labels of the contract values.
@@ -185,7 +196,22 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
           {(() => {
             const cards = (t: Side, c: string) => evs.filter((e) => e.type === "foul" && e.team === t && e.detail === c).length;
             const saves = (shooter: Side) => evs.filter((e) => e.type === "shot" && e.team === shooter && e.detail === "saved").length;
+            // Possession (share of the time the ball was followed) and completed passes lead the row: they say who ran the game.
+            const held = match.possession ? match.possession.own + match.possession.opp : 0;
+            const ownPct = held > 0 && match.possession ? Math.round((100 * match.possession.own) / held) : null;
+            const pct = (p: { completed: number; cut: number }) => (p.completed + p.cut > 0 ? Math.round((100 * p.completed) / (p.completed + p.cut)) : null);
             const stats = [
+              ...(ownPct !== null ? [{ label: "Posesión", a: ownPct, b: 100 - ownPct, unit: "%" }] : []),
+              ...(passTotals
+                ? [
+                    {
+                      label: "Pases completados",
+                      a: passTotals.own.completed,
+                      b: passTotals.opp.completed,
+                      note: `acierto ${pct(passTotals.own) ?? "–"} % · ${pct(passTotals.opp) ?? "–"} %`,
+                    },
+                  ]
+                : []),
               { label: "Tiros", a: shotsOf(evs, "own").length, b: shotsOf(evs, "opp").length },
               { label: "Recuperaciones", a: a.recovery, b: b.recovery },
               { label: "Pérdidas", a: a.loss, b: b.loss },
@@ -343,9 +369,9 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         <>
       <Section title="A lo largo del partido">
         <div className="space-y-5">
-          <Panel title="Momentum" note={`quién crea más peligro, en ventanas de ${mom.windowMin} min`} defaultWide>
-            <MomentumChart points={mom.points} aLabel={A} bLabel={B} />
-            <p className="mt-2 text-xs text-pretty text-faint">Suma el peligro de goles, tiros, entradas al área y al último tercio, córners y centros de cada equipo. Pasa el cursor por un minuto para ver las cifras.</p>
+          <Panel title="Momentum" note="quién crea más peligro, y cuánto dura" defaultWide>
+            <MomentumChart curve={mom} aLabel={A} bLabel={B} />
+            <p className="mt-2 text-xs text-pretty text-faint">Cada evento de ataque suma peligro (gol 5, tiro 3, entrada al área 2, último tercio, córner y centro 1) y se va apagando con los minutos (vida media de 1.5 min); la curva es la diferencia entre equipos, suavizada, y su mayor oscilación vale ±100. Pasa el cursor por un minuto para ver las cifras.</p>
           </Panel>
           <Panel
             title="¿En qué tramo generan y reciben más?"
