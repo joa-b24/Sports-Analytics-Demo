@@ -692,12 +692,20 @@ export interface PassArrow {
   y2: number;
   from: string | null; // passer's name
   progressive: boolean; // gains at least PROGRESSIVE_M towards the rival goal
+  key?: true; // the analyst tagged a key pass (event) on it
 }
+export const KEY_PASS_WINDOW_S = 3;
 export const PROGRESSIVE_M = 10;
 
 // Every pass of a team read from the followed ball, from the passer (at her last touch) to the receiver (at her
 // first), with the team attacking right. A pass whose two ends are not in frame is left out.
-export function passArrows(parts: Oriented[], team: "own" | "opp", playByVideo: Record<string, Segment[]> = {}): PassArrow[] {
+export function passArrows(
+  parts: Oriented[],
+  team: "own" | "opp",
+  playByVideo: Record<string, Segment[]> = {},
+  keyPasses: { video_id?: string; t_video: number; player_id?: string | null }[] = [],
+): PassArrow[] {
+  const usedKey = new Set<number>();
   const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
   const out: PassArrow[] = [];
   for (const o of parts) {
@@ -712,7 +720,13 @@ export function passArrows(parts: Oriented[], team: "own" | "opp", playByVideo: 
       let [x1, y1] = orient(o, a.x, a.y);
       let [x2, y2] = orient(o, b.x, b.y);
       if (team === "opp") [x1, y1, x2, y2] = [PITCH.length - x1, PITCH.width - y1, PITCH.length - x2, PITCH.width - y2];
-      out.push({ x1, y1, x2, y2, from: name.get(p.from) ?? null, progressive: (x2 - x1) * mx >= PROGRESSIVE_M });
+      const from = name.get(p.from) ?? null;
+      // A key pass event within a few seconds of the pass (and the passer's name, when both have one) marks the arrow.
+      const t0 = p.from_frame / o.file.fps - KEY_PASS_WINDOW_S;
+      const t1 = p.frame / o.file.fps + KEY_PASS_WINDOW_S;
+      const k = keyPasses.findIndex((e, i) => !usedKey.has(i) && (e.video_id ?? "v1") === o.file.video_id && e.t_video >= t0 && e.t_video <= t1 && (!e.player_id || !from || e.player_id === from));
+      if (k >= 0) usedKey.add(k);
+      out.push({ x1, y1, x2, y2, from, progressive: (x2 - x1) * mx >= PROGRESSIVE_M, ...(k >= 0 ? { key: true as const } : {}) });
     }
   }
   return out;

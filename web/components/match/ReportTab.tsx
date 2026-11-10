@@ -150,7 +150,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
         return net ? <NetworkBlock net={net} team={F} side={focus} /> : <GateLine gate={data.summary.network_gate} />;
       }
       case "pass_map":
-        return <PassMapSection parts={parts} side={focus} team={F} segmentsByVideo={segmentsByVideo} />;
+        return <PassMapSection parts={parts} side={focus} team={F} segmentsByVideo={segmentsByVideo} events={events} />;
       case "touches":
         return data.summary.ball ? (
           <TouchesBlock

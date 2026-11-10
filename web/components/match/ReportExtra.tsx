@@ -7,7 +7,7 @@ import { physical, teamBlock } from "@/lib/physical";
 import { heatmapSmooth, passArrows, type Oriented } from "@/lib/positions";
 import { NEED_TEXT, REPORT_SECTIONS, moveSection, toggleSection } from "@/lib/reportSections";
 import type { Segment } from "@/lib/segments";
-import { PITCH } from "@/lib/types";
+import { PITCH, type MatchEvent } from "@/lib/types";
 
 type Side = "own" | "opp";
 const color = (s: Side) => (s === "own" ? COLORS.own : COLORS.opp);
@@ -111,25 +111,28 @@ export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; sid
 }
 
 // Every pass as an arrow from the passer to the receiver; progressive ones (10 m or more forward) in full color.
-export function PassMapSection({ parts, side, team, segmentsByVideo }: { parts: Oriented[]; side: Side; team: string; segmentsByVideo: Record<string, Segment[]> }) {
+export function PassMapSection({ parts, side, team, segmentsByVideo, events = [] }: { parts: Oriented[]; side: Side; team: string; segmentsByVideo: Record<string, Segment[]>; events?: MatchEvent[] }) {
   const [all, setAll] = useState(false);
-  const arrows = passArrows(parts, side, segmentsByVideo);
+  const keyEvents = events.filter((e) => e.type === "key_pass" && e.team === side);
+  const arrows = passArrows(parts, side, segmentsByVideo, keyEvents);
   if (arrows.length === 0) return <p className="text-sm text-faint">Sin pases de {team} leídos del balón.</p>;
   const prog = arrows.filter((a) => a.progressive).length;
   const id = `pm-${side}`;
-  const drawn = all ? arrows : arrows.filter((a) => a.progressive);
+  const keys = arrows.filter((a) => a.key);
+  const drawn = all ? arrows : arrows.filter((a) => a.progressive || a.key);
   const byPlayer = new Map<string, number>();
   for (const a of arrows) if (a.progressive && a.from) byPlayer.set(a.from, (byPlayer.get(a.from) ?? 0) + 1);
   const top = [...byPlayer].sort((x, y) => y[1] - x[1]).slice(0, 5);
   return (
     <FigureRow
-      note={<>{arrows.length} pases con sus dos extremos en cuadro · {prog} progresivos (10 m o más hacia la portería rival, en color). {team} ataca hacia la derecha.</>}
+      note={<>{arrows.length} pases con sus dos extremos en cuadro · {prog} progresivos (10 m o más hacia la portería rival, en color){keyEvents.length > 0 && <> · pases clave marcados en amarillo ({keys.length} de {keyEvents.length} ubicados en el balón)</>}. {team} ataca hacia la derecha.</>}
       aside={
         <>
           <StatList
             items={[
               { label: "Pases leídos", value: arrows.length },
               { label: "Progresivos", value: prog, mark: color(side) },
+              { label: "Pases clave", value: `${keys.length} de ${keyEvents.length}` },
               { label: "% progresivos", value: `${Math.round((100 * prog) / arrows.length)} %` },
             ]}
           />
@@ -155,7 +158,7 @@ export function PassMapSection({ parts, side, team, segmentsByVideo }: { parts: 
             <path d="M0 0L6 3L0 6z" fill="context-stroke" />
           </marker>
         </defs>
-        {drawn.map((a, i) => (
+        {drawn.filter((a) => !a.key).map((a, i) => (
           <line
             key={i}
             x1={a.x1}
@@ -169,6 +172,15 @@ export function PassMapSection({ parts, side, team, segmentsByVideo }: { parts: 
           >
             <title>{a.from ?? "sin nombre"}</title>
           </line>
+        ))}
+        {keys.map((a, i) => (
+          <g key={`k${i}`}>
+            <line x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2} stroke="var(--color-bg)" strokeWidth={1.3} strokeOpacity={0.7} />
+            <line x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2} stroke="var(--color-ball-track)" strokeWidth={0.7} markerEnd={`url(#${id})`}>
+              <title>{`Pase clave${a.from ? ` de ${a.from}` : ""}`}</title>
+            </line>
+            <circle cx={a.x2} cy={a.y2} r={1.1} fill="var(--color-ball-track)" stroke="var(--color-bg)" strokeWidth={0.3} />
+          </g>
         ))}
       </Pitch>
     </FigureRow>

@@ -139,6 +139,15 @@ export function ReviewPanel({
       return false;
     };
   });
+  // B: the position (pass 2) or the landing spot (pass 3) goes where the tracking has the ball right now.
+  const ballRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    ballRef.current = () => {
+      if (!e || !ball?.now) return;
+      const [bx, by] = [r1(ball.now[0]), r1(ball.now[1])];
+      update(e.event_id, pass === 3 ? { x_end: bx, y_end: by } : { x: bx, y: by });
+    };
+  });
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       const el = ev.target as HTMLElement;
@@ -157,6 +166,7 @@ export function ReviewPanel({
         shiftRef.current(k === "-" ? -NUDGE_S : NUDGE_S);
       } else if (k === "r") replayRef.current();
       else if (k === "m") atFrameRef.current();
+      else if (k === "b") ballRef.current();
       else if (k === "v") pickRef.current?.();
       else completeRef.current(ev.key);
     };
@@ -262,7 +272,7 @@ export function ReviewPanel({
               {ball?.now && (
                 <button type="button" className="link inline-flex items-center gap-1" onClick={() => ball.now && update(e.event_id, { x: r1(ball.now[0]), y: r1(ball.now[1]) })}>
                   <SoccerBall size={12} />
-                  donde está el balón
+                  donde está el balón <kbd className="kbd">B</kbd>
                 </button>
               )}
               {e.x !== null && (
@@ -402,7 +412,7 @@ export function ReviewPanel({
             {ball?.now && (
               <button type="button" className="link inline-flex items-center gap-1" onClick={() => ball.now && update(e.event_id, { x_end: r1(ball.now[0]), y_end: r1(ball.now[1]) })}>
                 <SoccerBall size={12} />
-                donde está el balón
+                donde está el balón <kbd className="kbd">B</kbd>
               </button>
             )}
             {e.x_end != null && (
