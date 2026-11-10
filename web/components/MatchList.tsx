@@ -74,15 +74,26 @@ function MatchRow({ m, events, state, files }: { m: Match; events: MatchEvent[];
         {s.lead && <p className="m-0 line-clamp-2 text-sm text-pretty text-ink-2">{s.lead}</p>}
         {s.comparisons.length > 0 && (
           <dl className={`m-0 flex flex-wrap gap-x-5 gap-y-1 ${s.lead ? "mt-1.5" : ""}`}>
-            {s.comparisons.map((c) => (
-              <div key={c.label} className="flex items-baseline gap-1.5">
-                <dt className="text-xs text-faint">{c.label}</dt>
-                <dd className="m-0 text-sm font-semibold text-ink tabular-nums">
-                  {`${c.own}${c.unit ?? ""}–${c.opp}${c.unit ?? ""}`}
-                </dd>
-                {c.note && <span className="text-[11px] text-faint">({c.note})</span>}
-              </div>
-            ))}
+            {s.comparisons.map((c) =>
+              c.unit === "%" ? (
+                <div key={c.label} className="flex items-center gap-2" title={`${c.label}: ${c.own} % – ${c.opp} %`}>
+                  <dt className="text-xs text-faint">{c.label}</dt>
+                  <dd className="m-0 flex items-center gap-1.5 text-xs font-semibold text-ink tabular-nums">
+                    {c.own}
+                    <span className="flex h-1.5 w-24 overflow-hidden rounded-full bg-raised" aria-hidden>
+                      <i className="block h-full bg-own" style={{ width: `${c.own}%` }} />
+                      <i className="block h-full bg-opp" style={{ width: `${c.opp}%` }} />
+                    </span>
+                    {c.opp}
+                  </dd>
+                </div>
+              ) : (
+                <div key={c.label} className="flex items-baseline gap-1.5">
+                  <dt className="text-xs text-faint">{c.label}</dt>
+                  <dd className="m-0 text-sm font-semibold text-ink tabular-nums">{`${c.own}–${c.opp}`}</dd>
+                </div>
+              ),
+            )}
           </dl>
         )}
         {!s.lead && s.comparisons.length === 0 && <p className="m-0 text-sm text-faint">El resumen aparece al etiquetar eventos.</p>}

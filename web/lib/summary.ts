@@ -1,5 +1,4 @@
 import { shotBreakdown } from "./analysis.ts";
-import { possessionCover } from "./playgroundHealth.ts";
 import { missingReview } from "./tagging.ts";
 import type { Match, MatchEvent } from "./types.ts";
 
@@ -44,11 +43,9 @@ export function matchSummary(match: Pick<Match, "report" | "possession">, events
   // Possession: share of the time with the ball followed that either team had it (time nobody had it left out).
   const p = match.possession;
   const held = p ? p.own + p.opp : 0;
-  // Never without its coverage: a match saved before the coverage was kept says so instead of leaving it out.
-  const cover = possessionCover(p ?? null);
   const possession: Comparison[] =
     p && held > 0
-      ? [{ label: "Posesión", own: Math.round((100 * p.own) / held), opp: 100 - Math.round((100 * p.own) / held), unit: "%", note: p.coverage === undefined ? "cobertura sin calcular: abre el Informe" : cover.text }]
+      ? [{ label: "Posesión", own: Math.round((100 * p.own) / held), opp: 100 - Math.round((100 * p.own) / held), unit: "%" }]
       : [];
   const comparisons: Comparison[] = [
     ...possession,
