@@ -21,12 +21,12 @@ import { EMPTY_REPORT, type Match, type MatchEvent, type MatchKind, type State }
 import { allVenues } from "@/lib/venue";
 import { matchVideos, videoOf } from "@/lib/videos";
 
-const COPY: Record<MatchKind, { title: string; add: string; focus: string; other: string; empty: string }> = {
+export const COPY: Record<MatchKind, { title: string; add: string; focus: string; other: string; empty: string }> = {
   own: { title: "Nuestros partidos", add: "Nuevo partido propio", focus: "Nuestro equipo", other: "Rival", empty: "Aún no hay partidos propios." },
   rival: { title: "Rivales", add: "Nuevo partido de un rival", focus: "Rival que analizamos", other: "Su contrario", empty: "Aún no hay partidos de rivales." },
   reference: { title: "Videos de referencia", add: "Nuevo video de referencia", focus: "Equipo que analizamos", other: "Su contrario", empty: "Aún no hay videos de referencia." },
 };
-const ORDER: MatchKind[] = ["own", "rival", "reference"];
+export const ORDER: MatchKind[] = ["own", "rival", "reference"];
 const KIND_LABEL: Record<MatchKind, string> = { own: "Nuestro", rival: "Rival", reference: "Referencia" };
 
 // The steps a match can finish by itself, in the order of its modes (the board is not tied to one match).
@@ -127,7 +127,7 @@ function MatchRow({ m, events, state, files }: { m: Match; events: MatchEvent[];
 
 // The dialog to create a match, in the style of the match data panel (engrane): the two teams face to face, then one
 // row per field with its icon. The folder follows the date and the teams until it is edited by hand.
-function NewMatch({ initial, onClose }: { initial: MatchKind; onClose: () => void }) {
+export function NewMatch({ initial, onClose }: { initial: MatchKind; onClose: () => void }) {
   const state = useStore();
   const [kind, setKind] = useState<MatchKind>(initial);
   const [focus, setFocus] = useState("");

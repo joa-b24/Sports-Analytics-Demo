@@ -1,25 +1,26 @@
 "use client";
 
-import { ArrowRight, Barbell, CheckCircle, FileText, Monitor, PlayCircle, Plus, Sparkle, Tag } from "@phosphor-icons/react";
+import { ArrowRight, Barbell, CheckCircle, FileText, Monitor, PlayCircle, Plus, Tag } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AcwrChart, MiniBars } from "@/components/charts";
 import { MODES, STEP_ICONS, ScoreBug, modeOf } from "@/components/match/MatchHeader";
 import { CountUp, Reveal, revealRef } from "@/components/motion";
 import { Card, DemoBadge, PageHeader, btnPrimary } from "@/components/Shell";
-import { buildDemo } from "@/lib/demo";
+import { COPY, NewMatch, ORDER } from "@/components/MatchList";
+import { ZipCard } from "@/components/data/ZipCard";
 import { stepVisible } from "@/lib/mobile";
 import { TEAM_SECTIONS } from "@/lib/features";
 import { fmtNum } from "@/lib/format";
 import { faceOff, lastOwnMatch, nextRival, pendingTasks, rivalDossier, type RivalDossier, type Task } from "@/lib/home";
 import { SAFE_ACWR, acwr, sessionLoads } from "@/lib/load";
-import { readFolderFiles } from "@/lib/local";
+import { listLocal, readFolderFiles } from "@/lib/local";
 import { segmentsFromMarks } from "@/lib/segments";
 import { mean } from "@/lib/stats";
 import { matchSteps, type FolderFiles, type StepId, type StepStatus } from "@/lib/steps";
-import { mutate, useHydrated, useStore } from "@/lib/store";
+import { useHydrated, useStore } from "@/lib/store";
 import { matchSummary, type Comparison } from "@/lib/summary";
-import type { Match, MatchEvent, State } from "@/lib/types";
+import type { Match, MatchEvent, MatchKind, State } from "@/lib/types";
 import { matchVideos, videoOf } from "@/lib/videos";
 
 // Metric used for the training-load trend, in order of preference.
@@ -35,8 +36,8 @@ const fmtDate = (d: string, year = true) =>
   d ? new Date(`${d}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}) }) : "Sin fecha";
 
 // Link to a match, opened on a mode and, optionally, on one of its steps.
-const matchHref = (m: Match, mode: string, step?: StepId) =>
-  `/partido?id=${encodeURIComponent(m.match_id)}&modo=${mode}${step ? `&paso=${step}` : ""}`;
+const matchHref = (m: Match, mode: string, step?: StepId, extra = "") =>
+  `/partido?id=${encodeURIComponent(m.match_id)}&modo=${mode}${step ? `&paso=${step}` : ""}${extra}`;
 
 function stepsOf(m: Match, state: State, events: MatchEvent[], files: FolderFiles | null) {
   const vids = matchVideos(m).map((v) => v.video_id);
@@ -371,7 +372,7 @@ function Pending({ tasks, steps }: { tasks: Task[]; steps: Record<string, Record
               const started = steps[t.match.match_id]?.[t.step]?.state === "partial";
               return (
                 <li key={`${t.match.match_id}-${t.step}`} className="border-t border-line-soft">
-                  <Link href={matchHref(t.match, t.mode, t.step)} className="group flex items-center gap-3 py-2.5">
+                  <Link href={matchHref(t.match, t.mode, t.step, `${t.pass ? `&pasada=${t.pass}` : ""}${t.missing ? "&faltan=1" : ""}`)} className="group flex items-center gap-3 py-2.5">
                     <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-raised ${started ? "text-warn" : "text-ink-2"}`}>
                       <I size={16} aria-hidden />
                     </span>
@@ -401,26 +402,61 @@ function Pending({ tasks, steps }: { tasks: Task[]; steps: Record<string, Record
   );
 }
 
-function EmptyHome({ canDemo }: { canDemo: boolean }) {
+const EMPTY_KIND: Record<MatchKind, { icon: typeof Tag; blurb: string }> = {
+  own: { icon: Tag, blurb: "Etiqueta eventos, calibra y analiza lo que hizo tu equipo." },
+  rival: { icon: Monitor, blurb: "Prepara al rival con sus videos: cómo ataca, defiende y cobra balón parado." },
+  reference: { icon: PlayCircle, blurb: "Un video para estudiar una idea de juego, sin marcador propio." },
+};
+
+// First screen of an empty browser: the zip of a match comes first (it brings everything), and below the three kinds of
+// video, empty, each with its own way in.
+function EmptyHome() {
+  const [adding, setAdding] = useState<MatchKind | null>(null);
+  const [local, setLocal] = useState<boolean | null>(null);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let live = true;
+    void listLocal("matches").then((l) => {
+      if (!live) return;
+      setLocal(l !== null);
+      setFolders((l ?? []).filter((f) => f.dir).map((f) => f.name));
+    });
+    return () => {
+      live = false;
+    };
+  }, [tick]);
   return (
-    <section className="card card-hero relative mb-6 grid min-h-80 place-items-center overflow-hidden">
-      <PitchLines />
-      <div className="relative flex max-w-md flex-col items-center gap-4 text-center">
+    <section className="mb-6 space-y-6">
+      <div>
         <h2 className="cond m-0 text-3xl font-extrabold text-ink uppercase">Empieza con un partido</h2>
-        <p className="m-0 text-sm text-pretty text-muted">Un video de YouTube y eventos etiquetados a mano bastan para el análisis y el informe.</p>
-        <div className="flex flex-wrap justify-center gap-2">
-          <Link href="/partidos" className={btnPrimary}>
-            <Plus size={15} />
-            Crear un partido
-          </Link>
-          {canDemo && (
-            <button type="button" className="btn" onClick={() => mutate(() => buildDemo())}>
-              <Sparkle size={15} />
-              Cargar datos de ejemplo
-            </button>
-          )}
-        </div>
+        <p className="m-0 mt-1 max-w-xl text-sm text-pretty text-muted">Importa el .zip de un partido (trae sus eventos, tramos y tracking) o crea uno vacío según el tipo de video.</p>
       </div>
+      <ZipCard local={local} folders={folders} onFolders={() => setTick((t) => t + 1)} />
+      <div className="grid gap-3 md:grid-cols-3">
+        {ORDER.map((k) => {
+          const I = EMPTY_KIND[k].icon;
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setAdding(k)}
+              className="group flex min-h-40 flex-col items-start gap-2 rounded-md border border-dashed border-line p-4 text-left transition-colors hover:border-line-strong hover:bg-surface"
+            >
+              <span className="grid h-9 w-9 place-items-center rounded-md bg-raised text-ink-2">
+                <I size={18} aria-hidden />
+              </span>
+              <span className="cond text-sm font-bold tracking-wide text-ink uppercase">{COPY[k].title}</span>
+              <span className="text-xs text-pretty text-faint">{EMPTY_KIND[k].blurb}</span>
+              <span className="mt-auto inline-flex items-center gap-1.5 text-xs text-ink-2 group-hover:text-accent-300">
+                <Plus size={13} weight="bold" />
+                {COPY[k].add}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {adding && <NewMatch initial={adding} onClose={() => setAdding(null)} />}
     </section>
   );
 }
@@ -470,7 +506,7 @@ export default function Home() {
       <PageHeader title="Inicio" />
 
       {matches.length === 0 ? (
-        <EmptyHome canDemo={sessions.length === 0} />
+        <EmptyHome />
       ) : (
         <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-12">
           {last ? <LastMatch m={last} events={eventsOf(last)} steps={stepsByMatch[last.match_id]} /> : <NoOwnMatch />}

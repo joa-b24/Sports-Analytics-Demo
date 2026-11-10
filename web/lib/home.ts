@@ -113,6 +113,9 @@ export interface Task {
   label: string;
   // Where it stands.
   text: string;
+  // Pass of the tagging to open (1 identify, 2 review, 3 execution) and whether to list only the events that lack something.
+  pass?: 1 | 2 | 3;
+  missing?: boolean;
 }
 
 // Tasks left, match by match (newest first): the tagging and the stretches of play from the steps, and the summary of
@@ -124,12 +127,12 @@ export function pendingTasks(rows: { match: Match; steps: Record<StepId, StepSta
     .flatMap((r) => {
       const out: Task[] = [];
       const { tag, segments } = r.steps;
-      if (tag.state === "todo") out.push({ match: r.match, step: "tag", mode: "captura", label: "Etiquetar eventos", text: tag.text });
+      if (tag.state === "todo") out.push({ match: r.match, step: "tag", mode: "captura", label: "Etiquetar eventos", text: tag.text, pass: 1 });
       else if (tag.state === "partial") {
         // Partial: events left to review, or only end positions missing (then «0 por revisar» says nothing).
         const review = Number(/(\d+) por revisar/.exec(tag.text)?.[1] ?? 1);
         const text = review > 0 ? tag.text : tag.text.replace(/ · 0 por revisar/, "");
-        out.push({ match: r.match, step: "tag", mode: "captura", label: review > 0 ? "Revisar eventos" : "Completar destinos", text });
+        out.push({ match: r.match, step: "tag", mode: "captura", label: review > 0 ? "Revisar eventos" : "Completar destinos", text, pass: review > 0 ? 2 : 3, missing: true });
       }
       if (segments.state === "todo") out.push({ match: r.match, step: "segments", mode: "captura", label: "Marcar tramos", text: segments.text });
       else if (segments.state === "partial") out.push({ match: r.match, step: "segments", mode: "captura", label: "Terminar tramos", text: segments.text });

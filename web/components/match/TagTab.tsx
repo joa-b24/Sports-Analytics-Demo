@@ -4,6 +4,7 @@ import { detailsFor, outcomePatch } from "@/lib/tagging";
 import { FilmSlate, Keyboard, Warning, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "next/navigation";
 import { Modal } from "@/components/Modal";
 import { COLORS } from "@/components/Pitch";
 import { Card, btn } from "@/components/Shell";
@@ -76,7 +77,16 @@ export function TagTab({ match, videoId, defaultPeriod, periodAt, events, segmen
   const [recent, setRecent] = useState<{ id: string; at: number }[]>([]);
   // Possible duplicates the person chose to keep.
   const [kept, setKept] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState<EventFilter>(NO_FILTER);
+  // A link from Inicio (?pasada=2&faltan=1) opens that pass listing only the events that still lack something.
+  const params = useSearchParams();
+  const [filter, setFilter] = useState<EventFilter>(() => (params.get("faltan") === "1" ? { ...NO_FILTER, onlyMissing: true } : NO_FILTER));
+  const linked = useRef(false);
+  useEffect(() => {
+    if (linked.current) return;
+    linked.current = true;
+    const p = Number(params.get("pasada"));
+    if (p >= 1 && p <= 3) setPass(p as Pass);
+  }, [params]);
   const [current, setCurrent] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState(false);
   const [bigTable, setBigTable] = useState(false);
