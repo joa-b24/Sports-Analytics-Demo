@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { Plus, X } from "@phosphor-icons/react";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { Select } from "@/components/Select";
+import { TrackingLoading } from "@/components/TrackingLoading";
 import { Card } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
 import { MAX_COMPARE, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
@@ -83,6 +84,12 @@ export function PlayersCompare({
   const free = rows.filter((r) => !picked.some((p) => p.key === r.key));
   const team = (s: Side) => (s === "own" ? match.focus_team : match.other_team);
 
+  if (rows.length === 0 && match.folder && fixed === null)
+    return (
+      <Card title="Perfil comparativo">
+        <TrackingLoading what="las posiciones de las jugadoras" />
+      </Card>
+    );
   if (rows.length === 0)
     return (
       <Card>
@@ -157,7 +164,7 @@ export function PlayersCompare({
         </Card>
       ) : (
         <div className="space-y-5">
-          <Card title="Dónde jugó" note="tiempo en cada zona, atacando hacia la derecha">
+          <Card title="Mapas individuales" note="tiempo en cada zona, atacando hacia la derecha">
             {anyMinutes ? (
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 {picked.map((r, i) => (

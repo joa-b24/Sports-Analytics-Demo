@@ -25,3 +25,16 @@ test("editing changes only title and note; removing the last slide drops the dec
   d = removeSlide(d, "m1", "a");
   assert.deepEqual(d, []);
 });
+
+import { blankSlide, clipSlide, dropItem, upsertItem } from "./deck.ts";
+
+test("blank and clip slides carry no chart; pieces are added, changed and dropped by id", () => {
+  assert.equal(blankSlide("b").image, undefined);
+  assert.equal(clipSlide("c", "e1", "Córner").clip, "e1");
+  let items = upsertItem(undefined, { id: "i1", kind: "text", x: 0.1, y: 0.2, text: "Hola", color: "ink" });
+  items = upsertItem(items, { id: "i2", kind: "arrow", x: 0, y: 0, x2: 1, y2: 1, color: "warn" });
+  items = upsertItem(items, { id: "i1", kind: "text", x: 0.5, y: 0.2, text: "Hola", color: "ink" });
+  assert.equal(items.length, 2);
+  assert.equal(items[0].x, 0.5);
+  assert.deepEqual(dropItem(items, "i1").map((x) => x.id), ["i2"]);
+});

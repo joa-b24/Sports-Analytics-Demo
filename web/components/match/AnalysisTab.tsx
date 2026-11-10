@@ -3,6 +3,7 @@
 import { Crosshair, ShieldCheck, SquaresFour, UserFocus } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { AnalysisFilter, type MinuteRange, type Period } from "@/components/match/AnalysisFilter";
 import { Fold } from "@/components/match/Fold";
 import { Select } from "@/components/Select";
 import { useHeaderSlot } from "@/lib/stepBus";
@@ -30,6 +31,7 @@ import {
   firstPass,
   goalKicks,
   momentumCurve,
+  playTime,
   recoveryHeight,
   setPieces,
   shotBreakdown,
@@ -77,7 +79,8 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const view = (VIEWS.find(([id]) => id === viewPref)?.[0] ?? "general") as ViewId;
   const [zoneType, setZoneType] = useState<EventType>("recovery");
   const [zoneTeam, setZoneTeam] = useState<Side>("own");
-  const [period, setPeriod] = useState<0 | 1 | 2>(0);
+  const [period, setPeriod] = useState<Period>(0);
+  const [range, setRange] = useState<MinuteRange>(null);
   const [binMin, setBinMin] = useState<5 | 10>(5);
   const [binMeasure, setBinMeasure] = useState<BinMeasure>("shots");
   const [counterTeam, setCounterTeam] = useState<Side>("own");
@@ -95,7 +98,17 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   // Analysis works on a joined axis: a moment is looked up by event id among the events with their own video times.
   const ownTimes = useMemo(() => (videoEvents ? new Map(videoEvents.map((e) => [e.event_id, e])) : null), [videoEvents]);
 
-  const evs = period === 0 ? events : events.filter((e) => e.period === period);
+  // The clock of the filter by minutes: minutes of play when the stretches are marked, else of video since the first event
+  // (the same clock as the time bins).
+  const hasPlay = segments.some((g) => g.tipo === "juego");
+  const t0 = events.length ? Math.min(...events.map((e) => e.t_video)) : 0;
+  const minuteOf = (e: MatchEvent): number | null => {
+    const t = hasPlay ? playTime(segments, e.t_video) : e.t_video - t0;
+    return t === null ? null : t / 60;
+  };
+  const lastMin = Math.max(0, ...events.map((e) => minuteOf(e) ?? 0));
+  const byPeriod = period === 0 ? events : events.filter((e) => e.period === period);
+  const evs = range ? byPeriod.filter((e) => { const m = minuteOf(e); return m !== null && m >= range[0] && m < range[1]; }) : byPeriod;
   const a = countByType(evs, "own");
   const b = countByType(evs, "opp");
   const A = match.focus_team;
@@ -218,18 +231,16 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
 
   return (
     <PanelMatch.Provider value={match.match_id}>
-    {headerSlot ? createPortal(tabs, headerSlot) : <div className="mb-4">{tabs}</div>}
+    {(() => {
+      const top = (
+        <>
+          {tabs}
+          <AnalysisFilter period={period} onPeriod={setPeriod} range={range} onRange={setRange} lastMin={lastMin} />
+        </>
+      );
+      return headerSlot ? createPortal(top, headerSlot) : <div className="mb-4 flex flex-wrap items-center gap-2">{top}</div>;
+    })()}
     <div className="space-y-8">
-      <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
-        <div className="seg">
-          {([0, 1, 2] as const).map((p) => (
-            <button key={p} type="button" aria-pressed={period === p} onClick={() => setPeriod(p)} className="seg-opt">
-              {p === 0 ? "Todo el partido" : `${p}.º tiempo`}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {view === "general" && (
         <>
       {/* The score is the one big figure; the other headline numbers go in one row under it. Only when tagged: a zero
@@ -260,8 +271,8 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       </Reveal>
 
       <Section title="Cómo se jugó" note="quién creó más peligro y con qué eficacia">
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <Panel title="Momentum" note="quién crea más peligro, y cuánto dura" defaultWide>
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <Panel title="Momentum" note="quién crea más peligro, y cuánto dura">
             <MomentumChart curve={mom} aLabel={A} bLabel={B} />
             <p className="mt-2 text-xs text-pretty text-faint">
               Cada evento de ataque suma peligro (gol 5, tiro 3, entrada al área 2, último tercio, córner y centro 1) y se va apagando con los minutos (vida media de 1.5 min); la curva es la diferencia entre equipos, suavizada, y su mayor oscilación vale ±100. Pasa el cursor por un minuto para ver las cifras.
@@ -284,7 +295,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       <Section title="A lo largo del partido">
         <div className="grid gap-5 xl:grid-cols-2">
           <Panel
-            title="¿En qué tramo generan y reciben más?"
+            title="Generación por tramos"
             note={
               bins.basis === "juego"
                 ? `minutos de juego${bins.skipped ? ` · ${bins.skipped} evento(s) en pausa fuera` : ""}`
@@ -326,7 +337,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         <>
       <Section title="Cómo atacan" note="dónde tiran y qué tan bien lo aprovechan">
         <div className="grid gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <Panel title="¿Desde dónde tiran?" defaultWide>
+          <Panel title="Mapa de tiros">
             <ShotMap
               events={evs}
               aLabel={A}
@@ -359,30 +370,30 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
 
       <Fold id="ataque-detalle" title="Más detalle del ataque" note="a puerta, carriles, salidas, centros y balón parado">
         <div className="grid gap-5 xl:grid-cols-2">
-          <Panel title="¿Cuántos tiros van a puerta?">
+          <Panel title="Tiros a puerta">
             <PartsDuo rows={shotRows} unknownLabel="sin resultado anotado" />
           </Panel>
-          <Panel title="¿Por qué carril llegan al último tercio?" note="visto por quien ataca">
+          <Panel title="Carriles de entrada al último tercio" note="visto por quien ataca">
             <PartsDuo rows={laneRows((s) => finalThirdEntries(evs, s))} unknownLabel="sin posición" />
           </Panel>
-          <Panel title="¿Cómo salen desde su portería?">
+          <Panel title="Saques de meta">
             <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).length, EVENT_DETAILS.goal_kick ?? {})} />
             <div className="hr-fade my-4" />
             <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).outcome, EVENT_OUTCOMES.goal_kick ?? {})} />
           </Panel>
-          <Panel title="Centros: ¿desde qué banda y cuántos se rematan?">
+          <Panel title="Centros: banda y remate">
             <div className="grid gap-6 md:grid-cols-2">
               <PartsDuo rows={laneRows((s) => crosses(evs, s).lanes)} unknownLabel="sin posición" />
               <PartsDuo rows={tallyRows((s) => crosses(evs, s).outcome, EVENT_OUTCOMES.cross ?? {})} />
             </div>
           </Panel>
-          <Panel title="Córners: ¿cómo acaban?">
+          <Panel title="Córners: resultado">
             <PartsDuo rows={tallyRows((s) => setPieces(evs, s).corners, EVENT_OUTCOMES.corner ?? {})} />
           </Panel>
-          <Panel title="Córners: ¿cómo los mandan?">
+          <Panel title="Córners: ejecución">
             <PartsDuo rows={tallyRows((s) => setPieces(evs, s).delivery, EVENT_DETAILS.corner ?? {})} />
           </Panel>
-          <Panel title="Tiros libres: ¿cómo acaban?">
+          <Panel title="Tiros libres: resultado">
             <PartsDuo rows={tallyRows((s) => setPieces(evs, s).freeKicks, EVENT_OUTCOMES.free_kick ?? {})} />
           </Panel>
         </div>
@@ -398,7 +409,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         <>
       <Section title="Cómo defienden" note="dónde recuperan y qué pasa al perder y al recuperar">
         <div className="grid gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <Panel title="¿Dónde recuperan el balón?" defaultWide>
+          <Panel title="Mapa de recuperaciones">
             <div className="mb-3 seg">
               {SIDES.map((s) => (
                 <button key={s} type="button" aria-pressed={counterTeam === s} onClick={() => setCounterTeam(s)} className="seg-opt">
@@ -431,7 +442,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
 
       <Fold id="defensa-detalle" title="Más detalle de la defensa" note="transiciones, altura y zonas por evento">
         <div className="grid gap-5 xl:grid-cols-2">
-          <Panel title="¿Desde dónde salen las recuperaciones que acaban en tiro?">
+          <Panel title="Mapa de recuperaciones que acaban en tiro">
             {tr[counterTeam].recoveriesToShot.length === 0 ? (
               <p className="text-sm text-faint">Ninguna recuperación de {name(counterTeam)} acabó en tiro en esta selección.</p>
             ) : (
@@ -440,16 +451,16 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
               </div>
             )}
           </Panel>
-          <Panel title="Tras recuperar, ¿adelante o atrás?" note="primer pase">
+          <Panel title="Primer pase tras recuperar" note="primer pase">
             <PartsDuo rows={tallyRows((s) => firstPass(evs, s), EVENT_DETAILS.recovery ?? {})} />
           </Panel>
-          <Panel title="¿A qué altura recuperan?">
+          <Panel title="Altura de recuperación">
             <PartsDuo rows={heightRows} unknownLabel="sin posición" />
             <p className="mt-4 text-xs text-pretty text-faint">
               Los tiros en contra de cada equipo están en el mapa de tiros de Ataque, y por qué carril les llegan, en las entradas al último tercio del contrario.
             </p>
           </Panel>
-          <Panel title="¿Dónde ocurre? Zonas de la cancha" note="elige el evento">
+          <Panel title="Mapa de zonas" note="elige el evento">
             <div className="mb-2 flex flex-wrap gap-2">
               <Select
                 variant="field"

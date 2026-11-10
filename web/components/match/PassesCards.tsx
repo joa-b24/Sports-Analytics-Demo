@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Locked } from "@/components/Locked";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { Card } from "@/components/Shell";
+import { TrackingLoading } from "@/components/TrackingLoading";
 import { useFixedParts } from "@/lib/fixed";
 import { networkFromPasses, passStats, type Net, type PlayerPasses } from "@/lib/passes";
 import { PASS_SOURCE_LABEL, trackedNet, trackedPasses, type PassSource } from "@/lib/passSources";
@@ -78,6 +79,13 @@ export function PassesCards({
       ))}
     </div>
   );
+  if (!source && tracked.players.length === 0 && players.length === 0 && match.folder && fixed === null) {
+    return (
+      <Card title="Red de pases y jugadoras">
+        <TrackingLoading what="los pases" />
+      </Card>
+    );
+  }
   if (!source && tracked.players.length === 0 && players.length === 0) {
     return (
       <Locked

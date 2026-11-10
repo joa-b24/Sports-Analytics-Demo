@@ -170,6 +170,24 @@ export function FigureList({ rows, aLabel, bLabel }: { rows: FigureRow[]; aLabel
   );
 }
 
+// A small football (white, with the central pentagon and the seams) centred at cx, cy: the mark of a goal on a chart.
+export function BallMark({ cx, cy, r, color }: { cx: number; cy: number; r: number; color: string }) {
+  const pent = Array.from({ length: 5 }, (_, k) => {
+    const a = -Math.PI / 2 + (k * 2 * Math.PI) / 5;
+    return [cx + r * 0.42 * Math.cos(a), cy + r * 0.42 * Math.sin(a)] as const;
+  });
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={r} fill="#fff" stroke={color} strokeWidth={1.6} />
+      <polygon points={pent.map((p) => p.join(",")).join(" ")} fill={color} />
+      {pent.map(([px, py], k) => {
+        const a = -Math.PI / 2 + (k * 2 * Math.PI) / 5;
+        return <line key={k} x1={px} y1={py} x2={cx + r * 0.92 * Math.cos(a)} y2={cy + r * 0.92 * Math.sin(a)} stroke={color} strokeWidth={1} />;
+      })}
+    </g>
+  );
+}
+
 // Momentum: one signed curve (lib/analysis.ts momentumCurve). Our team fills above the middle line, the opponent below;
 // goals are marked at their minute; the dashed line is half time. Move the pointer over it to read a minute.
 export function MomentumChart({ curve, aLabel, bLabel }: { curve: MomentumCurve; aLabel: string; bLabel: string }) {
@@ -252,10 +270,7 @@ export function MomentumChart({ curve, aLabel, bLabel }: { curve: MomentumCurve;
           return (
             <g key={n}>
               <line x1={x(g.min)} x2={x(g.min)} y1={gy} y2={mid} stroke={c} strokeWidth={1} strokeDasharray="3 3" opacity={0.5} />
-              <circle cx={x(g.min)} cy={gy} r={6.5} fill="var(--color-bg)" stroke={c} strokeWidth={1.8} />
-              <text x={x(g.min)} y={gy + 3.4} textAnchor="middle" fontSize={9} fontWeight={800} fill={c}>
-                G
-              </text>
+              <BallMark cx={x(g.min)} cy={gy} r={8} color={c} />
             </g>
           );
         })}

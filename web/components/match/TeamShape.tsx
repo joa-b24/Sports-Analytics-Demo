@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BinChart } from "@/components/charts";
 import { Select } from "@/components/Select";
+import { TrackingLoading } from "@/components/TrackingLoading";
 import { Locked } from "@/components/Locked";
 import { Card } from "@/components/Shell";
 import { blockShape, MIN_VISIBLE, type ShapeMeasure } from "@/lib/blockShape";
@@ -133,6 +134,15 @@ export function TeamShapeCard({ match, videoIds, segmentsByVideo = {} }: { match
           Leído del archivo de métricas del tracking de la carpeta del partido, porque la app no tiene posiciones para calcularlo. Un 0 es un tramo
           sin cuadros suficientes.
         </p>
+      </Card>
+    );
+  }
+
+  // Still reading the folder: the panel loads, it does not say «no hay».
+  if (folder && !fixed) {
+    return (
+      <Card title="Altura y anchura del bloque">
+        <TrackingLoading what="las posiciones" />
       </Card>
     );
   }

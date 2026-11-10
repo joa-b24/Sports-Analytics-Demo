@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Select } from "@/components/Select";
+import { TrackingLoading } from "@/components/TrackingLoading";
 import { PlayerMap } from "@/components/match/PlayerMap";
 import { PlayerHeat, fmt, usePlayersData } from "@/components/match/PlayersCompare";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
@@ -13,7 +14,7 @@ import { momentOfEvent } from "@/lib/moments";
 import { METRICS, NO_DATA, metricValue, type PlayerRow } from "@/lib/players";
 import type { Segment } from "@/lib/segments";
 import { setPref, usePref } from "@/lib/store";
-import { EVENT_LABELS, type Match, type MatchEvent } from "@/lib/types";
+import { EVENT_LABELS, EVENT_OUTCOMES, type Match, type MatchEvent } from "@/lib/types";
 
 const GROUPS = ["Ataque", "Con balón", "Defensa", "Físico"] as const;
 
@@ -45,6 +46,12 @@ export function PlayerProfile({
 
   const mine = useMemo(() => (row ? events.filter((e) => e.player_id === row.id && e.team === row.team).sort((a, b) => a.t_video - b.t_video) : []), [events, row]);
 
+  if (rows.length === 0 && match.folder && fixed === null)
+    return (
+      <Card title="Ficha de jugadora">
+        <TrackingLoading what="las posiciones de las jugadoras" />
+      </Card>
+    );
   if (rows.length === 0)
     return (
       <Card>
@@ -85,7 +92,7 @@ export function PlayerProfile({
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
-        <Panel title="Sus cifras" note="del partido">
+        <Panel title="Cifras individuales" note="del partido">
           <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
             {GROUPS.map((g) => {
               const ms = METRICS.filter((m) => m.group === g && (metricValue(row, m) ?? 0) > 0);
@@ -114,32 +121,55 @@ export function PlayerProfile({
           </div>
         </Panel>
 
-        <Panel title="Dónde jugó" note="tiempo en cada zona, atacando hacia la derecha">
+        <Panel title="Mapa de calor individual" note="tiempo en cada zona, atacando hacia la derecha">
           {row.minutes ? <PlayerHeat parts={parts} row={row} color={color} name={label(row)} /> : <p className="text-sm text-faint">No hay posiciones con su nombre en el tracking corregido.</p>}
         </Panel>
 
-        <Panel title="Su mapa" note="elige qué ver; atacando hacia la derecha">
+        <Panel title="Mapa de acciones" note="elige qué ver; atacando hacia la derecha">
           <PlayerMap row={row} events={mine} parts={parts} segmentsByVideo={segmentsByVideo} color={color} onPick={open} />
         </Panel>
 
-        <Panel title="Sus jugadas" note={`${mine.length} evento(s) con su nombre`}>
-          {mine.length === 0 ? (
-            <p className="text-sm text-faint">Ningún evento etiquetado con su nombre.</p>
-          ) : (
-            <ul className="max-h-80 divide-y divide-line-soft overflow-y-auto pr-1">
-              {mine.map((e) => (
-                <li key={e.event_id}>
-                  <button type="button" onClick={() => open(e)} className="flex w-full items-center gap-3 py-1.5 text-left text-sm transition-colors hover:bg-raised">
-                    <span className="tc w-14 shrink-0 text-faint">{when(e)}</span>
-                    <span className="min-w-0 flex-1 truncate text-ink-2">{EVENT_LABELS[e.type]}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+        <Panel title="Eventos de la jugadora" note={`${mine.length} con su nombre`}>
+          <EventList events={mine} when={when} onPick={open} />
         </Panel>
       </div>
       {moment.panel}
+    </div>
+  );
+}
+
+// The events tagged with her name: time, type (a dot of its colour) and result, one row each, the first few and then «ver
+// todos». No inner scroll: the list grows with the panel.
+const SHOWN = 8;
+function EventList({ events, when, onPick }: { events: MatchEvent[]; when: (e: MatchEvent) => string; onPick: (e: MatchEvent) => void }) {
+  const [all, setAll] = useState(false);
+  if (events.length === 0) return <p className="text-sm text-faint">Ningún evento etiquetado con su nombre.</p>;
+  const list = all ? events : events.slice(0, SHOWN);
+  const tone = (t: MatchEvent["type"]) => (t === "goal" || t === "recovery" ? "var(--color-ok)" : t === "loss" || t === "foul" ? "var(--color-danger)" : t === "shot" ? "var(--color-own)" : "var(--color-faint)");
+  return (
+    <div>
+      <ul className="m-0 list-none divide-y divide-line-soft p-0">
+        {list.map((e) => {
+          const result = e.outcome ? (EVENT_OUTCOMES[e.type]?.[e.outcome] ?? e.outcome) : "";
+          return (
+            <li key={e.event_id}>
+              <button type="button" onClick={() => onPick(e)} className="grid w-full grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-1 py-2 text-left text-sm transition-colors hover:bg-raised" title="Ver el momento en el video">
+                <span className="tc text-xs text-faint">{when(e)}</span>
+                <span className="flex min-w-0 items-center gap-2 text-ink-2">
+                  <i className="h-2 w-2 shrink-0 rounded-full" style={{ background: tone(e.type) }} aria-hidden />
+                  <span className="truncate">{EVENT_LABELS[e.type]}</span>
+                </span>
+                <span className="truncate text-xs text-faint">{result}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {events.length > SHOWN && (
+        <button type="button" className="link mt-2 text-xs" onClick={() => setAll((v) => !v)}>
+          {all ? "Ver menos" : `Ver los ${events.length}`}
+        </button>
+      )}
     </div>
   );
 }

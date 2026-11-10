@@ -414,6 +414,11 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 - Análisis: tres modos en la barra lateral (Dashboard, Informe, Presentación); el dashboard tiene General, Ataque, Defensa y Rendimiento individual. La red de pases ya no ofrece «marcados a mano».
 - La configuración técnica del partido (parámetros y procesos) abre en un modal con secciones (`components/match/TechModal.tsx`).
 
+### 5.11 Dashboard y presentación (2026-11-10)
+- Dashboard (`components/match/AnalysisTab.tsx`): cuatro secciones (General, Ataque, Defensa, Rendimiento individual) con sus pestañas y el filtro del partido en la barra superior (`AnalysisFilter.tsx`: tiempo o rango de minutos de juego). Ataque y Defensa abren con un mapa y «La cifra» (`FigureList` en `charts.tsx`); el resto va plegado (`Fold.tsx`). Momentum: `momentumCurve` en `lib/analysis.ts` (propia; referencia en el README). Los paneles que dependen del tracking muestran `TrackingLoading` mientras se lee la carpeta.
+- Presentación (`DeckView.tsx`): diapositivas de gráfico, en blanco o de clip (reproduce el MP4 exportado de `matches/<id>/clips/`), con texto, cuadros y flechas (`SlideEditor.tsx`, `SlideCanvas.tsx`, modelo en `lib/deck.ts`). En vivo: D marcador, L puntero, C borra, V deja de dibujar (lo dibujado no se guarda).
+- `docs/propuesta_etiquetas_fuerzas_basicas.md`: cruce de las etiquetas de fuerzas básicas con el catálogo de eventos (propuesta, sin adoptar).
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |
