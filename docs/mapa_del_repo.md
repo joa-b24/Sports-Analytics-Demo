@@ -407,6 +407,13 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 - Inicio: las tareas pendientes abren la pasada y el filtro (`?pasada=2&faltan=1`); la pantalla vacía muestra el zip y los tres tipos de video.
 - Mapa de pases: pases clave (eventos `key_pass`) resaltados (`passArrows` recibe los eventos). Tecla B en la revisión: posición o destino donde está el balón medido.
 
+### 5.10 Cambios de interfaz, parte 2 (2026-11-10)
+- Barra lateral: el partido activo es un icono de balón (ya no el marcador); los videos del partido van como chips bajo Captura y Estudio (solo si hay más de uno; Alt+V pasa al siguiente). `lib/stepBus.ts` lleva también los videos (`publishVideos`/`useVideoChoice`) y un hueco de la barra superior (`useHeaderSlot`) donde Jugadoras pone sus modos (anclas, revisión rápida, mesa) por portal. Se quitó el modo enfoque (`FocusMode.tsx`).
+- Calibración: un solo botón alterna calibrar/verificar (al pasar a verificar abre el menú de archivos, `openSignal` de `FilePicker`); botones de jugadoras y calibración (verdes = visibles); paneles «Métricas» y «Posiciones». El paso «Tracking» se llama «Jugadoras». El selector de parte es una flecha chica sobre el video (`compact` de `FilePicker`); las partes completas llevan una palomita (`done`). Los saltos imposibles solo se revisan en jugadoras con nombre de nuestro equipo.
+- Estudio: la primera jugada se abre sola; el bucle es un icono con punto de color; «ABP»; la animación medida siempre muestra a todas; el editor de clips tiene grosor de línea y tamaño de texto por dibujo (`line_scale`, `text_scale`, también en `clips/render.py`); Exportar abre resolución y fps (`--height`, `--fps` de `clips.render`, validados en `app/api/run`). Las fichas del pizarrón sin dorsal reciben un número de relleno (`numberUnnamed` en `lib/boards.ts`) y el panel Fichas se agrupa por equipo.
+- Análisis: tres modos en la barra lateral (Dashboard, Informe, Presentación); el dashboard tiene General, Ataque, Defensa y Rendimiento individual. La red de pases ya no ofrece «marcados a mano».
+- La configuración técnica del partido (parámetros y procesos) abre en un modal con secciones (`components/match/TechModal.tsx`).
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |
