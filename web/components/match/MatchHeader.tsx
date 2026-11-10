@@ -2,7 +2,7 @@
 
 import { shootoutText } from "@/lib/shootout";
 import { FileText, Monitor, Path, PlayCircle, PresentationChart, Scissors, SoccerBall, Strategy, Tag, Target, type Icon } from "@phosphor-icons/react";
-import { setHeaderSlot } from "@/lib/stepBus";
+import { setHeaderRightSlot, setHeaderSlot } from "@/lib/stepBus";
 import type { StepId, StepStatus } from "@/lib/steps";
 import type { Match, MatchEvent } from "@/lib/types";
 
@@ -126,9 +126,11 @@ export function MatchHeader({ match, events, tab, onTab, steps, video, status, b
       <div ref={setHeaderSlot} className="flex items-center gap-2 empty:hidden" />
       <span className="flex-1" />
       {status}
+      {/* A step can put a control here, next to the settings (the filter of the dashboard). */}
+      <div ref={setHeaderRightSlot} className="flex items-center gap-2 empty:hidden" />
       {children}
       {/* The bar only names the steps (and ticks the finished ones); where the open step stands goes under it. */}
-      {steps[tab as StepId]?.text && <p className="m-0 basis-full text-right text-xs text-faint">{steps[tab as StepId].text}</p>}
+      {modeOf(tab) !== "analisis" && steps[tab as StepId]?.text && <p className="m-0 basis-full text-right text-xs text-faint">{steps[tab as StepId].text}</p>}
     </div>
   );
 }

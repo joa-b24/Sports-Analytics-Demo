@@ -36,17 +36,46 @@ que antes de tocar nada hay que decidir qué entra. Aquí está el cruce y una r
 etiqueta. Propuesta mínima: dos columnas **opcionales** en el contrato de eventos (`rater_id`, `manual_version`), con valor
 por defecto el de la analista y la versión del manual vigente en `docs/`. Opcionales para no romper partidos ya etiquetados.
 
-## 4. Recomendación
+## 4. Observaciones de la analista y diseño que resulta (2026-11-10)
 
-1. **Ahora (sin tocar el catálogo):** calcular de forma inferida el pase progresivo con éxito/fallo por zonas y mostrarlo en
-   Análisis › Rendimiento individual.
-2. **Siguiente (cambio de contrato pequeño):** `rater_id` y `manual_version` opcionales; `detail` de `recovery` con tackle,
-   intercepción y bloqueo.
-3. **Después, solo si el cuerpo técnico los usa:** los eventos manuales `receive_under_pressure`, `carry_to_commit`,
-   `run_type` y `effective_press` (cada uno con su `outcome` de tres valores). Son los que más cuestan al etiquetar: conviene
-   probarlos primero en una sola pasada de un partido y medir cuánto tarda.
+**Acción defensiva y recuperación.** Una buena barrida no siempre es una recuperación: un corte que manda el balón a la
+banda no gana la posesión, pero sí corta la progresión (aunque sea por un momento). Por eso conviene separar dos cosas:
 
-## 5. Pregunta abierta
+- `recovery` sigue siendo «ganamos la posesión». Puede llevar un `detail` **opcional** con el tipo de acción (`tackle`,
+  `interception`, `block`). Hoy `recovery` ya usa `detail` para el primer pase (adelante o atrás): habría que decidir si el
+  tipo va en un campo nuevo o se redefine ese; la recomendación es un campo nuevo para no mezclar dos preguntas.
+- Un evento nuevo `defensive_action` para lo que **no** gana la posesión: despeje o corte (`clearance`), bloqueo, entrada
+  fallida. Con `outcome`: corta la progresión / sin efecto / falla.
+- **Partidos ya marcados: no se reetiquetan.** Los campos nuevos son opcionales y vacío significa «no anotado», como en el
+  resto del contrato; los análisis nuevos solo cuentan lo que tenga el dato.
+
+**Los tres «manuales» se pueden inferir**, con la condición de la calidad del tracking: con cámara móvil el movimiento del
+encuadre se confunde con movimiento de las jugadoras (un cambio de cámara parece una pérdida o un desmarque), y con toma
+fija o calibración confiable se vuelve mucho más fiable. Reglas candidatas, todas sobre posiciones en la cancha:
+
+| Etiqueta | Cómo se infiere |
+|---|---|
+| `receive_under_pressure` | Al recibir (primer toque tras un pase completado), la rival más cercana está a ≤ ~2 m. El resultado sale de lo que pasa después: conserva (el balón sigue con su equipo), progresa (gana metros hacia la portería rival) o pierde (cambia de equipo). |
+| `carry_to_commit` | Con el balón en conducción, una rival se acerca (la distancia baja de un umbral) y la compañera de apoyo queda con más espacio que antes; el resultado es el siguiente toque. Es la regla más débil: depende de una intención. |
+| `effective_press` | Una rival hace un pase **fallido** (turnover) y una jugadora nuestra estaba cerca del pasador (≤ ~4 m, a definir) en el instante del pase: «fuerza error». Si recuperamos el balón en pocos segundos: «gana el balón»; si no: neutral. Solo cuenta cuando nuestra jugadora está cerca, para no darle crédito de un error que no provocó. |
+| `run_type` | Con velocidad y dirección de cada jugadora: **recibe** (corre hacia el balón y lo recibe en pocos segundos), **desmarque** o generar espacio (carrera sostenida hacia atrás de la línea rival, o que se lleva a una marcadora, sin recibir) y **transición** (se perdió el balón y la jugadora regresa rápido hacia él en los siguientes segundos). |
+
+Lo inferido se guarda **aparte** de las etiquetas manuales (con una marca de origen `inferred` y la versión de la regla),
+para poder compararlo con lo que la analista marque en una muestra y medir cuánto acierta antes de mostrarlo en Análisis.
+Cada regla es una función pura sobre posiciones (`src/sportsan/metrics/` o `web/lib/`), con su prueba.
+
+## 5. Recomendación
+
+1. **Ahora (sin tocar el catálogo):** pase progresivo inferido con éxito y fallo por zonas, en Análisis › Rendimiento
+   individual.
+2. **Cambio de contrato pequeño:** `rater_id` y `manual_version` opcionales; campo opcional con el tipo de acción en
+   `recovery`; evento `defensive_action` con `outcome`. Sin reetiquetar partidos viejos.
+3. **Inferencia:** empezar por `effective_press` y `receive_under_pressure` (usan posiciones y estado del balón que ya
+   tenemos) y por `run_type`; validar cada una contra una muestra marcada a mano de un partido de cámara fija antes de
+   mostrarla. `carry_to_commit` al final.
+4. Lo manual queda solo como corrección o muestra de validación.
+
+## 6. Pregunta abierta
 
 ¿Estas etiquetas son para los **partidos** (la app de hoy) o para las **sesiones de fuerzas básicas** (entrenamientos)? Las
 de contexto (`task_type`, `constraints_code`) apuntan a lo segundo, y entonces el modelo de datos correcto es una sesión con

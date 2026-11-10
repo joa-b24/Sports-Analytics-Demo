@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { AnalysisFilter, type MinuteRange, type Period } from "@/components/match/AnalysisFilter";
 import { Fold } from "@/components/match/Fold";
 import { Select } from "@/components/Select";
-import { useHeaderSlot } from "@/lib/stepBus";
+import { useHeaderRightSlot, useHeaderSlot } from "@/lib/stepBus";
 import { useFixedParts } from "@/lib/fixed";
 import { trackedPasses } from "@/lib/passSources";
 import { BinChart, CompareBars, EventTimeline, FigureList, MomentumChart, PartsDuo, ScoreStrip, ShotMap, ZoneMap, type PartsRow } from "@/components/charts";
@@ -86,6 +86,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const [counterTeam, setCounterTeam] = useState<Side>("own");
   const shotsPlayer = useMomentPlayer(match);
   const headerSlot = useHeaderSlot();
+  const rightSlot = useHeaderRightSlot();
   // Passes completed (read from the tracking): the headline row counts them with possession.
   const fixed = useFixedParts(match.folder, videoIds);
   const passTotals = useMemo(() => {
@@ -232,13 +233,18 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   return (
     <PanelMatch.Provider value={match.match_id}>
     {(() => {
-      const top = (
+      const filter = <AnalysisFilter period={period} onPeriod={setPeriod} range={range} onRange={setRange} lastMin={lastMin} />;
+      return headerSlot && rightSlot ? (
         <>
-          {tabs}
-          <AnalysisFilter period={period} onPeriod={setPeriod} range={range} onRange={setRange} lastMin={lastMin} />
+          {createPortal(tabs, headerSlot)}
+          {createPortal(filter, rightSlot)}
         </>
+      ) : (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {tabs}
+          {filter}
+        </div>
       );
-      return headerSlot ? createPortal(top, headerSlot) : <div className="mb-4 flex flex-wrap items-center gap-2">{top}</div>;
     })()}
     <div className="space-y-8">
       {view === "general" && (

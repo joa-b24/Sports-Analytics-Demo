@@ -65,3 +65,19 @@ export function useVideoChoice(matchId: string): VideoChoice | null {
   );
   return snap && snap.matchId === matchId ? snap : null;
 }
+
+// The same for the right end of the bar, next to the match settings (the filter of the dashboard goes there).
+let headerRight: HTMLElement | null = null;
+const rightListeners = new Set<() => void>();
+export function setHeaderRightSlot(el: HTMLElement | null) {
+  if (headerRight === el) return;
+  headerRight = el;
+  rightListeners.forEach((l) => l());
+}
+export function useHeaderRightSlot(): HTMLElement | null {
+  return useSyncExternalStore(
+    (cb) => (rightListeners.add(cb), () => void rightListeners.delete(cb)),
+    () => headerRight,
+    () => null,
+  );
+}
