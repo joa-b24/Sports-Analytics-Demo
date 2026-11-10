@@ -399,6 +399,14 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 |---|---|---|
 | `node scripts/build_mobile.mjs [--full]` | `demo/` | Copia `web/` sin `app/api` ni `proxy.ts`, compila con exportación estática y deja `web/dist-mobile/` (subir a un hosting estático con HTTPS) |
 
+### 5.9 Cambios de interfaz del 2026-11-10
+- Nombre de la app: `web/lib/brand.ts` (hoy «Atalaya»; también en `public/manifest.webmanifest`). El nombre de producto de `desktop/` no se cambió a propósito: Electron guarda los datos en una carpeta con ese nombre.
+- Los pasos de cada modo (Calibración, Tramos… / Jugadas, Pizarrón / Pantalla, Informe) viven en la barra lateral, bajo el modo abierto (`StepLinks` en `components/Shell.tsx`); el paso sale de `?paso=` en la URL. `lib/stepBus.ts` lleva el estado de cada paso desde la pantalla del partido a la barra. La barra de arriba del partido solo tiene marcador, video, guardado y engrane.
+- Configuración (`app/configuracion/page.tsx`): secciones a la izquierda, búsqueda, maximizar, y marca de «modificado» frente al valor por defecto en cada ajuste (la lista `useSettings`).
+- Reproductor (`components/VideoPlayer.tsx`): zoom, mover la imagen y forma del recuadro (prefs `playerZoom`, `playerFrame`).
+- Inicio: las tareas pendientes abren la pasada y el filtro (`?pasada=2&faltan=1`); la pantalla vacía muestra el zip y los tres tipos de video.
+- Mapa de pases: pases clave (eventos `key_pass`) resaltados (`passArrows` recibe los eventos). Tecla B en la revisión: posición o destino donde está el balón medido.
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |
