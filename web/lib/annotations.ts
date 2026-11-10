@@ -46,6 +46,9 @@ export interface AnnotationStyle {
   // A name of the palette (lib/palette.ts) or a free «#rrggbb».
   color: string;
   dashed?: boolean;
+  // Multipliers of the usual line width and text size (absent = 1): chosen in the inspector of the clip editor.
+  line_scale?: number;
+  text_scale?: number;
   label?: string;
   // Highlights only. Absent = oval.
   shape?: HighlightShape;

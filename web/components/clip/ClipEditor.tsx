@@ -106,6 +106,17 @@ const OFF_PITCH_M = 5;
 type Stop = { freeze: Freeze; start: number; hold: boolean };
 type Pending = { kind: "arrow" | "line" | "zone"; anchors: Anchor[]; cursor: Pt | null; startPx: Pt | null };
 
+// A slider of a multiplier (line width, text size) with its value; double click puts it back to 1.
+function Scale({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-muted" onDoubleClick={() => onChange(1)} title="Doble clic: el de siempre">
+      <span className="w-28 shrink-0">{label}</span>
+      <input type="range" min={0.5} max={3} step={0.1} value={value} onChange={(e) => onChange(Number(e.target.value))} className="min-w-0 flex-1" />
+      <span className="tc w-8 text-right text-faint">×{value.toFixed(1)}</span>
+    </label>
+  );
+}
+
 export function ClipEditor({ match, edit, onClose, startPresenting = false }: { match: Match; edit: ClipEdit; onClose: () => void; startPresenting?: boolean }) {
   const { roster } = useStore();
   const dc = useDrawColor();
@@ -450,22 +461,25 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
 
   // MP4 of the clip (sportsan.clips.render through app/api/run): saves the edit in the folder first, then waits for the job.
   const [exporting, setExporting] = useState(false);
-  const exportMp4 = async (profile: "charla" | "whatsapp") => {
+  const [exportOpen, setExportOpen] = useState(false);
+  const [expHeight, setExpHeight] = useState(1080);
+  const [expFps, setExpFps] = useState(30);
+  const exportMp4 = async (profile: "charla" | "whatsapp" = "charla") => {
     if (!match.folder) return setMsg("El partido no tiene carpeta: no hay dónde escribir el MP4.");
     setExporting(true);
     try {
       await saveFile();
-      const r = await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "clip", match: match.folder, editId: edit.edit_id, profile }) });
+      const r = await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "clip", match: match.folder, editId: edit.edit_id, profile, height: expHeight, fps: expFps }) });
       if (!r.ok) return setMsg(r.status === 404 ? "Exportar solo funciona con la app corriendo en esta computadora." : `No se pudo empezar la exportación (${await r.text()}).`);
       const job = (await r.json()) as { id: string };
-      setMsg(`Exportando el MP4 (${profile})…`);
+      setMsg(`Exportando el MP4 (${expHeight}p, ${expFps} fps)…`);
       for (;;) {
         await new Promise((ok) => setTimeout(ok, 1500));
         const x = await fetch(`/api/run?id=${encodeURIComponent(job.id)}`, { cache: "no-store" });
         if (!x.ok) return setMsg("Se perdió el trabajo de exportación (¿se reinició la app?).");
         const v = (await x.json()) as { state: string; tail?: string[] };
         if (v.state === "running") continue;
-        return setMsg(v.state === "done" ? `Listo: matches/${match.folder}/clips/${edit.edit_id}_${profile}.mp4` : `La exportación falló: ${(v.tail ?? []).slice(-3).join(" ")}`);
+        return setMsg(v.state === "done" ? `Listo: matches/${match.folder}/clips/${edit.edit_id}_${profile}_${expHeight}p_${expFps}fps.mp4` : `La exportación falló: ${(v.tail ?? []).slice(-3).join(" ")}`);
       }
     } finally {
       setExporting(false);
@@ -663,13 +677,48 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
         <FloppyDisk size={15} />
         Guardar en la carpeta
       </button>
-      <button type="button" className={btn} disabled={exporting} onClick={() => void exportMp4("charla")} title="MP4 en 1080p para proyectar (matches/<partido>/clips/)">
-        <FilmSlate size={15} />
-        {exporting ? "Exportando…" : "Exportar MP4"}
-      </button>
-      <button type="button" className={btn} disabled={exporting} onClick={() => void exportMp4("whatsapp")} title="MP4 de 720p y ~1.5 Mbps; rotula por dorsal">
-        WhatsApp
-      </button>
+      <span className="relative">
+        <button type="button" className={btn} disabled={exporting} aria-expanded={exportOpen} onClick={() => setExportOpen((o) => !o)} title="Exportar el clip a MP4 (matches/<partido>/clips/)">
+          <FilmSlate size={15} />
+          {exporting ? "Exportando…" : "Exportar"}
+        </button>
+        {exportOpen && (
+          <div className="enter absolute top-full right-0 z-40 mt-1.5 w-60 space-y-3 rounded-lg bg-raised p-3 text-xs shadow-[0_0_0_1px_var(--color-line-strong),0_20px_40px_-16px_rgba(0,0,0,.7)]">
+            <label className="flex items-center justify-between gap-2 text-muted">
+              Resolución
+              <select className="rounded-md bg-bg px-2 py-1 text-ink-2" value={expHeight} onChange={(e) => setExpHeight(Number(e.target.value))}>
+                {[480, 720, 1080, 1440, 2160].map((h) => (
+                  <option key={h} value={h}>
+                    {h}p
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center justify-between gap-2 text-muted">
+              Cuadros por segundo
+              <select className="rounded-md bg-bg px-2 py-1 text-ink-2" value={expFps} onChange={(e) => setExpFps(Number(e.target.value))}>
+                {[24, 25, 30, 50, 60].map((f) => (
+                  <option key={f} value={f}>
+                    {f} fps
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="m-0 text-faint">No agranda: si el video es de 1080p, 1440p y 2160p salen en 1080p.</p>
+            <button
+              type="button"
+              className={`${btnPrimary} w-full justify-center`}
+              disabled={exporting}
+              onClick={() => {
+                setExportOpen(false);
+                void exportMp4();
+              }}
+            >
+              Exportar MP4
+            </button>
+          </div>
+        )}
+      </span>
       <button type="button" className={btnPrimary} onClick={present}>
         <PresentationChart size={15} />
         Presentar
@@ -764,6 +813,12 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
       <div className="space-y-2">
         <PanelTitle>Estilo</PanelTitle>
         <ColorPick value={sel.style.color} onChange={(c) => patchAnnotation(sel.id, { style: { ...sel.style, color: c } })} />
+        {sel.kind !== "text" && (
+          <Scale label="Grosor de línea" value={sel.style.line_scale ?? 1} onChange={(v) => patchAnnotation(sel.id, { style: { ...sel.style, line_scale: v === 1 ? undefined : v } })} />
+        )}
+        {(sel.kind === "text" || !sel.style.label_off) && (
+          <Scale label={sel.kind === "text" ? "Tamaño del texto" : "Tamaño del rótulo"} value={sel.style.text_scale ?? 1} onChange={(v) => patchAnnotation(sel.id, { style: { ...sel.style, text_scale: v === 1 ? undefined : v } })} />
+        )}
         {sel.kind !== "text" && (
           <label className="flex items-center gap-1.5 text-muted">
             <input type="checkbox" checked={!!sel.style.dashed} onChange={(e) => patchAnnotation(sel.id, { style: { ...sel.style, dashed: e.target.checked || undefined } })} />

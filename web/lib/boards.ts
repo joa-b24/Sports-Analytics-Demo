@@ -257,12 +257,28 @@ export function boardFromPlay(play: Play, board_id: string, measured?: MeasuredA
     }
     if (steps.length > 0) {
       const ball: BoardToken[] = steps.some((s) => s.pos.ball) ? [{ id: "ball", team: "ball", label: "" }] : [];
-      return { ...base, tokens: [...tokens.values(), ...ball], keyframes: steps };
+      return { ...base, tokens: [...numberUnnamed([...tokens.values()]), ...ball], keyframes: steps };
     }
   }
   const kfs = [...play.keyframes].sort((a, b) => a.t - b.t);
   const t0 = Math.min(play.t_start, kfs[0]?.t ?? play.t_start);
   return { ...base, keyframes: kfs.map((k) => ({ t: round1(k.t - t0), pos: clonePos(k.pos), note: "" })) };
+}
+
+// Players with no shirt number (not in the squad) get one of their own on the board, the lowest not used by their team,
+// so each token can be told from the others. It is a stand-in: the analyst can change it in the Fichas panel.
+export function numberUnnamed(tokens: BoardToken[]): BoardToken[] {
+  const used = new Map<string, Set<string>>();
+  for (const t of tokens) if (t.label) used.set(t.team, (used.get(t.team) ?? new Set()).add(t.label));
+  return tokens.map((t) => {
+    if (t.label || t.team === "ball") return t;
+    const taken = used.get(t.team) ?? new Set<string>();
+    let n = 1;
+    while (taken.has(String(n))) n++;
+    taken.add(String(n));
+    used.set(t.team, taken);
+    return { ...t, label: String(n) };
+  });
 }
 
 const round1 = (v: number) => Math.round(v * 10) / 10;

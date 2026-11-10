@@ -519,31 +519,62 @@ export function BoardEditor({ board, save, header, boardPanel, listPanel, layout
               <div>
                 <PanelTitle>Fichas</PanelTitle>
                 <p className="mb-2 text-xs text-faint">Dorsal o rol de cada ficha. Quitar una la saca de todos los pasos (y borra sus dibujos).</p>
-                <ul className="grid grid-cols-2 gap-1.5">
-                  {board.tokens.map((tk) => {
-                    const on = board.keyframes.some((x) => x.pos[tk.id]);
-                    return (
-                      <li key={tk.id} className="flex items-center gap-1.5 text-xs">
-                        <input type="checkbox" checked={on} aria-label={on ? "Quitar del pizarrón" : "Poner en el pizarrón"} onChange={() => save(toggleToken(board, tk.id))} />
-                        <span
-                          className="h-2.5 w-2.5 shrink-0 rounded-full"
-                          style={{ background: tk.team === "ball" ? "var(--color-ball)" : tk.team === "own" ? "var(--color-own)" : "var(--color-opp)" }}
-                        />
-                        {tk.team === "ball" ? (
-                          <span className="text-muted">Balón</span>
-                        ) : (
-                          <input
-                            className={`${input} h-7 w-full min-w-0 px-2 py-0 text-xs`}
-                            value={tk.label}
-                            maxLength={4}
-                            aria-label="Dorsal o rol"
-                            onChange={(e) => save({ ...board, tokens: board.tokens.map((x) => (x.id === tk.id ? { ...x, label: e.target.value } : x)) })}
-                          />
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
+                {(["own", "opp"] as const).map((team) => {
+                  const list = board.tokens.filter((tk) => tk.team === team);
+                  if (list.length === 0) return null;
+                  const color = team === "own" ? "var(--color-own)" : "var(--color-opp)";
+                  return (
+                    <div key={team} className="mb-3">
+                      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-faint">
+                        <i className="h-2.5 w-1 rounded-full" style={{ background: color }} aria-hidden />
+                        {team === "own" ? "Nuestro equipo" : "Rival"}
+                        <span className="tc">
+                          {list.filter((tk) => board.keyframes.some((x) => x.pos[tk.id])).length}/{list.length}
+                        </span>
+                      </div>
+                      <ul className="grid grid-cols-2 gap-1.5">
+                        {list.map((tk) => {
+                          const on = board.keyframes.some((x) => x.pos[tk.id]);
+                          return (
+                            <li key={tk.id} className={`flex items-center gap-1.5 rounded-lg bg-bg/50 p-1 text-xs ${on ? "" : "opacity-60"}`}>
+                              <button
+                                type="button"
+                                aria-pressed={on}
+                                aria-label={on ? `Quitar la ficha ${tk.label || ""} del pizarrón` : `Poner la ficha ${tk.label || ""} en el pizarrón`}
+                                title={on ? "En el pizarrón: clic para quitarla" : "Fuera del pizarrón: clic para ponerla"}
+                                onClick={() => save(toggleToken(board, tk.id))}
+                                className="tc grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold transition-colors"
+                                style={on ? { background: color, color: "var(--color-bg)" } : { boxShadow: `inset 0 0 0 1.5px ${color}`, color }}
+                              >
+                                {tk.label || "·"}
+                              </button>
+                              <input
+                                className={`${input} h-7 w-full min-w-0 px-2 py-0 text-xs`}
+                                value={tk.label}
+                                maxLength={4}
+                                placeholder="Nº"
+                                aria-label="Dorsal o rol"
+                                onChange={(e) => save({ ...board, tokens: board.tokens.map((x) => (x.id === tk.id ? { ...x, label: e.target.value } : x)) })}
+                              />
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  );
+                })}
+                {board.tokens.some((tk) => tk.team === "ball") && (
+                  <label className="flex items-center gap-1.5 text-xs text-muted">
+                    <input
+                      type="checkbox"
+                      checked={board.keyframes.some((x) => x.pos.ball)}
+                      aria-label="Balón en el pizarrón"
+                      onChange={() => save(toggleToken(board, "ball"))}
+                    />
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: "var(--color-ball)" }} />
+                    Balón
+                  </label>
+                )}
               </div>
             </div>
           ) : (

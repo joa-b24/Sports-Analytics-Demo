@@ -41,7 +41,7 @@ export function ClipDrawings({
       <g mask="url(#clip-bodies)" filter="url(#clip-shadow)">
       {items.map((d) => {
         const color = dc(d.style.color);
-        const width = DRAW_PX.stroke * k * (d.id === selected ? 1.6 : 1);
+        const width = DRAW_PX.stroke * k * (d.style.line_scale ?? 1) * (d.id === selected ? 1.6 : 1);
         const dash = d.style.dashed ? `${14 * k} ${10 * k}` : undefined;
         const hit = onPick
           ? {
@@ -70,7 +70,7 @@ export function ClipDrawings({
                 x={d.text.at[0]}
                 y={d.text.at[1]}
                 textAnchor={d.text.anchor ?? "middle"}
-                fontSize={(d.kind === "text" ? DRAW_PX.text : DRAW_PX.label) * k}
+                fontSize={(d.kind === "text" ? DRAW_PX.text : DRAW_PX.label) * k * (d.style.text_scale ?? 1)}
                 fontWeight={700}
                 fill={color}
                 stroke="#000"

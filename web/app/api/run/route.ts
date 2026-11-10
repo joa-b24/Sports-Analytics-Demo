@@ -22,7 +22,7 @@ const enabled = () => process.env.NODE_ENV !== "production" || process.env.SPORT
 
 type JobKind = "test" | "process" | "kaggle" | "kaggle_pull" | "download" | "clip";
 const PROFILES = ["charla", "whatsapp"];
-const ARGS: Record<JobKind, (match: string, video: string, bandMarginM?: number, youtubeId?: string, clip?: { editId: string; profile: string }, startS?: number) => string[]> = {
+const ARGS: Record<JobKind, (match: string, video: string, bandMarginM?: number, youtubeId?: string, clip?: { editId: string; profile: string; height?: number; fps?: number }, startS?: number) => string[]> = {
   // With startS the test runs on that stretch (45 s of range, of which process takes the first 30 s) instead of the first one of segments.csv.
   test: (m, v, b, _y, _c, s) => ["-m", "sportsan.tracking.process", "--match", m, "--video", v, "--test", ...(s !== undefined ? ["--start", fmtHms(s), "--end", fmtHms(s + 45)] : []), ...(b !== undefined ? ["--band-margin", String(b)] : [])],
   // overnight has no --band-margin: with the margin of Detalles técnicos the same steps run through the pipeline command.
@@ -32,7 +32,7 @@ const ARGS: Record<JobKind, (match: string, video: string, bandMarginM?: number,
   // yt-dlp with the options of CLAUDE.md (sportsan.ingest.download_videos); the link is checked by validateDownload.
   download: (m, v, _b, y) => downloadArgv({ match: m, video: v, youtubeId: y ?? "" }),
   // A clip edited in Estudio to MP4 (sportsan.clips.render); for this kind `video` carries the id of the edit.
-  clip: (m, _v, _b, _y, c) => ["-m", "sportsan.clips.render", "--edit", `matches/${m}/edits/edit_${c?.editId ?? ""}.json`, "--profile", c?.profile ?? "charla", "--force"],
+  clip: (m, _v, _b, _y, c) => ["-m", "sportsan.clips.render", "--edit", `matches/${m}/edits/edit_${c?.editId ?? ""}.json`, "--profile", c?.profile ?? "charla", "--force", ...(c?.height ? ["--height", String(c.height)] : []), ...(c?.fps ? ["--fps", String(c.fps)] : [])],
 };
 const MAX_LINES = 400;
 
@@ -96,7 +96,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   if (!enabled()) return notFound();
-  const body = (await req.json().catch(() => null)) as { kind?: string; match?: string; video?: string; bandMarginM?: unknown; startS?: unknown; youtubeId?: unknown; editId?: unknown; profile?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as { kind?: string; match?: string; video?: string; bandMarginM?: unknown; startS?: unknown; youtubeId?: unknown; editId?: unknown; profile?: unknown; height?: unknown; fps?: unknown } | null;
   const kind = body?.kind as JobKind | undefined;
   const match = body?.match ?? "";
   const video = body?.video ?? "v1";
@@ -108,6 +108,9 @@ export async function POST(req: Request) {
   if (startS !== undefined && (kind !== "test" || typeof startS !== "number" || !Number.isFinite(startS) || startS < 0 || startS > 172800)) return new Response("Inicio no válido", { status: 400 });
   const editId = typeof body?.editId === "string" ? body.editId : "";
   const profile = typeof body?.profile === "string" ? body.profile : "charla";
+  // Output size and frame rate of a clip (chosen in the export dialog): only known values reach the command line.
+  const height = [480, 720, 1080, 1440, 2160].includes(Number(body?.height)) ? Number(body?.height) : undefined;
+  const fps = [24, 25, 30, 50, 60].includes(Number(body?.fps)) ? Number(body?.fps) : undefined;
   if (!kind || !(kind in ARGS) || !/^[\w.-]+$/.test(match) || !(kind === "clip" ? /^[\w.-]+$/.test(editId) && PROFILES.includes(profile) : /^v\d+$/.test(video))) return new Response("Trabajo no válido", { status: 400 });
   if (kind === "download") {
     const ok = validateDownload({ match, video, youtubeId: body?.youtubeId });
@@ -116,12 +119,12 @@ export async function POST(req: Request) {
   if (!existsSync(path.join(ROOT, "matches", match))) return new Response("No existe esa carpeta de partido", { status: 404 });
   // One job of each kind per match at a time.
   // (Downloads: one per video, so the same video is never downloaded twice but two videos can come down together.)
-  const busy = [...jobs.values()].find((j) => j.state === "running" && j.match === match && j.kind === kind && (kind !== "download" || j.video === video) && (kind !== "clip" || j.video === `${editId}_${profile}`));
+  const busy = [...jobs.values()].find((j) => j.state === "running" && j.match === match && j.kind === kind && (kind !== "download" || j.video === video) && (kind !== "clip" || j.video === `${editId}_${profile}${height ?? ""}${fps ?? ""}`));
   if (busy) return Response.json(view(busy));
 
   const id = `${kind}-${match}-${Date.now().toString(36)}`;
-  const job: Job = { id, kind, match, video: kind === "clip" ? `${editId}_${profile}` : video, state: "running", started: Date.now(), ended: null, code: null, lines: [], proc: null };
-  const proc = spawn(python(), ARGS[kind](match, video, band as number | undefined, typeof body?.youtubeId === "string" ? body.youtubeId : undefined, { editId, profile }, startS as number | undefined), {
+  const job: Job = { id, kind, match, video: kind === "clip" ? `${editId}_${profile}${height ?? ""}${fps ?? ""}` : video, state: "running", started: Date.now(), ended: null, code: null, lines: [], proc: null };
+  const proc = spawn(python(), ARGS[kind](match, video, band as number | undefined, typeof body?.youtubeId === "string" ? body.youtubeId : undefined, { editId, profile, height, fps }, startS as number | undefined), {
     cwd: ROOT,
     env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", PYTHONUNBUFFERED: "1", TQDM_MININTERVAL: "2" },
     windowsHide: true,

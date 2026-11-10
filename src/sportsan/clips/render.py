@@ -65,14 +65,17 @@ BOARD_SIZE = (1920, 1080)
 
 # ---------------------------------------------------------------------------------------------- ffmpeg
 
-def ffmpeg_args(ffmpeg: str, profile: str, w: int, h: int, fps: float, out: Path) -> list[str]:
-    """ffmpeg leyendo cuadros BGR por la entrada estándar y escribiendo el MP4 del perfil (sin audio, sin agrandar)."""
+def ffmpeg_args(ffmpeg: str, profile: str, w: int, h: int, fps: float, out: Path, height: int | None = None, out_fps: float | None = None) -> list[str]:
+    """ffmpeg leyendo cuadros BGR por la entrada estándar y escribiendo el MP4 del perfil (sin audio, sin agrandar).
+
+    `height` y `out_fps` cambian la resolución y los cuadros por segundo de salida (los que elige la app al exportar);
+    sin ellos valen los del perfil y los del video."""
     p = PROFILES[profile]
-    height = min(int(h), p["height"])
+    height = min(int(h), height or p["height"])
     return [
         ffmpeg, "-y", "-loglevel", "error",
         "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}", "-r", f"{fps:.6f}", "-i", "-",
-        "-an", "-vf", f"scale=-2:{height}", "-c:v", "libx264", *p["codec"],
+        "-an", "-vf", f"scale=-2:{height}" + (f",fps={out_fps:g}" if out_fps else ""), "-c:v", "libx264", *p["codec"],
         "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out),
     ]
 
@@ -155,21 +158,23 @@ def draw_items(img: np.ndarray, items: list[Projected], scale: float = 1.0, pale
     for d in items:
         color = color_bgr(d.style.get("color"), palette)
         dashed = bool(d.style.get("dashed"))
+        # Grosor de línea y tamaño de texto que la analista eligió para este dibujo (multiplicadores; 1 = el de siempre).
+        wd = max(1, round(width * float(d.style.get("line_scale") or 1)))
         for path in d.paths:
             pts = np.asarray(path, float) * scale
             poly = np.round(pts).astype(np.int32)
             if d.closed:
                 stamp(lambda m, poly=poly: cv2.fillPoly(m, [poly], 255, cv2.LINE_AA), color, 0.22 if d.kind == "zone" else 0.12)
             if dashed:
-                stamp(lambda m, pts=pts, d=d: _dashed(cv2, m, pts, 255, width, 14 * k, 10 * k, d.closed), color, 1.0)
+                stamp(lambda m, pts=pts, d=d: _dashed(cv2, m, pts, 255, wd, 14 * k, 10 * k, d.closed), color, 1.0)
             else:
-                stamp(lambda m, poly=poly, d=d: cv2.polylines(m, [poly], d.closed, 255, width, cv2.LINE_AA), color, 1.0)
+                stamp(lambda m, poly=poly, d=d: cv2.polylines(m, [poly], d.closed, 255, wd, cv2.LINE_AA), color, 1.0)
         if d.head:
             head = np.round(np.asarray(d.head, float) * scale).astype(np.int32)
             stamp(lambda m, head=head: cv2.fillPoly(m, [head], 255, cv2.LINE_AA), color, 1.0)
         if d.text:
             (x, y), value = d.text
-            texts.append(((x * scale, y * scale), value, color, DRAW_PX["text" if d.kind == "text" else "label"] * k,
+            texts.append(((x * scale, y * scale), value, color, DRAW_PX["text" if d.kind == "text" else "label"] * k * float(d.style.get("text_scale") or 1),
                           {"start": "ls", "end": "rs"}.get(getattr(d, "anchor", "middle"), "ms")))
     if alpha.any():
         cut = np.ones((h, w), np.float32)
@@ -292,10 +297,10 @@ def roster_numbers(path: Path) -> dict:
     return {r.get("player_id"): r.get("number") for r in players if isinstance(r, dict)}
 
 
-def _encode(frames, size: tuple[int, int], fps: float, profile: str, out: Path) -> Path:
+def _encode(frames, size: tuple[int, int], fps: float, profile: str, out: Path, height: int | None = None, out_fps: float | None = None) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     part = out.with_name(out.stem + ".part.mp4")
-    proc = subprocess.Popen(ffmpeg_args(find_ffmpeg(), profile, size[0], size[1], fps, part), stdin=subprocess.PIPE)
+    proc = subprocess.Popen(ffmpeg_args(find_ffmpeg(), profile, size[0], size[1], fps, part, height, out_fps), stdin=subprocess.PIPE)
     try:
         for img in frames:
             proc.stdin.write(np.ascontiguousarray(img).tobytes())
@@ -309,11 +314,12 @@ def _encode(frames, size: tuple[int, int], fps: float, profile: str, out: Path) 
     return out
 
 
-def render_edit(edit_path: Path, profile: str = "charla", force: bool = False) -> Path:
+def render_edit(edit_path: Path, profile: str = "charla", force: bool = False, height: int | None = None, out_fps: float | None = None) -> Path:
     edit_path = Path(edit_path)
     edit = json.loads(edit_path.read_text(encoding="utf-8"))
     folder = edit_path.resolve().parent.parent
-    out = folder / "clips" / f"{edit['edit_id']}_{profile}.mp4"
+    extra = (f"_{height}p" if height else "") + (f"_{out_fps:g}fps" if out_fps else "")
+    out = folder / "clips" / f"{edit['edit_id']}_{profile}{extra}.mp4"
     if out.exists() and not force:
         print(f"ya existe, salto: {out.name}")
         return out
@@ -339,7 +345,7 @@ def render_edit(edit_path: Path, profile: str = "charla", force: bool = False) -
             bodies = player_bodies(snap, position_of, to, t_video) if snap else []
             yield draw_items(reader.get(src).copy(), items, scale, palette=edit.get("palette"), bodies=bodies)
 
-    _encode(frames(), size, fps, profile, out)
+    _encode(frames(), size, fps, profile, out, height, out_fps)
     print(f"listo: {out} ({len(plan)} cuadros, {len(plan) / fps:.1f} s)")
     return out
 
@@ -480,9 +486,11 @@ def main(argv: list[str] | None = None) -> None:
     src.add_argument("--board", help="board_id (data/boards/board_<id>.json) o la ruta del archivo")
     ap.add_argument("--profile", choices=sorted(PROFILES), default="charla")
     ap.add_argument("--force", action="store_true", help="vuelve a escribir aunque ya exista")
+    ap.add_argument("--height", type=int, help="alto de salida en píxeles (solo --edit; sin agrandar)")
+    ap.add_argument("--fps", type=float, help="cuadros por segundo de salida (solo --edit)")
     a = ap.parse_args(argv)
     if a.edit:
-        render_edit(Path(a.edit), a.profile, a.force)
+        render_edit(Path(a.edit), a.profile, a.force, a.height, a.fps)
     else:
         render_board(a.board, a.profile, a.force)
 

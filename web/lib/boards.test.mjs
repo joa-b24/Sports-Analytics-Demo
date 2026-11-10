@@ -69,10 +69,11 @@ test("pasar un Play con posiciones medidas: un paso cada 2 s y el final, solo co
   assert.deepEqual(b.keyframes[0].pos, { m4: [10, 20], m8: [80, 30], ball: [11, 20] });
   assert.equal(b.keyframes[1].pos.ball, undefined);
   assert.deepEqual(b.keyframes[2].pos.m12, [60, 60]);
+  // Without a shirt number they get a stand-in (the lowest unused one of their team) so they can be told apart.
   assert.deepEqual(b.tokens, [
     { id: "m4", team: "own", label: "7" },
-    { id: "m8", team: "opp", label: "" },
-    { id: "m12", team: "own", label: "" },
+    { id: "m8", team: "opp", label: "1" },
+    { id: "m12", team: "own", label: "1" },
     { id: "ball", team: "ball", label: "" },
   ]);
   // Without any measurement in the play, its hand keyframes are used.

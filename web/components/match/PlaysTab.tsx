@@ -72,6 +72,15 @@ export function PlaysTab({
 }: Props) {
   const [selId, setSelId] = useState<string | null>(initialPlayId ?? plays[0]?.play_id ?? null);
   const [filter, setFilter] = useState<PlayFilter>(NO_FILTER);
+  // The tab opens on its first marked play: the video goes to it as soon as the player knows its length.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (opened.current || initialPlayId || duration === undefined) return;
+    const first = plays[0];
+    if (!first) return;
+    opened.current = true;
+    playerRef.current?.seek(first.t_start);
+  }, [duration, plays, initialPlayId, playerRef]);
   const [selKf, setSelKf] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(
     null,
@@ -90,7 +99,8 @@ export function PlaysTab({
   const measuredOn = part !== null && source === "measured";
   const measured = measuredOn && part ? positionsAt(part, time, { withExtrapolated: true }) : null;
   // What the measured animation shows: everybody, only players with a name, or only the ball.
-  const show = usePref("plays:show", "all") as "all" | "named" | "ball";
+  // The measured animation always shows everybody (smoothed): no filter.
+  const show = "all" as "all" | "named" | "ball";
   const { roster, edits } = useStore();
   const loopOn = usePref(LOOP_PREF, "off") === "on";
   const loopMargin = parseMargin(usePref(LOOP_MARGIN_PREF, "0"));
@@ -266,19 +276,26 @@ export function PlaysTab({
             </button>
             <button
               type="button"
-              className={`${btn} shrink-0 !px-2`}
+              className={`${btn} relative h-9 w-9 shrink-0 !p-0`}
               aria-pressed={loopOn}
+              aria-label={loopOn ? "Repetir la jugada: activado" : "Repetir la jugada: desactivado"}
               onClick={() => setPref(LOOP_PREF, loopOn ? "off" : "on")}
-              title="Repite el tramo de la jugada al reproducirla"
+              title={loopOn ? "Repite la jugada al reproducirla (activado)" : "Repite la jugada al reproducirla (desactivado)"}
             >
-              <Repeat size={14} weight={loopOn ? "bold" : "regular"} className={loopOn ? "text-accent-300" : ""} />
-              Bucle {loopOn ? "sí" : "no"}
+              <Repeat size={16} weight={loopOn ? "bold" : "regular"} className={loopOn ? "text-ok" : "text-faint"} />
+              <i className={`absolute top-1 right-1 h-1.5 w-1.5 rounded-full ${loopOn ? "bg-ok" : "bg-line-strong"}`} aria-hidden />
             </button>
             {loopOn && (
-              <select className="shrink-0 rounded-md bg-raised px-1.5 py-1.5 text-xs text-ink-2" aria-label="Margen del bucle" value={loopMargin} onChange={(e) => setPref(LOOP_MARGIN_PREF, e.target.value)}>
+              <select
+                className="shrink-0 rounded-md bg-raised px-1.5 py-1.5 text-xs text-ink-2"
+                aria-label="Segundos extra antes y después de la jugada al repetirla"
+                title="Segundos que se añaden antes y después de la jugada cuando se repite"
+                value={loopMargin}
+                onChange={(e) => setPref(LOOP_MARGIN_PREF, e.target.value)}
+              >
                 {[0, 1, 2, 3].map((m) => (
                   <option key={m} value={m}>
-                    {m === 0 ? "sin margen" : `± ${m} s`}
+                    ± {m} s
                   </option>
                 ))}
               </select>
@@ -330,9 +347,9 @@ export function PlaysTab({
               <Strategy size={14} />
               Pasar al pizarrón
             </button>
-            <label className="ml-auto flex items-center gap-1.5 text-xs text-muted" title="El informe la lista en la sección de balón parado">
+            <label className="ml-auto flex items-center gap-1.5 text-xs text-muted" title="Acción a balón parado: el informe la lista en su sección">
               <input type="checkbox" checked={!!play.abp} onChange={(e) => patch(play.play_id, { abp: e.target.checked || undefined })} />
-              Balón parado
+              ABP
             </label>
           </div>
 
@@ -359,21 +376,7 @@ export function PlaysTab({
             >
               Animación de cancha
             </PanelTitle>
-            {measuredOn ? (
-              <div className="seg mb-2">
-                {(
-                  [
-                    ["all", "Todas"],
-                    ["named", "Con nombre"],
-                    ["ball", "Solo balón"],
-                  ] as const
-                ).map(([key, label]) => (
-                  <button key={key} type="button" aria-pressed={show === key} className="seg-opt !px-2 !py-0.5 text-xs" onClick={() => setPref("plays:show", key)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : (
+            {measuredOn ? null : (
               <div className="mb-2 flex flex-wrap items-center gap-1.5">
                 <button type="button" className={`${btn} !px-2.5 !py-1 text-xs`} onClick={addKeyframe}>
                   <Plus size={13} />
@@ -595,7 +598,7 @@ function PlaysBin({
             )}
             <select className={sel} aria-label="Filtrar por tipo" value={filter.kind} onChange={(e) => onFilter({ ...filter, kind: e.target.value })}>
               <option value="">Todos los tipos</option>
-              <option value="abp">Balón parado</option>
+              <option value="abp">ABP</option>
               <option value="edited">Con dibujos</option>
               {types.map((t) => (
                 <option key={t} value={t}>
