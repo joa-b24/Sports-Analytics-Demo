@@ -1,5 +1,6 @@
 import type { Segment } from "./segments";
 import type { MatchEvent } from "./types";
+import { PITCH } from "./types.ts";
 
 // Answers to the staff questions in docs/preguntas_cuerpo_tecnico.md, computed from hand-tagged events.
 // Pure functions over plain arrays. Every result carries its sample size: the UI must show it.
@@ -457,4 +458,32 @@ export function momentumCurve(events: MatchEvent[], segments: Segment[]): Moment
   const firstHalf = hits.filter((h) => h.half === 1);
   const halfTime = firstHalf.length && firstHalf.length < hits.length ? Math.max(...firstHalf.map((h) => h.min)) : null;
   return { points, goals, halfTime, basis, skipped };
+}
+
+// Territory: the pitch in a grid (columns along its length, rows across it) where each cell counts the tagged actions with a
+// position of each team. A cell «belongs» to the team with more of them; `share` is the own team's part of the cell. Events
+// keep the absolute coordinates of the contract (our team attacks to the right).
+export const TERRITORY_TYPES: readonly MatchEvent["type"][] = ["recovery", "loss", "final_third_entry", "box_entry", "shot", "goal", "cross", "corner", "free_kick", "duel", "foul", "key_pass"];
+export interface TerritoryCell {
+  own: number;
+  opp: number;
+  share: number | null;
+}
+export function territoryGrid(events: MatchEvent[], cols = 6, rows = 3): { cells: TerritoryCell[][]; placed: number; missing: number } {
+  const cells: TerritoryCell[][] = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ({ own: 0, opp: 0, share: null })));
+  let placed = 0;
+  let missing = 0;
+  for (const e of events) {
+    if ((e.team !== "own" && e.team !== "opp") || !TERRITORY_TYPES.includes(e.type)) continue;
+    if (e.x === null || e.y === null || e.x === undefined || e.y === undefined) {
+      missing++;
+      continue;
+    }
+    const c = Math.min(cols - 1, Math.max(0, Math.floor((e.x / PITCH.length) * cols)));
+    const r = Math.min(rows - 1, Math.max(0, Math.floor((e.y / PITCH.width) * rows)));
+    cells[r][c][e.team]++;
+    placed++;
+  }
+  for (const row of cells) for (const cell of row) cell.share = cell.own + cell.opp > 0 ? cell.own / (cell.own + cell.opp) : null;
+  return { cells, placed, missing };
 }

@@ -4,6 +4,7 @@ import { Crosshair, ShieldCheck, SquaresFour, UserFocus } from "@phosphor-icons/
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnalysisFilter, type MinuteRange, type Period } from "@/components/match/AnalysisFilter";
+import { EntryMap, GOAL_KICK_STYLES, OutcomeMap, SET_PIECE_STYLES, TerritoryMap } from "@/components/match/AttackMaps";
 import { Fold } from "@/components/match/Fold";
 import { Select } from "@/components/Select";
 import { useHeaderRightSlot, useHeaderSlot } from "@/lib/stepBus";
@@ -26,25 +27,21 @@ import {
   COUNTERPRESS_WINDOW_S,
   SHOT_WINDOW_S,
   boxEntries,
-  crosses,
-  finalThirdEntries,
   firstPass,
-  goalKicks,
+  isCrossLike,
   momentumCurve,
   playTime,
   recoveryHeight,
-  setPieces,
   shotBreakdown,
   timeBins,
   transitions,
   type BinMeasure,
-  type Lanes,
   type Tally,
 } from "@/lib/analysis";
 import { momentOfEvent } from "@/lib/moments";
 import { type Segment } from "@/lib/segments";
 import { countByType, shotsOf, zoneCounts } from "@/lib/stats";
-import { EVENT_DETAILS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
+import { EVENT_DETAILS, EVENT_LABELS, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
 
 // The sections of the dashboard, from the general reading to the individual one.
 const VIEWS = [
@@ -84,6 +81,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const [binMin, setBinMin] = useState<5 | 10>(5);
   const [binMeasure, setBinMeasure] = useState<BinMeasure>("shots");
   const [counterTeam, setCounterTeam] = useState<Side>("own");
+  const [detailTeam, setDetailTeam] = useState<Side>("own");
   const shotsPlayer = useMomentPlayer(match);
   const headerSlot = useHeaderSlot();
   const rightSlot = useHeaderRightSlot();
@@ -151,33 +149,6 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       const t = get(s);
       return { who: name(s), color: color(s), parts: Object.entries(labels).map(([k, label]) => ({ label, value: t.counts[k] ?? 0 })), unknown: t.unknown };
     });
-  const laneRows = (get: (s: Side) => Lanes): PartsRow[] =>
-    SIDES.map((s) => {
-      const l = get(s);
-      return {
-        who: name(s),
-        color: color(s),
-        parts: [
-          { label: "Izquierda", value: l.left },
-          { label: "Centro", value: l.center },
-          { label: "Derecha", value: l.right },
-        ],
-        unknown: l.missing,
-      };
-    });
-  const shotRows: PartsRow[] = SIDES.map((s) => {
-    const sh = shotBreakdown(evs, s);
-    return {
-      who: name(s),
-      color: color(s),
-      parts: [
-        { label: "A puerta (con los goles)", value: sh.onTarget },
-        { label: "Fuera", value: sh.offTarget },
-        { label: "Bloqueado", value: sh.blocked },
-      ],
-      unknown: sh.unknown,
-    };
-  });
   const heightRows: PartsRow[] = SIDES.map((s) => {
     const h = recoveryHeight(evs, s);
     return {
@@ -205,6 +176,18 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const box = { own: boxEntries(evs, "own"), opp: boxEntries(evs, "opp") };
   const recH = { own: recoveryHeight(evs, "own"), opp: recoveryHeight(evs, "opp") };
   const highPct = (s: Side) => pct(recH[s].rival, recH[s].rival + recH[s].middle + recH[s].own);
+  // Possession in the usual sense (time with the ball) beside the territorial one, with a short reading of both.
+  const heldAll = match.possession ? match.possession.own + match.possession.opp : 0;
+  const possOwn = heldAll > 0 && match.possession ? Math.round((100 * match.possession.own) / heldAll) : null;
+  const territoryRead = (() => {
+    const t = tilt("own");
+    if (possOwn === null || t === null) return null;
+    const d = possOwn - t;
+    if (Math.abs(d) <= 5) return `Posesión y dominio parejos: ${A} usó el balón donde lo tuvo.`;
+    return d > 0
+      ? `Más posesión que dominio: ${A} tuvo el balón, pero lejos del área rival.`
+      : `Más dominio que posesión: ${A} ocupó el campo rival sin tener tanto el balón.`;
+  })();
   const recZones = zoneCounts(evs.filter((e) => e.type === "recovery" && e.team === counterTeam));
 
   const tabs = (
@@ -284,16 +267,25 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
               Cada evento de ataque suma peligro (gol 5, tiro 3, entrada al área 2, último tercio, córner y centro 1) y se va apagando con los minutos (vida media de 1.5 min); la curva es la diferencia entre equipos, suavizada, y su mayor oscilación vale ±100. Pasa el cursor por un minuto para ver las cifras.
             </p>
           </Panel>
-          <Panel title="Eficacia" note="quién aprovecha mejor lo que genera" delay={80}>
-            <FigureList
-              aLabel={A}
-              bLabel={B}
-              rows={[
-                { label: "Dominio territorial (field tilt)", a: tilt("own"), b: tilt("opp"), unit: " %", note: "parte de las entradas al último tercio y al área" },
-                { label: "Conversión de gol", a: conversion("own"), b: conversion("opp"), unit: " %", note: "goles entre tiros" },
-                { label: "Tiros a puerta", a: onTargetPct("own"), b: onTargetPct("opp"), unit: " %", note: "entre todos los tiros" },
-              ]}
-            />
+          <Panel title="Dominio territorial" note="quién ocupó cada zona" delay={80}>
+            <TerritoryMap events={evs} aLabel={A} bLabel={B} />
+            <div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-1">
+              <span className="text-xs text-muted">Field tilt</span>
+              <span className="num text-2xl" style={{ color: COLORS.own }}>
+                {tilt("own") ?? "–"}
+                {tilt("own") !== null && <span className="text-sm"> %</span>}
+              </span>
+              <span className="text-xs text-faint">|</span>
+              <span className="num text-2xl" style={{ color: COLORS.opp }}>
+                {tilt("opp") ?? "–"}
+                {tilt("opp") !== null && <span className="text-sm"> %</span>}
+              </span>
+            </div>
+            <p className="mt-2 mb-0 text-xs text-pretty text-faint">
+              {possOwn !== null ? `Posesión: ${possOwn} % – ${100 - possOwn} %. ` : "Sin posesión calculada (se calcula con el balón seguido en el Informe). "}
+              {territoryRead}
+              {" "}El field tilt parte de las entradas al último tercio y al área.
+            </p>
           </Panel>
         </div>
       </Section>
@@ -326,13 +318,13 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             </div>
             <BinChart key={`${binMin}-${binMeasure}`} bins={bins.bins.map((x) => ({ label: x.label, a: x.own[binMeasure], b: x.opp[binMeasure] }))} aLabel={A} bLabel={B} />
           </Panel>
-          <Panel title="Línea de tiempo" note="un carril por tipo de evento" delay={80}>
-            <EventTimeline events={evs} segments={segments} aLabel={A} bLabel={B} timeLabel={timeLabel} />
+          <Panel title="Todos los eventos por tipo" note="lo etiquetado, por equipo" delay={80}>
+            <CompareBars aLabel={A} bLabel={B} rows={EVENT_TYPES.map((t) => ({ label: EVENT_LABELS[t], a: a[t], b: b[t] }))} />
           </Panel>
         </div>
         <div className="mt-5">
-          <Fold id="general-eventos" title="Todos los eventos por tipo" note="el conteo completo de lo etiquetado">
-            <CompareBars aLabel={A} bLabel={B} rows={EVENT_TYPES.map((t) => ({ label: EVENT_LABELS[t], a: a[t], b: b[t] }))} />
+          <Fold id="general-linea" title="Línea de tiempo" note="un carril por tipo de evento, minuto a minuto">
+            <EventTimeline events={evs} segments={segments} aLabel={A} bLabel={B} timeLabel={timeLabel} />
           </Fold>
         </div>
       </Section>
@@ -374,33 +366,33 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         </div>
       </Section>
 
-      <Fold id="ataque-detalle" title="Más detalle del ataque" note="a puerta, carriles, salidas, centros y balón parado">
+      <Fold id="ataque-detalle" title="Más detalle del ataque" note="entradas, saques de meta, centros, córners y tiros libres, en mapas">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="seg" role="group" aria-label="Equipo de los mapas">
+            {SIDES.map((s) => (
+              <button key={s} type="button" aria-pressed={detailTeam === s} onClick={() => setDetailTeam(s)} className="seg-opt">
+                {name(s)}
+              </button>
+            ))}
+          </div>
+          <span className="text-xs text-faint">Vistos con el equipo atacando hacia la derecha.</span>
+        </div>
         <div className="grid gap-5 xl:grid-cols-2">
-          <Panel title="Tiros a puerta">
-            <PartsDuo rows={shotRows} unknownLabel="sin resultado anotado" />
+          <Panel title="Entradas al último tercio" note="por dónde llegan">
+            <EntryMap events={evs.filter((e) => e.team === detailTeam && e.type === "final_third_entry")} team={detailTeam} />
           </Panel>
-          <Panel title="Carriles de entrada al último tercio" note="visto por quien ataca">
-            <PartsDuo rows={laneRows((s) => finalThirdEntries(evs, s))} unknownLabel="sin posición" />
+          <Panel title="Saques de meta" note="desde dónde y si la conservan">
+            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && e.type === "goal_kick")} team={detailTeam} styles={GOAL_KICK_STYLES} />
+            <p className="mt-2 mb-0 text-[11px] text-faint">El saque de meta marca dónde sale; a dónde llega aún no se anota.</p>
           </Panel>
-          <Panel title="Saques de meta">
-            <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).length, EVENT_DETAILS.goal_kick ?? {})} />
-            <div className="hr-fade my-4" />
-            <PartsDuo rows={tallyRows((s) => goalKicks(evs, s).outcome, EVENT_OUTCOMES.goal_kick ?? {})} />
+          <Panel title="Centros" note="de dónde a dónde, y cómo acaban">
+            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && isCrossLike(e))} team={detailTeam} styles={SET_PIECE_STYLES} />
           </Panel>
-          <Panel title="Centros: banda y remate">
-            <div className="grid gap-6 md:grid-cols-2">
-              <PartsDuo rows={laneRows((s) => crosses(evs, s).lanes)} unknownLabel="sin posición" />
-              <PartsDuo rows={tallyRows((s) => crosses(evs, s).outcome, EVENT_OUTCOMES.cross ?? {})} />
-            </div>
+          <Panel title="Córners" note="de dónde a dónde, y cómo acaban">
+            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && e.type === "corner")} team={detailTeam} styles={SET_PIECE_STYLES} />
           </Panel>
-          <Panel title="Córners: resultado">
-            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).corners, EVENT_OUTCOMES.corner ?? {})} />
-          </Panel>
-          <Panel title="Córners: ejecución">
-            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).delivery, EVENT_DETAILS.corner ?? {})} />
-          </Panel>
-          <Panel title="Tiros libres: resultado">
-            <PartsDuo rows={tallyRows((s) => setPieces(evs, s).freeKicks, EVENT_OUTCOMES.free_kick ?? {})} />
+          <Panel title="Tiros libres" note="desde dónde y cómo acaban">
+            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && e.type === "free_kick")} team={detailTeam} styles={SET_PIECE_STYLES} />
           </Panel>
         </div>
         <p className="text-xs text-pretty text-faint">

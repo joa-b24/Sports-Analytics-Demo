@@ -75,7 +75,21 @@ Cada regla es una función pura sobre posiciones (`src/sportsan/metrics/` o `web
    mostrarla. `carry_to_commit` al final.
 4. Lo manual queda solo como corrección o muestra de validación.
 
-## 6. Pregunta abierta
+## 6. Para qué se usarán (respuesta de la analista, 2026-11-10)
+
+Las etiquetas servirán para **las dos cosas**:
+
+- **Fuerzas básicas:** es un requisito que funcionen **al 100 %**. Ahí lo inferido no basta por sí solo: cada etiqueta que
+  alimente una decisión de formación necesita una etiqueta manual de referencia, un acuerdo medido entre etiquetadores
+  (`rater_id`, `manual_version`) y un criterio de aceptación (por ejemplo, acuerdo mínimo contra una muestra) antes de
+  usarse. Esto sube la prioridad de las columnas de calidad y de las tareas y restricciones de la sesión
+  (`task_type`, `constraints_code`).
+- **Partidos del equipo:** una buena adición; aquí sirve la inferencia con su porcentaje de acierto a la vista.
+
+El modelo de datos tiene entonces dos partes: eventos de partido (lo de hoy, ampliado) y **sesiones con tareas**, donde cada
+etiqueta cuelga de una tarea y de sus restricciones.
+
+## 7. Pregunta abierta (resuelta arriba)
 
 ¿Estas etiquetas son para los **partidos** (la app de hoy) o para las **sesiones de fuerzas básicas** (entrenamientos)? Las
 de contexto (`task_type`, `constraints_code`) apuntan a lo segundo, y entonces el modelo de datos correcto es una sesión con

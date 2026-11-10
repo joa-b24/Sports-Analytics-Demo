@@ -223,3 +223,17 @@ test("momentumCurve: signed, fades after an event, ±100 at the biggest swing, g
   assert.deepEqual(m.goals, [{ min: 1, team: "own" }]);
   assert.deepEqual(momentumCurve([], []).points, []);
 });
+
+import { territoryGrid } from "./analysis.ts";
+
+test("territoryGrid: each cell counts the actions of both teams and tells whose part it is", () => {
+  const ev = (x, y, team, type = "recovery") => ({ x, y, team, type });
+  const g = territoryGrid([ev(100, 10, "own"), ev(101, 12, "own"), ev(102, 11, "opp"), ev(5, 60, "opp"), ev(50, null, "own"), ev(10, 10, "own", "other")], 6, 3);
+  assert.equal(g.placed, 4);
+  assert.equal(g.missing, 1);
+  assert.equal(g.cells[0][5].own, 2);
+  assert.equal(g.cells[0][5].opp, 1);
+  assert.ok(Math.abs(g.cells[0][5].share - 2 / 3) < 1e-9);
+  assert.equal(g.cells[2][0].share, 0);
+  assert.equal(g.cells[1][2].share, null);
+});
