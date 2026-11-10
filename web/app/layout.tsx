@@ -1,3 +1,4 @@
+import { BRAND } from "@/lib/brand";
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { MobileInit } from "@/components/MobileInit";
@@ -13,7 +14,7 @@ const archivo = localFont({ src: "./fonts/Archivo-latin.woff2", variable: "--fon
 const jetbrains = localFont({ src: "./fonts/JetBrainsMono-latin.woff2", variable: "--font-jetbrains", weight: "100 800", style: "normal", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Rendimiento · Fútbol",
+  title: `${BRAND.name} · ${BRAND.tagline}`,
   description: "Análisis de rivales, partidos propios y entrenamientos a partir de video y sensores.",
   // The installable app (mobile build only).
   ...(MOBILE ? { manifest: "/manifest.webmanifest" } : {}),

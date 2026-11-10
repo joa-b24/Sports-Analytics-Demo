@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowCounterClockwise, CheckCircle, Lock, MapTrifold, Moon, Palette, PencilSimple, Plus, Sun, Trash, UsersThree } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowsIn, ArrowsOut, FilmSlate, FloppyDisk, Lock, MagnifyingGlass, MapTrifold, Palette, PencilSimple, Plus, Trash, UsersThree } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useState } from "react";
 import { Locked, SkBars } from "@/components/Locked";
@@ -8,29 +8,167 @@ import { Card, PageHeader } from "@/components/Shell";
 import { VenueDiagram, VenueEditor } from "@/components/VenueEditor";
 import { LABEL_STYLES } from "@/components/PlayerMark";
 import { RosterCard } from "@/components/RosterCard";
+import { AUTOSAVE_PREF } from "@/lib/saveMatch";
 import { TEAM_SECTIONS } from "@/lib/features";
-import { mutate, setPref, uid, usePref, useStore } from "@/lib/store";
+import { getPref, mutate, setPref, uid, usePref, useStore } from "@/lib/store";
 import { DEFAULT_BALL, DEFAULT_OPP, DEFAULT_OWN, TEAM_COLORS } from "@/lib/teamColors";
 import { PITCH, type VenueSpec } from "@/lib/types";
 import { BUILTIN_SPECS, allVenues } from "@/lib/venue";
 import { referenceGroups } from "@/lib/venueFit";
 
-const TABS = [
-  { id: "look", label: "Apariencia", icon: Palette, locked: false },
-  { id: "venues", label: "Sedes", icon: MapTrifold, locked: false },
-  { id: "roster", label: "Plantilla", icon: UsersThree, locked: false },
-  { id: "thresholds", label: "Umbrales y zonas", icon: Lock, locked: true },
+// One adjustable setting: where it lives, how to find it and how to draw it. `modified` marks it when it is not the
+// default value (like VS Code's blue bar); the arrow puts the default back.
+type Setting = {
+  id: string;
+  section: SectionId;
+  label: string;
+  help: string;
+  keys: string;
+  pref: string;
+  def: string;
+  control: (value: string, set: (v: string) => void) => React.ReactNode;
+};
+
+const SECTIONS = [
+  { id: "look", label: "Apariencia", icon: Palette },
+  { id: "video", label: "Video y etiquetado", icon: FilmSlate },
+  { id: "save", label: "Guardado", icon: FloppyDisk },
+  { id: "venues", label: "Sedes", icon: MapTrifold },
+  { id: "roster", label: "Plantilla", icon: UsersThree },
+  { id: "thresholds", label: "Umbrales y zonas", icon: Lock },
 ] as const;
-type TabId = (typeof TABS)[number]["id"];
+type SectionId = (typeof SECTIONS)[number]["id"];
 // Thresholds are about training load: hidden with the team sections (lib/features.ts).
-const VISIBLE_TABS = TABS.filter((t) => TEAM_SECTIONS || t.id !== "thresholds");
+const VISIBLE = SECTIONS.filter((t) => TEAM_SECTIONS || t.id !== "thresholds");
+const SETTING_SECTIONS: SectionId[] = ["look", "video", "save"];
+
+const choice = (options: [string, string][]) => {
+  const Choice = (value: string, set: (v: string) => void) => (
+    <div className="seg" role="radiogroup">
+      {options.map(([id, label]) => (
+        <button key={id} type="button" aria-pressed={value === id} onClick={() => set(id)} className="seg-opt">
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+  return Choice;
+};
+const swatches = (other: string) => {
+  const Swatches = (value: string, set: (v: string) => void) => (
+    <div className="flex flex-wrap gap-1" role="radiogroup">
+      {TEAM_COLORS.map((c) => (
+        <button
+          key={c.id}
+          type="button"
+          role="radio"
+          aria-checked={value === c.id}
+          disabled={!!other && other === c.id}
+          title={other === c.id ? `${c.label}: lo usa el otro equipo` : c.label}
+          onClick={() => set(c.id)}
+          className={`grid h-8 w-8 place-items-center rounded-md border-2 transition-colors disabled:cursor-not-allowed disabled:opacity-20 ${value === c.id ? "border-ink" : "border-transparent hover:border-line-strong"}`}
+        >
+          <span className="h-4 w-4 rounded-full" style={{ background: c.value }} />
+        </button>
+      ))}
+    </div>
+  );
+  return Swatches;
+};
+
+const zoomText = (v: string) => `${(Number(v) || 1).toFixed(2).replace(/\.?0+$/, "")}×`;
+
+function useSettings(own: string, opp: string): Setting[] {
+  return [
+    { id: "theme", section: "look", label: "Tema", help: "Oscuro (por defecto) o claro.", keys: "tema oscuro claro color", pref: "theme", def: "dark", control: choice([["dark", "Oscuro"], ["light", "Claro"]]) },
+    { id: "sidebar", section: "look", label: "Barra lateral", help: "Solo iconos o con los nombres.", keys: "menú barra lateral iconos", pref: "sidebar", def: "icons", control: choice([["icons", "Iconos"], ["full", "Con nombres"]]) },
+    { id: "ownColor", section: "look", label: "Color de nuestro equipo", help: "Marcador, mapas y gráficos.", keys: "color equipo propio azul", pref: "ownColor", def: DEFAULT_OWN, control: swatches(opp) },
+    { id: "oppColor", section: "look", label: "Color del rival", help: "No puede ser el mismo que el nuestro.", keys: "color rival equipo contrario", pref: "oppColor", def: DEFAULT_OPP, control: swatches(own) },
+    { id: "ballColor", section: "look", label: "Línea del balón", help: "Trayectoria del balón en la mesa de corrección.", keys: "color balón línea trayectoria", pref: "ballColor", def: DEFAULT_BALL, control: swatches("") },
+    {
+      id: "labelStyle",
+      section: "look",
+      label: "Jugadoras sobre el video",
+      help: "Cómo se marca a cada persona. Mayús + L lo cambia en la mesa.",
+      keys: "etiquetas caja óvalo flecha marca jugadora video",
+      pref: "labelStyle",
+      def: "oval",
+      control: (v, set) => (
+        <div className="grid grid-cols-3 gap-1.5" role="radiogroup">
+          {LABEL_STYLES.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              role="radio"
+              aria-checked={v === o.id}
+              onClick={() => set(o.id)}
+              className={`flex flex-col items-center gap-1 rounded-md border px-3 py-2 transition-colors ${v === o.id ? "border-accent bg-accent-900/40 text-ink" : "border-line text-muted hover:border-line-strong hover:bg-raised"}`}
+            >
+              <LabelGlyph kind={o.id} />
+              <span className="text-xs">{o.label}</span>
+            </button>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: "playerZoom",
+      section: "video",
+      label: "Zoom del reproductor",
+      help: "Acerca la imagen dentro del recuadro; se mueve con el botón de la cruz sobre el video.",
+      keys: "zoom acercar reproductor video imagen",
+      pref: "playerZoom",
+      def: "1",
+      control: (v, set) => (
+        <label className="flex items-center gap-3 text-xs text-ink-2">
+          <input type="range" min={1} max={4} step={0.25} value={Number(v) || 1} onChange={(e) => set(e.target.value)} className="w-40" />
+          <span className="num w-10">{zoomText(v)}</span>
+        </label>
+      ),
+    },
+    {
+      id: "playerFrame",
+      section: "video",
+      label: "Forma del recuadro",
+      help: "Más alto que 16:9 deja ver más de la imagen sin desplazarte.",
+      keys: "recuadro alto ancho reproductor proporción aspecto",
+      pref: "playerFrame",
+      def: "16/9",
+      control: choice([["16/9", "Ancho"], ["4/3", "4:3"], ["1/1", "Cuadrado"], ["3/4", "Alto"]]),
+    },
+    { id: "skipPauses", section: "video", label: "Saltar pausas al etiquetar", help: "La reproducción se salta lo que está fuera de los tramos de juego.", keys: "pausas saltar tramos etiquetar", pref: "skipPauses", def: "on", control: choice([["on", "Sí"], ["off", "No"]]) },
+    {
+      id: "tagLag",
+      section: "video",
+      label: "Retraso al etiquetar",
+      help: "Segundos que se restan al tiempo actual: pulsas la tecla después de que pasó la acción.",
+      keys: "retraso lag segundos etiquetar tecla",
+      pref: "tagLag",
+      def: "3",
+      control: (v, set) => (
+        <label className="flex items-center gap-2 text-xs text-ink-2">
+          <input type="number" min={0} max={10} step={0.5} value={v} onChange={(e) => set(e.target.value)} className="input !w-20" />s
+        </label>
+      ),
+    },
+    { id: "autosave", section: "save", label: "Guardado automático", help: "Cada 5 minutos y solo tras 30 s sin cambios, a la carpeta del partido. Ctrl + S siempre guarda al momento.", keys: "guardar automático autoguardado respaldo carpeta", pref: AUTOSAVE_PREF, def: "on", control: choice([["on", "Activado"], ["off", "Apagado"]]) },
+  ];
+}
 
 export default function Page() {
-  // Remembered, and set from outside too (a match's «+ Sede» opens Sedes). An old "keys" falls back to Apariencia.
+  // Remembered, and set from outside too (a match's «+ Sede» opens Sedes). An old tab id falls back to Apariencia.
   const tabPref = usePref("config:tab", "look");
-  const tab: TabId = VISIBLE_TABS.some((t) => t.id === tabPref) ? (tabPref as TabId) : "look";
-  const setTab = (t: TabId) => setPref("config:tab", t);
+  const tab: SectionId = VISIBLE.some((t) => t.id === tabPref) ? (tabPref as SectionId) : "look";
+  const setTab = (t: SectionId) => setPref("config:tab", t);
+  const maximized = usePref("config:max", "off") === "on";
+  const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<{ spec: VenueSpec; isNew: boolean } | null>(null);
+  const own = usePref("ownColor", DEFAULT_OWN);
+  const opp = usePref("oppColor", DEFAULT_OPP);
+  const settings = useSettings(own, opp);
+  // Every preference of the list, read through one subscription so the marks follow them.
+  usePref("theme", "dark");
+  const valueOf = (x: Setting) => getPref(x.pref, x.def);
 
   const saveVenue = (spec: VenueSpec) => {
     mutate((s) => ({ ...s, venues: [...s.venues.filter((v) => v.venue_id !== spec.venue_id), spec] }));
@@ -46,152 +184,152 @@ export default function Page() {
   if (tab === "venues" && editing)
     return <VenueEditor key={editing.spec.venue_id} initial={editing.spec} isNew={editing.isNew} onSave={saveVenue} onCancel={() => setEditing(null)} />;
 
-  return (
-    <>
-      <PageHeader title="Configuración">
-        <div className="seg" role="tablist" aria-label="Sección de configuración">
-          {VISIBLE_TABS.map((t) => (
-            <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className="seg-opt inline-flex items-center gap-1.5">
-              <t.icon size={14} />
-              {t.label}
-              {t.locked && <Lock size={11} className="text-warn/80" />}
-            </button>
-          ))}
+  const q = query.trim().toLowerCase();
+  const found = q ? settings.filter((x) => `${x.label} ${x.help} ${x.keys}`.toLowerCase().includes(q)) : [];
+  const sectionsFound = q ? VISIBLE.filter((x) => x.label.toLowerCase().includes(q) && !SETTING_SECTIONS.includes(x.id)) : [];
+  const modifiedIn = (id: SectionId) => settings.filter((x) => x.section === id && valueOf(x) !== x.def).length;
+  const current = VISIBLE.find((x) => x.id === tab) ?? VISIBLE[0];
+
+  const rowOf = (x: Setting) => {
+    const value = valueOf(x);
+    const changed = value !== x.def;
+    return (
+      <div key={x.id} className="relative grid gap-x-8 gap-y-2 border-t border-line-soft py-4 pl-4 first:border-t-0 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+        {/* The bar on the left says this value is not the default. */}
+        <i className={`absolute top-3 bottom-3 left-0 w-0.5 rounded-full ${changed ? "bg-accent" : "bg-transparent"}`} aria-hidden />
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm text-ink">
+            {x.label}
+            {changed && (
+              <button type="button" className="inline-flex items-center gap-1 text-[11px] text-accent-300 hover:text-accent-200" onClick={() => setPref(x.pref, x.def)} title="Volver al valor por defecto">
+                <ArrowCounterClockwise size={11} />
+                modificado
+              </button>
+            )}
+          </div>
+          <p className="m-0 mt-0.5 max-w-xl text-xs text-pretty text-faint">{x.help}</p>
         </div>
+        <div>{x.control(value, (v) => setPref(x.pref, v))}</div>
+      </div>
+    );
+  };
+
+  return (
+    <div className={maximized ? "" : "mx-auto max-w-6xl"}>
+      <PageHeader title="Configuración">
+        <label className="relative">
+          <MagnifyingGlass size={14} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-faint" aria-hidden />
+          <input className="input !w-64 !pl-8" placeholder="Buscar un ajuste" aria-label="Buscar un ajuste" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </label>
+        <button type="button" className="btn" onClick={() => setPref("config:max", maximized ? "off" : "on")} aria-pressed={maximized} title={maximized ? "Volver al ancho normal" : "Usar todo el ancho"}>
+          {maximized ? <ArrowsIn size={14} /> : <ArrowsOut size={14} />}
+          {maximized ? "Reducir" : "Maximizar"}
+        </button>
       </PageHeader>
 
-      {tab === "look" && <Appearance />}
-      {tab === "venues" && <Venues onEdit={(spec) => setEditing({ spec, isNew: false })} onNew={newVenue} />}
-      {tab === "roster" && <RosterCard />}
-      {tab === "thresholds" && (
-        <Locked
-          reason="dev"
-          title="Umbrales y zonas"
-          why="Velocidad a partir de la cual se cuenta alta intensidad y sprint, zonas de frecuencia cardiaca y rango seguro de carga aguda : crónica. Hoy la app no calcula ninguna de esas métricas: muestra las columnas tal como vienen del sensor."
-          need="que existan las métricas que usan esos umbrales (zonas de FC, ACWR), y la FC máxima de cada jugadora en la plantilla."
-        >
-          <SkBars rows={4} />
-        </Locked>
-      )}
-    </>
+      <div className="grid gap-6 md:grid-cols-[13rem_minmax(0,1fr)]">
+        <nav aria-label="Secciones de configuración" className="flex gap-1 overflow-x-auto md:flex-col md:self-start md:overflow-visible md:border-r md:border-line-soft md:pr-3">
+          {VISIBLE.map((t) => {
+            const n = modifiedIn(t.id);
+            return (
+              <button
+                key={t.id}
+                type="button"
+                aria-current={!q && tab === t.id ? "page" : undefined}
+                onClick={() => {
+                  setQuery("");
+                  setTab(t.id);
+                }}
+                className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors ${!q && tab === t.id ? "bg-raised text-ink" : "text-muted hover:bg-raised/60 hover:text-ink"}`}
+              >
+                <t.icon size={16} className="shrink-0" />
+                <span className="flex-1 whitespace-nowrap">{t.label}</span>
+                {n > 0 && (
+                  <span className="tc rounded bg-accent-900 px-1.5 text-[10px] text-accent-200" title={`${n} ajuste(s) distintos del valor por defecto`}>
+                    {n}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="min-w-0">
+          {q ? (
+            <section aria-label="Resultados de la búsqueda">
+              <h2 className="mb-1 text-[15px] text-ink">
+                {found.length + sectionsFound.length} resultado{found.length + sectionsFound.length === 1 ? "" : "s"} para «{query}»
+              </h2>
+              {found.map((x) => (
+                <div key={x.id}>
+                  <span className="tag tag-outline mt-3 inline-block">{VISIBLE.find((v) => v.id === x.section)?.label}</span>
+                  {rowOf(x)}
+                </div>
+              ))}
+              {sectionsFound.map((x) => (
+                <button
+                  key={x.id}
+                  type="button"
+                  className="btn mt-3 mr-2"
+                  onClick={() => {
+                    setQuery("");
+                    setTab(x.id);
+                  }}
+                >
+                  <x.icon size={14} />
+                  Ir a {x.label}
+                </button>
+              ))}
+              {found.length + sectionsFound.length === 0 && <p className="text-sm text-faint">Ningún ajuste coincide. Prueba con otra palabra (por ejemplo «color», «zoom» o «guardar»).</p>}
+            </section>
+          ) : (
+            <section aria-label={current.label}>
+              {SETTING_SECTIONS.includes(current.id) && (
+                <>
+                  <h2 className="mb-1 text-[15px] text-ink">{current.label}</h2>
+                  {current.id === "look" && <ColorPreview />}
+                  <div>{settings.filter((x) => x.section === current.id).map(rowOf)}</div>
+                </>
+              )}
+              {current.id === "venues" && <Venues onEdit={(spec) => setEditing({ spec, isNew: false })} onNew={newVenue} />}
+              {current.id === "roster" && <RosterCard />}
+              {current.id === "thresholds" && (
+                <Locked
+                  reason="dev"
+                  title="Umbrales y zonas"
+                  why="Velocidad a partir de la cual se cuenta alta intensidad y sprint, zonas de frecuencia cardiaca y rango seguro de carga aguda : crónica. Hoy la app no calcula ninguna de esas métricas: muestra las columnas tal como vienen del sensor."
+                  need="que existan las métricas que usan esos umbrales (zonas de FC, ACWR), y la FC máxima de cada jugadora en la plantilla."
+                >
+                  <SkBars rows={4} />
+                </Locked>
+              )}
+            </section>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
-function Appearance() {
-  const theme = usePref("theme", "dark");
-  const ownColor = usePref("ownColor", DEFAULT_OWN);
-  const oppColor = usePref("oppColor", DEFAULT_OPP);
-  const ballColor = usePref("ballColor", DEFAULT_BALL);
-  const labelStyle = usePref("labelStyle", "oval");
-
+// A scoreboard and a pitch with the live colours, so a colour change is seen where it counts.
+function ColorPreview() {
   return (
-    <div className="grid max-w-5xl gap-4 lg:grid-cols-2">
-      <Card title="Tema">
-        <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Tema">
-          {(
-            [
-              ["dark", "Oscuro", Moon],
-              ["light", "Claro", Sun],
-            ] as const
-          ).map(([id, label, Icon]) => (
-            <button
-              key={id}
-              type="button"
-              role="radio"
-              aria-checked={theme === id}
-              onClick={() => setPref("theme", id)}
-              className={`flex items-center gap-3 rounded-[10px] border p-3 text-left transition-colors ${theme === id ? "border-accent bg-accent-900/40" : "border-line hover:border-line-strong hover:bg-raised"}`}
-            >
-              <span className={`grid h-9 w-9 place-items-center rounded-full ${theme === id ? "bg-accent-900 text-accent-200" : "bg-raised text-muted"}`}>
-                <Icon size={17} />
-              </span>
-              <span className="text-sm text-ink">{label}</span>
-              {theme === id && <CheckCircle size={16} weight="fill" className="ml-auto text-accent-300" />}
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      <Card title="Jugadoras sobre el video" note="Mayús + L lo cambia en la mesa">
-        <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Cómo se marca a cada persona">
-          {LABEL_STYLES.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              role="radio"
-              aria-checked={labelStyle === o.id}
-              onClick={() => setPref("labelStyle", o.id)}
-              className={`flex flex-col items-center gap-2 rounded-[10px] border px-2 py-3 transition-colors ${labelStyle === o.id ? "border-accent bg-accent-900/40 text-ink" : "border-line text-muted hover:border-line-strong hover:bg-raised"}`}
-            >
-              <LabelGlyph kind={o.id} />
-              <span className="text-xs">{o.label}</span>
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      <Card title="Colores de los equipos y del balón" className="lg:col-span-2">
-        <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_16rem]">
-          <div className="space-y-4">
-            {(
-              [
-                ["ownColor", "Nuestro equipo", ownColor, oppColor],
-                ["oppColor", "Rival", oppColor, ownColor],
-                ["ballColor", "Línea del balón (mesa de corrección)", ballColor, ""],
-              ] as const
-            ).map(([key, title, value, other]) => (
-              <div key={key}>
-                <div className="mb-2 flex items-baseline justify-between text-xs">
-                  <span className="text-ink-2">{title}</span>
-                  <span className="text-faint">{TEAM_COLORS.find((c) => c.id === value)?.label}</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={`Color: ${title}`}>
-                  {TEAM_COLORS.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={value === c.id}
-                      disabled={other === c.id}
-                      title={other === c.id ? `${c.label}: lo usa el otro equipo` : c.label}
-                      onClick={() => setPref(key, c.id)}
-                      className={`grid h-9 w-9 place-items-center rounded-lg border-2 transition-colors disabled:cursor-not-allowed disabled:opacity-20 ${value === c.id ? "border-ink" : "border-transparent hover:border-line-strong"}`}
-                    >
-                      <span className="h-5 w-5 rounded-full" style={{ background: c.value }} />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-          {/* Preview with the live tokens: what a scoreboard and a pitch will look like. */}
-          <div className="flex flex-col justify-center gap-3 rounded-[10px] bg-bg/60 p-4">
-            <div className="flex items-stretch overflow-hidden rounded-md text-sm">
-              <span className="flex flex-1 items-center bg-own px-3 py-2 text-[color:var(--on-own)]">Tec CCM</span>
-              <span className="num grid place-items-center bg-raised px-3 text-lg text-ink">2 – 1</span>
-              <span className="flex flex-1 items-center justify-end bg-opp px-3 py-2 text-[color:var(--on-opp)]">Rival</span>
-            </div>
-            <svg viewBox="0 0 105 68" className="w-full rounded-md bg-pitch" aria-hidden>
-              <rect x={1} y={1} width={103} height={66} fill="none" className="stroke-line-strong" strokeWidth={0.6} />
-              <line x1={52.5} y1={1} x2={52.5} y2={67} className="stroke-line-strong" strokeWidth={0.6} />
-              {[
-                [20, 20],
-                [30, 45],
-                [42, 30],
-              ].map(([x, y], i) => (
-                <circle key={`o${i}`} cx={x} cy={y} r={3} className="fill-own" />
-              ))}
-              {[
-                [66, 24],
-                [74, 44],
-                [86, 34],
-              ].map(([x, y], i) => (
-                <circle key={`r${i}`} cx={x} cy={y} r={3} className="fill-opp" />
-              ))}
-            </svg>
-          </div>
-        </div>
-      </Card>
+    <div className="my-3 flex flex-col gap-3 rounded-md bg-bg/60 p-4 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-stretch overflow-hidden rounded-md text-sm">
+        <span className="flex flex-1 items-center bg-own px-3 py-2 text-[color:var(--on-own)]">Tec CCM</span>
+        <span className="num grid place-items-center bg-raised px-3 text-lg text-ink">2 – 1</span>
+        <span className="flex flex-1 items-center justify-end bg-opp px-3 py-2 text-[color:var(--on-opp)]">Rival</span>
+      </div>
+      <svg viewBox="0 0 105 68" className="w-44 shrink-0 rounded-md bg-pitch" aria-hidden>
+        <rect x={1} y={1} width={103} height={66} fill="none" className="stroke-line-strong" strokeWidth={0.6} />
+        <line x1={52.5} y1={1} x2={52.5} y2={67} className="stroke-line-strong" strokeWidth={0.6} />
+        {[[20, 20], [30, 45], [42, 30]].map(([x, y], i) => (
+          <circle key={`o${i}`} cx={x} cy={y} r={3} className="fill-own" />
+        ))}
+        {[[66, 24], [74, 44], [86, 34]].map(([x, y], i) => (
+          <circle key={`r${i}`} cx={x} cy={y} r={3} className="fill-opp" />
+        ))}
+      </svg>
     </div>
   );
 }
@@ -292,7 +430,7 @@ function Venues({ onEdit, onNew }: { onEdit: (spec: VenueSpec) => void; onNew: (
         <button
           type="button"
           onClick={onNew}
-          className="group grid min-h-64 place-items-center rounded-[10px] border border-dashed border-line-strong text-muted transition-colors hover:border-accent hover:bg-accent-900/20 hover:text-ink"
+          className="group grid min-h-64 place-items-center rounded-md border border-dashed border-line-strong text-muted transition-colors hover:border-accent hover:bg-accent-900/20 hover:text-ink"
         >
           <span className="flex flex-col items-center gap-3">
             <span className="grid h-12 w-12 place-items-center rounded-full bg-raised transition-colors group-hover:bg-accent-900 group-hover:text-accent-200">

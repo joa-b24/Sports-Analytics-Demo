@@ -325,7 +325,7 @@ function Block({ title, note, side, gate, printHidden, children }: { title: stri
           </span>
         )}
       </div>
-      <div className="mt-3 rounded-[10px] border border-line-soft bg-surface p-5 print:p-4">
+      <div className="mt-3 rounded-md border border-line-soft bg-surface p-5 print:p-4">
         {gate && <GateLine gate={gate} />}
         {children}
       </div>
@@ -338,7 +338,7 @@ function Cover({ data, report, setReport, loading }: { data: ReportData; report:
   const kpis = coverKpis(data);
   return (
     <header className="space-y-3 break-inside-avoid">
-      <div className="overflow-hidden rounded-[14px] border border-line-soft bg-surface">
+      <div className="overflow-hidden rounded-md border border-line-soft bg-surface">
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4 px-6 pt-5 pb-5">
           <div className="min-w-0">
             <div className="text-xs font-medium tracking-wide text-faint uppercase">{c.title}</div>

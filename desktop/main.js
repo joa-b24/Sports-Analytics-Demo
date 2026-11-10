@@ -1,4 +1,4 @@
-// Rendimiento as a desktop app: runs the Next server of web/ (copied by stage.mjs) with Electron's own Node and opens
+// Atalaya (antes Rendimiento) as a desktop app: runs the Next server of web/ (copied by stage.mjs) with Electron's own Node and opens
 // it in a window. Unlike the web version it can read and write the project folder (videos, tracking, segments.csv),
 // the same as `npm run dev` on the laptop. The folder is asked for once and remembered.
 const { app, BrowserWindow, dialog, shell } = require("electron");
@@ -71,7 +71,7 @@ async function main() {
     await dialog.showMessageBox({ type: "error", message: `No arrancó el servidor de la app en el puerto ${PORT}. ¿Hay otra copia abierta?` });
     return app.quit();
   }
-  const win = new BrowserWindow({ width: 1440, height: 900, backgroundColor: "#0c0c0d", title: "Rendimiento", autoHideMenuBar: true });
+  const win = new BrowserWindow({ width: 1440, height: 900, backgroundColor: "#0c0c0d", title: "Atalaya", autoHideMenuBar: true });
   // Links out of the app (YouTube, Strava) open in the browser.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (!url.startsWith(`http://${HOST}:${PORT}`)) {

@@ -383,7 +383,7 @@ export function FitStage({ spec, onChange, focus, setFocus }: Props) {
   const loupeView = hover && view && url && size && loupe ? { half: LOUPE / (2 * k * mag), left: hover.sx + 24 + LOUPE > box.w ? hover.sx - 24 - LOUPE : hover.sx + 24, top: hover.sy - LOUPE - 24 < 0 ? hover.sy + 24 : hover.sy - LOUPE - 24 } : null;
 
   return (
-    <div className="flex min-h-[70vh] flex-1 flex-col overflow-hidden rounded-[10px] bg-surface lg:min-h-0">
+    <div className="flex min-h-[70vh] flex-1 flex-col overflow-hidden rounded-md bg-surface lg:min-h-0">
       <div className="flex flex-wrap items-center gap-2 border-b border-line-soft px-3 py-2">
         {fileButton(!!url)}
         <span className="mx-1 h-5 w-px bg-line" aria-hidden />

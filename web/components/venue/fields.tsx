@@ -6,7 +6,7 @@ import { Minus, Plus } from "@phosphor-icons/react";
 
 export function Panel({ title, aside, children, className = "" }: { title: string; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <section className={`rounded-[10px] bg-surface p-3 ${className}`}>
+    <section className={`rounded-md bg-surface p-3 ${className}`}>
       <div className="mb-2.5 flex items-baseline justify-between gap-2">
         <h3 className="tc text-[11px] tracking-[0.08em] text-faint uppercase">{title}</h3>
         {aside && <span className="text-[11px] text-faint">{aside}</span>}

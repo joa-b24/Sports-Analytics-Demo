@@ -125,7 +125,7 @@ export function KitPanel({ kits, picking, onPick, teams, compact = false }: Prop
   );
   if (compact)
     return (
-      <section className="rounded-[10px] bg-surface px-3 py-2">
+      <section className="rounded-md bg-surface px-3 py-2">
         <div className="flex items-center gap-3">
           <h2 className="text-[13px] text-ink">Uniformes</h2>
           {rows.map((r) => (
@@ -146,7 +146,7 @@ export function KitPanel({ kits, picking, onPick, teams, compact = false }: Prop
       </section>
     );
   return (
-    <section className="rounded-[10px] bg-surface p-4">
+    <section className="rounded-md bg-surface p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="text-[15px] text-ink">Uniformes</h2>
         <button

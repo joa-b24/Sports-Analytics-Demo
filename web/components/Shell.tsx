@@ -30,7 +30,12 @@ import { useRosterFromFile } from "@/components/RosterCard";
 import { useRenamesFromFile } from "@/lib/renames";
 import { TEAM_SECTIONS } from "@/lib/features";
 import { MOBILE } from "@/lib/mobile";
+import { BRAND } from "@/lib/brand";
 import { EdgeReveal, useFocusMode } from "@/components/FocusMode";
+import { MODES, STEP_ICONS, mainOf, type ModeId } from "@/components/match/MatchHeader";
+import { stepVisible } from "@/lib/mobile";
+import { useStepStatus } from "@/lib/stepBus";
+import type { StepId } from "@/lib/steps";
 
 type NavItem = { href: string; label: string; icon: Icon; locked?: string; disabled?: string; active: boolean };
 
@@ -64,6 +69,48 @@ function NavLink({ n, open }: { n: NavItem; open: boolean }) {
     <Link href={n.href} aria-label={n.label} aria-current={n.active ? "page" : undefined} className={cls}>
       {body}
     </Link>
+  );
+}
+
+// The steps of the open mode, under it: icons (their name on hover) with a tick when the step is done and a bar for how
+// far it is. They replace the bar of steps the match screen used to have on top.
+function StepLinks({ match, mode, open, params }: { match: Match; mode: ModeId; open: boolean; params: URLSearchParams }) {
+  const status = useStepStatus(match.match_id);
+  const def = MODES.find((m) => m.id === mode);
+  if (!def) return null;
+  const list = def.steps.filter(([id]) => stepVisible(id));
+  const paso = params.get("paso");
+  const active = list.some(([id]) => id === paso) ? paso : mainOf(mode);
+  return (
+    <div className={`flex gap-0.5 md:flex-col ${open ? "ml-4 border-l border-line pl-1.5" : "md:items-center"}`} role="group" aria-label={`Pasos de ${def.label}`}>
+      {list.map(([id, label]) => {
+        const I = STEP_ICONS[id as StepId];
+        const st = status?.[id as StepId];
+        const on = active === id;
+        const done = st?.state === "done";
+        const href = `/partido?id=${encodeURIComponent(match.match_id)}&modo=${mode}&paso=${id}`;
+        return (
+          <Link
+            key={id}
+            href={href}
+            replace
+            aria-label={label}
+            aria-current={on ? "page" : undefined}
+            title={st?.text ? `${label} · ${st.text}` : label}
+            className={`group relative flex h-8 shrink-0 items-center gap-2.5 rounded-md transition-colors ${open ? "w-full px-2" : "w-8 justify-center"} ${on ? "bg-raised text-ink" : "text-faint hover:bg-raised/70 hover:text-ink"}`}
+          >
+            <I size={16} weight={done ? "fill" : "regular"} className={`shrink-0 ${done ? "text-ok" : st?.state === "partial" ? "text-warn" : ""}`} aria-hidden />
+            {open && <span className="truncate text-[13px]">{label}</span>}
+            {!open && (
+              <span className="pointer-events-none absolute left-10 z-30 hidden rounded-md bg-ink px-2 py-1 text-xs font-medium whitespace-nowrap text-bg shadow-lg group-hover:md:block">
+                {label}
+                {st?.text && <span className="opacity-70"> · {st.text}</span>}
+              </span>
+            )}
+          </Link>
+        );
+      })}
+    </div>
   );
 }
 
@@ -160,12 +207,15 @@ function Sidebar() {
       }`}
     >
       <nav aria-label="Secciones" className={`flex h-full items-center gap-1 overflow-x-auto px-2 py-1.5 md:flex-col md:overflow-visible md:py-3 ${open ? "md:items-stretch md:px-3" : "md:px-0"}`}>
-        <Link href="/" aria-label="Rendimiento · inicio" className={`mr-2 flex h-9 shrink-0 items-center gap-2.5 md:mr-0 md:mb-3 ${open ? "px-2" : "w-9 justify-center"}`}>
-          <svg width="24" height="18" viewBox="0 0 26 20" aria-hidden>
-            <rect x="0" y="0" width="12" height="20" rx="2" fill="var(--color-own)" />
-            <rect x="14" y="0" width="12" height="20" rx="2" fill="var(--color-ink)" />
+        <Link href="/" aria-label={`${BRAND.name} · inicio`} className={`mr-2 flex h-9 shrink-0 items-center gap-2.5 md:mr-0 md:mb-3 ${open ? "px-2" : "w-9 justify-center"}`}>
+          {/* The mark: a pitch seen from above (outline, halfway line and centre circle) with the ball on the circle. */}
+          <svg width="26" height="20" viewBox="0 0 26 20" fill="none" aria-hidden>
+            <rect x="0.75" y="0.75" width="24.5" height="18.5" rx="1.5" stroke="var(--color-ink)" strokeWidth="1.5" />
+            <line x1="13" y1="1" x2="13" y2="19" stroke="var(--color-ink)" strokeWidth="1.5" />
+            <circle cx="13" cy="10" r="4.5" stroke="var(--color-ink)" strokeWidth="1.5" />
+            <circle cx="17.5" cy="10" r="2.3" fill="var(--color-own)" />
           </svg>
-          {open && <span className="cond text-lg font-extrabold tracking-wide text-ink uppercase">Rendimiento</span>}
+          {open && <span className="cond text-lg font-extrabold tracking-wide text-ink uppercase">{BRAND.name}</span>}
         </Link>
         {top.map((n) => (
           <NavLink key={n.label} n={n} open={open} />
@@ -175,8 +225,11 @@ function Sidebar() {
           {open && <div className="cond px-2 pt-1 text-xs font-bold text-faint uppercase">Partidos</div>}
           <NavLink n={matchNav[0]} open={open} />
           <CurrentMatch match={match} events={events} open={open} active={onMatch} />
-          {matchNav.slice(1).map((n) => (
-            <NavLink key={n.label} n={n} open={open} />
+          {matchNav.slice(1).map((n, i) => (
+            <div key={n.label} className="contents md:flex md:flex-col md:gap-0.5">
+              <NavLink n={n} open={open} />
+              {match && onMatch && modo === MODES[i].id && <StepLinks match={match} mode={MODES[i].id} open={open} params={params} />}
+            </div>
           ))}
         </div>
         {team.map((n) => (

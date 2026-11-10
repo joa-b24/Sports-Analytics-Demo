@@ -345,7 +345,7 @@ export function MatchList() {
                 <button
                   type="button"
                   onClick={() => setAdding(k)}
-                  className="flex w-full items-center justify-center gap-2 rounded-[10px] border border-dashed border-line px-4 py-5 text-sm text-faint transition-colors hover:border-line-strong hover:text-ink-2"
+                  className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-line px-4 py-5 text-sm text-faint transition-colors hover:border-line-strong hover:text-ink-2"
                 >
                   <Plus size={14} />
                   {COPY[k].empty} {COPY[k].add}

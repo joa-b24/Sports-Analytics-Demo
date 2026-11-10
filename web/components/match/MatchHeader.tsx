@@ -111,12 +111,8 @@ type Props = {
   children?: React.ReactNode;
 };
 
-// One bar: the score, the video, the steps of the mode (each with where it stands) and the match data.
+// One slim bar: the score, the video, the save state and the match data. The steps of the mode are in the sidebar.
 export function MatchHeader({ match, events, tab, onTab, steps, video, status, badge, children }: Props) {
-  const mode = modeOf(tab);
-  // The mobile build hides the steps that process video (lib/mobile.ts).
-  const modeSteps = (MODES.find((m) => m.id === mode)?.steps ?? []).filter(([id]) => stepVisible(id));
-  const progress = (st: StepStatus) => (st.state === "done" ? 100 : st.state === "partial" ? 50 : 0);
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
       <h1 className="m-0">
@@ -124,34 +120,7 @@ export function MatchHeader({ match, events, tab, onTab, steps, video, status, b
       </h1>
       {badge}
       {video}
-      <ol className="flex min-w-0 flex-1 overflow-x-auto rounded-lg bg-surface" aria-label={`Pasos de ${MODES.find((m) => m.id === mode)?.label}`}>
-        {modeSteps.map(([id, label], n) => {
-          const st = steps[id as StepId];
-          const on = tab === id;
-          const I = STEP_ICONS[id as StepId];
-          const done = st?.state === "done";
-          return (
-            <li key={id} className={`min-w-[7rem] flex-1 ${n > 0 ? "border-l border-line-soft" : ""}`}>
-              <button
-                type="button"
-                aria-pressed={on}
-                onClick={() => onTab(id as TabId)}
-                title={st?.text}
-                className={`relative flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${on ? "bg-raised" : "hover:bg-raised/60"}`}
-              >
-                <span className={`cond flex items-center gap-1.5 text-[13px] font-bold whitespace-nowrap uppercase ${on ? "text-ink" : "text-muted"}`}>
-                  <I size={15} weight={done ? "fill" : "regular"} className={done ? "text-ok" : "text-faint"} aria-hidden />
-                  {label}
-                  {done && <span className="sr-only"> (completo)</span>}
-                </span>
-                <span className="absolute inset-x-0 bottom-0 h-0.5 bg-line">
-                  <span className={`block h-full transition-[width] duration-500 ${on ? "bg-own" : "bg-ink-2/60"}`} style={{ width: `${st ? progress(st) : 0}%` }} />
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ol>
+      <span className="flex-1" />
       {status}
       {children}
       {/* The bar only names the steps (and ticks the finished ones); where the open step stands goes under it. */}

@@ -95,7 +95,7 @@ export function RosterCard() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_19rem]">
         <div>
           {list.length === 0 ? (
-            <div className="grid min-h-48 place-items-center rounded-[10px] border border-dashed border-line-strong p-6 text-center text-sm text-muted">
+            <div className="grid min-h-48 place-items-center rounded-md border border-dashed border-line-strong p-6 text-center text-sm text-muted">
               Aún no hay plantilla. Añade jugadoras a la derecha o pega la lista completa.
             </div>
           ) : (
@@ -107,7 +107,7 @@ export function RosterCard() {
                 return (
                   <li
                     key={p.player_id}
-                    className={`group relative flex items-center gap-3 rounded-[10px] bg-raised/60 py-2 pr-2 pl-1 transition-colors hover:bg-raised ${dup ? "shadow-[inset_0_0_0_1px_var(--color-warn)]" : ""}`}
+                    className={`group relative flex items-center gap-3 rounded-md bg-raised/60 py-2 pr-2 pl-1 transition-colors hover:bg-raised ${dup ? "shadow-[inset_0_0_0_1px_var(--color-warn)]" : ""}`}
                   >
                     <input
                       type="number"
@@ -136,7 +136,7 @@ export function RosterCard() {
                       </div>
                     </div>
                     {confirm === p.player_id ? (
-                      <span className="absolute inset-0 flex items-center justify-between gap-2 rounded-[10px] bg-raised px-3 text-xs text-ink-2">
+                      <span className="absolute inset-0 flex items-center justify-between gap-2 rounded-md bg-raised px-3 text-xs text-ink-2">
                         <span className="min-w-0">
                           {n > 0 ? `Tiene ${n} evento${n === 1 ? "" : "s"}: quedarán sin plantilla.` : `¿Quitar a ${p.player_id}?`}
                         </span>
@@ -171,7 +171,7 @@ export function RosterCard() {
         </div>
 
         <aside className="flex flex-col gap-4">
-          <section className="rounded-[10px] bg-bg/50 p-3">
+          <section className="rounded-md bg-bg/50 p-3">
             <h3 className="tc mb-2.5 text-[11px] tracking-[0.08em] text-faint uppercase">Añadir jugadora</h3>
             <div className="flex gap-2">
               <input className="input tc w-16 text-center" type="number" placeholder="#" aria-label="Dorsal" value={number} onChange={(e) => setNumber(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
@@ -193,7 +193,7 @@ export function RosterCard() {
             </div>
           </section>
 
-          <section className="rounded-[10px] bg-bg/50 p-3">
+          <section className="rounded-md bg-bg/50 p-3">
             <h3 className="tc mb-2.5 text-[11px] tracking-[0.08em] text-faint uppercase">Pegar lista</h3>
             <textarea
               className="input h-28 w-full resize-none font-mono text-xs leading-relaxed"

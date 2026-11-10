@@ -25,7 +25,7 @@ export function VenueDiagram({ venue, className = "", focus = null }: { venue: V
   // One screen pixel is about this many meters at the usual sizes; only the dots use it.
   const unit = (b.x1 - b.x0) / 420;
   return (
-    <svg viewBox={`${b.x0} ${b.y0} ${b.x1 - b.x0} ${b.y1 - b.y0}`} preserveAspectRatio="xMidYMid meet" className={`w-full rounded-[10px] bg-pitch [[data-theme=light]_&]:bg-ink ${className}`} role="img" aria-label={`Modelo de ${venue.name || "la sede"}`}>
+    <svg viewBox={`${b.x0} ${b.y0} ${b.x1 - b.x0} ${b.y1 - b.y0}`} preserveAspectRatio="xMidYMid meet" className={`w-full rounded-md bg-pitch [[data-theme=light]_&]:bg-ink ${className}`} role="img" aria-label={`Modelo de ${venue.name || "la sede"}`}>
       <ModelDrawing venue={venue} map={(p) => p} px={false} unit={unit} focus={focus} />
     </svg>
   );
@@ -208,7 +208,7 @@ export function VenueEditor({ initial, isNew, onSave, onCancel }: Props) {
             </div>
           </Panel>
 
-          <div className="flex min-h-36 flex-1 flex-col rounded-[10px] bg-surface p-3">
+          <div className="flex min-h-36 flex-1 flex-col rounded-md bg-surface p-3">
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="tc text-[11px] tracking-[0.08em] text-faint uppercase">Vista previa</h3>
               <span className="text-[11px] text-faint">banda cercana abajo</span>

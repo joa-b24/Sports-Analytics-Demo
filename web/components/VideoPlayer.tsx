@@ -1,7 +1,21 @@
 "use client";
 
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { ArrowsOutCardinal, ArrowsVertical, MagnifyingGlassMinus, MagnifyingGlassPlus, ArrowCounterClockwise } from "@phosphor-icons/react";
 import { fmtT } from "@/lib/format";
+import { setPref, usePref } from "@/lib/store";
+
+// The frame of the video can be taller than 16:9 and the picture zoomed and moved inside it, for a wide camera shown in a
+// wide, short player. Zoom and frame shape are per browser (preferences); the position is not kept.
+const FRAMES = [
+  ["16/9", "Ancho (16:9)"],
+  ["4/3", "4:3"],
+  ["1/1", "Cuadrado"],
+  ["3/4", "Alto"],
+] as const;
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 4;
+const ZOOM_STEP = 0.25;
 
 export type PlayerHandle = {
   getTime(): number;
@@ -81,6 +95,36 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, onPlayState, virt
   useEffect(() => {
     if (mode === "virtual") onPlayStateRef.current?.(vPlaying);
   }, [mode, vPlaying]);
+
+  const frameRef = useRef<HTMLDivElement>(null);
+  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(usePref("playerZoom", "1")) || 1));
+  const framePref = usePref("playerFrame", "16/9");
+  const frame = FRAMES.find(([f]) => f === framePref)?.[0] ?? "16/9";
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [moving, setMoving] = useState(false);
+  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  // How far the picture can move before an edge shows: half of what its zoomed size exceeds the frame by.
+  const limits = (z: number) => {
+    const el = frameRef.current;
+    if (!el) return { x: 0, y: 0 };
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    return { x: Math.max(0, (w * z - w) / 2), y: Math.max(0, ((w * 9) / 16) * z > h ? (((w * 9) / 16) * z - h) / 2 : 0) };
+  };
+  const clampPan = (x: number, y: number, z = zoom) => {
+    const l = limits(z);
+    return { x: Math.max(-l.x, Math.min(l.x, x)), y: Math.max(-l.y, Math.min(l.y, y)) };
+  };
+  const setZoom = (z: number) => {
+    const v = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
+    setPref("playerZoom", String(v));
+    setPan((p) => clampPan(p.x, p.y, v));
+  };
+  const cycleFrame = () => {
+    const next = FRAMES[(FRAMES.findIndex(([f]) => f === frame) + 1) % FRAMES.length][0];
+    setPref("playerFrame", next);
+    setPan({ x: 0, y: 0 });
+  };
 
   const getTime = () => {
     if (modeRef.current === "file") return videoRef.current?.currentTime ?? 0;
@@ -189,52 +233,103 @@ export function VideoPlayer({ ref, youtubeId, fileUrl, onTime, onPlayState, virt
     return () => clearInterval(id);
   }, [vPlaying, virtualMax]);
 
+  const content = (
+    <>
+      {mode === "file" && (
+        <video
+          ref={videoRef}
+          src={fileUrl}
+          controls
+          className="h-full w-full"
+          onLoadedMetadata={(e) => {
+            e.currentTarget.playbackRate = rate.current;
+          }}
+          onPlay={() => onPlayStateRef.current?.(true)}
+          onPause={() => onPlayStateRef.current?.(false)}
+        />
+      )}
+      {mode === "youtube" && <div ref={ytHost} className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full" />}
+      {mode === "virtual" && (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-pitch px-6 text-center text-ink-2">
+          <div className="text-sm">Sin video conectado. Pega el enlace de YouTube o abre el archivo local arriba.</div>
+          <div className="text-xs text-faint">Mientras tanto, este reloj manual hace de tiempo del video.</div>
+          <div className="num text-6xl text-ink">{fmtT(vtShown)}</div>
+          <div className="flex w-full max-w-md items-center gap-3">
+            <button type="button" onClick={() => setVPlaying((p) => !p)} className="btn btn-primary">
+              {vPlaying ? "Pausa" : "Reproducir"}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={virtualMax}
+              step={0.5}
+              value={vtShown}
+              aria-label="Tiempo del video"
+              onChange={(e) => {
+                vt.current = Number(e.target.value);
+                setVtShown(vt.current);
+              }}
+              className="flex-1"
+            />
+          </div>
+        </div>
+      )}
+    </>
+  );
+  const tool = "grid h-7 w-7 place-items-center rounded-md bg-black/60 text-white/85 backdrop-blur transition-colors hover:bg-black/80 disabled:opacity-30";
   return (
-    <div className="overflow-hidden rounded-3xl bg-black shadow-[0_0_0_1px_rgba(255,255,255,.06),0_24px_60px_-30px_rgba(0,0,0,.9)]">
-      <div className="aspect-video w-full">
-        {mode === "file" && (
-          <video
-            ref={videoRef}
-            src={fileUrl}
-            controls
-            className="h-full w-full"
-            onLoadedMetadata={(e) => {
-              e.currentTarget.playbackRate = rate.current;
+    <div className="group/player relative overflow-hidden rounded-md bg-black shadow-[0_0_0_1px_rgba(255,255,255,.06)]">
+      <div ref={frameRef} className="relative w-full overflow-hidden" style={{ aspectRatio: frame }}>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="aspect-video w-full" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center" }}>
+            {content}
+          </div>
+        </div>
+        {moving && (
+          <div
+            className="absolute inset-0 z-10 cursor-grab touch-none active:cursor-grabbing"
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              drag.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
             }}
-            onPlay={() => onPlayStateRef.current?.(true)}
-            onPause={() => onPlayStateRef.current?.(false)}
+            onPointerMove={(e) => {
+              const d = drag.current;
+              if (d) setPan(clampPan(d.px + e.clientX - d.x, d.py + e.clientY - d.y));
+            }}
+            onPointerUp={() => (drag.current = null)}
+            onWheel={(e) => setZoom(zoom + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP))}
+            aria-label="Mover la imagen: arrastra; la rueda acerca o aleja"
           />
         )}
-        {mode === "youtube" && <div ref={ytHost} className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full" />}
-        {mode === "virtual" && (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-pitch px-6 text-center text-ink-2">
-            <div className="text-sm">Sin video conectado. Pega el enlace de YouTube o abre el archivo local arriba.</div>
-            <div className="text-xs text-faint">Mientras tanto, este reloj manual hace de tiempo del video.</div>
-            <div className="num text-6xl text-ink">{fmtT(vtShown)}</div>
-            <div className="flex w-full max-w-md items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setVPlaying((p) => !p)}
-                className="btn btn-primary"
-              >
-                {vPlaying ? "Pausa" : "Reproducir"}
-              </button>
-              <input
-                type="range"
-                min={0}
-                max={virtualMax}
-                step={0.5}
-                value={vtShown}
-                aria-label="Tiempo del video"
-                onChange={(e) => {
-                  vt.current = Number(e.target.value);
-                  setVtShown(vt.current);
-                }}
-                className="flex-1"
-              />
-            </div>
-          </div>
-        )}
+        <div className="absolute top-2 right-2 z-20 flex gap-1 opacity-0 transition-opacity group-focus-within/player:opacity-100 group-hover/player:opacity-100 focus-within:opacity-100">
+          <button type="button" className={tool} onClick={() => setZoom(zoom - ZOOM_STEP)} disabled={zoom <= ZOOM_MIN} aria-label="Alejar" title="Alejar">
+            <MagnifyingGlassMinus size={15} />
+          </button>
+          <button type="button" className={tool} onClick={() => setZoom(zoom + ZOOM_STEP)} disabled={zoom >= ZOOM_MAX} aria-label="Acercar" title={`Acercar (${zoom.toFixed(2).replace(/\.?0+$/, "")}×)`}>
+            <MagnifyingGlassPlus size={15} />
+          </button>
+          <button type="button" className={`${tool} ${moving ? "!bg-own !text-[var(--on-own)]" : ""}`} onClick={() => setMoving((m) => !m)} aria-pressed={moving} aria-label="Mover la imagen" title="Mover la imagen (arrastrar; rueda para acercar). Apágalo para usar los controles del video">
+            <ArrowsOutCardinal size={15} />
+          </button>
+          <button type="button" className={tool} onClick={cycleFrame} aria-label="Forma del recuadro" title={`Forma del recuadro: ${FRAMES.find(([f]) => f === frame)?.[1]}`}>
+            <ArrowsVertical size={15} />
+          </button>
+          <button
+            type="button"
+            className={tool}
+            disabled={zoom === 1 && pan.x === 0 && pan.y === 0 && frame === "16/9"}
+            onClick={() => {
+              setZoom(1);
+              setPref("playerFrame", "16/9");
+              setPan({ x: 0, y: 0 });
+              setMoving(false);
+            }}
+            aria-label="Restablecer la vista"
+            title="Restablecer la vista"
+          >
+            <ArrowCounterClockwise size={15} />
+          </button>
+        </div>
       </div>
     </div>
   );

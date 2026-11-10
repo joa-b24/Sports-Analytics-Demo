@@ -36,6 +36,7 @@ import { TechPanel } from "@/components/match/TechPanel";
 import { MissingTag, VideoFilesBar } from "@/components/match/VideoDownload";
 import { Modal } from "@/components/Modal";
 import { techChanged } from "@/lib/tech";
+import { publishSteps } from "@/lib/stepBus";
 import { MODES, MatchHeader, isMode, mainOf, modeOf, type TabId } from "@/components/match/MatchHeader";
 import { BoardsWorkspace } from "@/components/board/BoardsWorkspace";
 import { ReportTab } from "@/components/match/ReportTab";
@@ -84,13 +85,11 @@ function MatchPage() {
   // opens the events of that video.
   // The mode comes from the sidebar (?modo=captura|estudio|analisis); inside it the analyst picks the step.
   const modo = params.get("modo");
-  // The step picked inside a mode; when the sidebar changes the mode, its main step shows.
-  // A link can name the step too (?modo=analisis&paso=report, from Inicio).
-  const [picked, setPicked] = useState<TabId | null>(() => {
-    const paso = params.get("paso");
-    return MODES.flatMap((m) => m.steps.map(([s]) => s as TabId)).find((s) => s === paso) ?? null;
-  });
-  const setTab = (t: TabId) => setPicked(t);
+  // The step picked inside a mode comes from the URL (?paso=), which the sidebar's step icons set; without it, the
+  // main step of the mode shows. A link can name the step too (?modo=analisis&paso=report, from Inicio).
+  const paso = params.get("paso");
+  const picked: TabId | null = MODES.flatMap((m) => m.steps.map(([s]) => s as TabId)).find((s) => s === paso) ?? null;
+  const setTab = (t: TabId) => id && router.replace(`/partido?id=${encodeURIComponent(id)}&modo=${modeOf(t)}&paso=${t}`, { scroll: false });
   // Configuración del partido > Detalles técnicos (a link from the evaluation tools opens it: ?detalles=tecnicos).
   const [techOpen, setTechOpen] = useState(params.get("detalles") === "tecnicos");
   const [procOpen, setProcOpen] = useState(params.get("procesos") === "1");
@@ -106,8 +105,8 @@ function MatchPage() {
   const shownMode = modeOf(tab);
   useEffect(() => {
     if (!id || linkVideo || linkEdit || modo === shownMode) return;
-    router.replace(`/partido?id=${encodeURIComponent(id)}&modo=${shownMode}`, { scroll: false });
-  }, [id, modo, shownMode, linkVideo, linkEdit, router]);
+    router.replace(`/partido?id=${encodeURIComponent(id)}&modo=${shownMode}${picked ? `&paso=${tab}` : ""}`, { scroll: false });
+  }, [id, modo, shownMode, tab, picked, linkVideo, linkEdit, router]);
   // Time to go to as soon as the player knows the length of the video (it cannot seek before).
   const pendingSeek = useRef<number | null>(linkVideo && Number.isFinite(linkT) && linkT >= 0 ? linkT : null);
   const [time, setTime] = useState(0);
@@ -352,6 +351,7 @@ function MatchPage() {
 
   return (
     <div>
+      <StepsPublisher matchId={match.match_id} steps={steps} />
       {presentEdit && (
         <ClipEditor match={match} edit={presentEdit} startPresenting onClose={() => router.replace(`/partido?id=${encodeURIComponent(match.match_id)}`, { scroll: false })} />
       )}
@@ -887,4 +887,12 @@ export default function Page() {
       <MatchPage />
     </Suspense>
   );
+}
+
+// The sidebar ticks the finished steps of the mode from the state computed here.
+function StepsPublisher({ matchId, steps }: { matchId: string; steps: Parameters<typeof publishSteps>[1] }) {
+  useEffect(() => {
+    publishSteps(matchId, steps);
+  });
+  return null;
 }
