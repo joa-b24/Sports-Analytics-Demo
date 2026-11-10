@@ -487,3 +487,26 @@ export function territoryGrid(events: MatchEvent[], cols = 6, rows = 3): { cells
   for (const row of cells) for (const cell of row) cell.share = cell.own + cell.opp > 0 ? cell.own / (cell.own + cell.opp) : null;
   return { cells, placed, missing };
 }
+
+// Where a goal kick went, inferred: the goal kick itself only says where it started, so its landing is taken from the next
+// tagged event with a position (a duel, a recovery, a loss, an entry...) soon after it in the same video. A short kick gets
+// less time than a long one (the next thing far away is not where the short one went). An estimate, drawn as such.
+export const GOAL_KICK_WINDOW_S = { short: 5, long: 10, unknown: 8 } as const;
+const NOT_A_LANDING: readonly MatchEvent["type"][] = ["goal_kick", "substitution", "other", "offside"];
+export function goalKickLanding(events: MatchEvent[]): Map<string, [number, number]> {
+  const sorted = [...events].sort((a, b) => a.t_video - b.t_video);
+  const out = new Map<string, [number, number]>();
+  sorted.forEach((e, i) => {
+    if (e.type !== "goal_kick") return;
+    const window = e.detail === "short" ? GOAL_KICK_WINDOW_S.short : e.detail === "long" ? GOAL_KICK_WINDOW_S.long : GOAL_KICK_WINDOW_S.unknown;
+    for (let j = i + 1; j < sorted.length; j++) {
+      const n = sorted[j];
+      if ((n.video_id ?? "v1") !== (e.video_id ?? "v1")) continue;
+      if (n.t_video - e.t_video > window) break;
+      if (NOT_A_LANDING.includes(n.type) || n.x === null || n.y === null || n.x === undefined || n.y === undefined) continue;
+      out.set(e.event_id, [n.x, n.y]);
+      break;
+    }
+  });
+  return out;
+}

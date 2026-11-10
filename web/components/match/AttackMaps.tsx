@@ -61,12 +61,15 @@ export function OutcomeMap({
   styles,
   unknown = "sin resultado",
   onPick,
+  inferred,
 }: {
   events: MatchEvent[];
   team: Side;
   styles: Record<string, OutcomeStyle>;
   unknown?: string;
   onPick?: (e: MatchEvent) => void;
+  // Where an event without an end position probably went (event_id -> x, y): drawn as a dashed arrow, as an estimate.
+  inferred?: Map<string, [number, number]>;
 }) {
   const turn = (x: number, y: number): [number, number] => (team === "opp" ? [PITCH.length - x, PITCH.width - y] : [x, y]);
   const keys = Object.keys(styles);
@@ -112,17 +115,19 @@ export function OutcomeMap({
           const [x, y] = turn(e.x as number, e.y as number);
           const c = tone(e);
           const title = `${EVENT_LABELS[e.type]} · ${fmtT(e.t_video)}${e.outcome && styles[e.outcome] ? ` · ${styles[e.outcome].label}` : ""}${onPick ? " · clic para ver el video" : ""}`;
-          if (e.x_end !== null && e.x_end !== undefined && e.y_end !== null && e.y_end !== undefined) {
-            const [x2, y2] = turn(e.x_end, e.y_end);
+          const guess = inferred?.get(e.event_id);
+          const hasEnd = e.x_end !== null && e.x_end !== undefined && e.y_end !== null && e.y_end !== undefined;
+          if (hasEnd || guess) {
+            const [x2, y2] = hasEnd ? turn(e.x_end as number, e.y_end as number) : turn((guess as [number, number])[0], (guess as [number, number])[1]);
             const ang = Math.atan2(y2 - y, x2 - x);
             const h = 2.2;
             return (
               <g key={e.event_id} {...pick(e)}>
                 <line x1={x} y1={y} x2={x2} y2={y2} stroke="transparent" strokeWidth={3} />
-                <line x1={x} y1={y} x2={x2} y2={y2} stroke={c} strokeWidth={0.5} strokeLinecap="round" opacity={0.85} />
+                <line x1={x} y1={y} x2={x2} y2={y2} stroke={c} strokeWidth={0.5} strokeLinecap="round" strokeDasharray={hasEnd ? undefined : "1.6 1.4"} opacity={hasEnd ? 0.85 : 0.7} />
                 <polygon points={`${x2},${y2} ${x2 - h * Math.cos(ang - 0.4)},${y2 - h * Math.sin(ang - 0.4)} ${x2 - h * Math.cos(ang + 0.4)},${y2 - h * Math.sin(ang + 0.4)}`} fill={c} />
                 <circle cx={x} cy={y} r={0.9} fill={c} />
-                <title>{title}</title>
+                <title>{hasEnd ? title : `${title} · destino inferido`}</title>
               </g>
             );
           }

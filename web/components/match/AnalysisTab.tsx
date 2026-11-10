@@ -10,7 +10,7 @@ import { Select } from "@/components/Select";
 import { useHeaderRightSlot, useHeaderSlot } from "@/lib/stepBus";
 import { useFixedParts } from "@/lib/fixed";
 import { trackedPasses } from "@/lib/passSources";
-import { BinChart, CompareBars, EventTimeline, FigureList, MomentumChart, PartsDuo, ScoreStrip, ShotMap, ZoneMap, type PartsRow } from "@/components/charts";
+import { BinChart, EventTimeline, FigureList, MirrorBars, MomentumChart, PartsDuo, ScoreStrip, ShotMap, ZoneMap, type PartsRow } from "@/components/charts";
 import { GoalsList } from "@/components/match/GoalsList";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
 import { PassesCards } from "@/components/match/PassesCards";
@@ -28,6 +28,7 @@ import {
   SHOT_WINDOW_S,
   boxEntries,
   firstPass,
+  goalKickLanding,
   isCrossLike,
   momentumCurve,
   playTime,
@@ -79,7 +80,6 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const [period, setPeriod] = useState<Period>(0);
   const [range, setRange] = useState<MinuteRange>(null);
   const [binMin, setBinMin] = useState<5 | 10>(5);
-  const [binMeasure, setBinMeasure] = useState<BinMeasure>("shots");
   const [counterTeam, setCounterTeam] = useState<Side>("own");
   const [detailTeam, setDetailTeam] = useState<Side>("own");
   const shotsPlayer = useMomentPlayer(match);
@@ -260,7 +260,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       </Reveal>
 
       <Section title="Cómo se jugó" note="quién creó más peligro y con qué eficacia">
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="grid gap-5 md:grid-cols-[minmax(0,3fr)_minmax(15rem,2fr)]">
           <Panel title="Momentum" note="quién crea más peligro, y cuánto dura">
             <MomentumChart curve={mom} aLabel={A} bLabel={B} />
             <p className="mt-2 text-xs text-pretty text-faint">
@@ -300,26 +300,24 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
                 : "minutos de video desde el primer evento: marca los tramos para contar minutos de juego"
             }
           >
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              <div className="seg">
-                {([5, 10] as const).map((m) => (
-                  <button key={m} type="button" aria-pressed={binMin === m} onClick={() => setBinMin(m)} className="seg-opt">
-                    Cada {m} min
-                  </button>
-                ))}
-              </div>
-              <Select
-                variant="field"
-                label="Qué se cuenta"
-                value={binMeasure}
-                onChange={(v) => v && setBinMeasure(v)}
-                options={Object.entries(BIN_MEASURES).map(([k, label]) => ({ value: k as BinMeasure, label }))}
-              />
+            <div className="mb-4 seg w-fit">
+              {([5, 10] as const).map((m) => (
+                <button key={m} type="button" aria-pressed={binMin === m} onClick={() => setBinMin(m)} className="seg-opt">
+                  Cada {m} min
+                </button>
+              ))}
             </div>
-            <BinChart key={`${binMin}-${binMeasure}`} bins={bins.bins.map((x) => ({ label: x.label, a: x.own[binMeasure], b: x.opp[binMeasure] }))} aLabel={A} bLabel={B} />
+            <div className="space-y-6">
+              {(Object.keys(BIN_MEASURES) as BinMeasure[]).map((k) => (
+                <div key={k}>
+                  <div className="eyebrow mb-1.5">{BIN_MEASURES[k]}</div>
+                  <BinChart key={`${binMin}-${k}`} bins={bins.bins.map((x) => ({ label: x.label, a: x.own[k], b: x.opp[k] }))} aLabel={A} bLabel={B} />
+                </div>
+              ))}
+            </div>
           </Panel>
           <Panel title="Todos los eventos por tipo" note="lo etiquetado, por equipo" delay={80}>
-            <CompareBars aLabel={A} bLabel={B} rows={EVENT_TYPES.map((t) => ({ label: EVENT_LABELS[t], a: a[t], b: b[t] }))} />
+            <MirrorBars aLabel={A} bLabel={B} rows={EVENT_TYPES.filter((t) => a[t] + b[t] > 0).map((t) => ({ label: EVENT_LABELS[t], a: a[t], b: b[t] }))} />
           </Panel>
         </div>
         <div className="mt-5">
@@ -381,9 +379,9 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
           <Panel title="Entradas al último tercio" note="por dónde llegan">
             <EntryMap events={evs.filter((e) => e.team === detailTeam && e.type === "final_third_entry")} team={detailTeam} />
           </Panel>
-          <Panel title="Saques de meta" note="desde dónde y si la conservan">
-            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && e.type === "goal_kick")} team={detailTeam} styles={GOAL_KICK_STYLES} />
-            <p className="mt-2 mb-0 text-[11px] text-faint">El saque de meta marca dónde sale; a dónde llega aún no se anota.</p>
+          <Panel title="Saques de meta" note="de dónde a dónde (inferido) y si la conservan">
+            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && e.type === "goal_kick")} team={detailTeam} styles={GOAL_KICK_STYLES} inferred={goalKickLanding(evs)} />
+            <p className="mt-2 mb-0 text-[11px] text-faint">La línea punteada es el destino inferido: el siguiente evento con posición poco después del saque (5 s si es corto, 10 s si es largo). Es una estimación.</p>
           </Panel>
           <Panel title="Centros" note="de dónde a dónde, y cómo acaban">
             <OutcomeMap events={evs.filter((e) => e.team === detailTeam && isCrossLike(e))} team={detailTeam} styles={SET_PIECE_STYLES} />

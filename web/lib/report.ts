@@ -68,6 +68,14 @@ export function normalizeReport(r: Partial<Report> | null | undefined): Report {
     print_touches: src.print_touches === true,
     focus: src.focus === "opp" ? "opp" : "own",
     ...(Array.isArray(src.sections) ? { sections: (src.sections as unknown[]).filter((x): x is string => typeof x === "string") } : {}),
+    ...(Array.isArray(src.extras)
+      ? {
+          extras: (src.extras as unknown[])
+            .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+            .filter((x) => typeof x.id === "string" && typeof x.image === "string")
+            .map((x) => ({ id: x.id as string, title: typeof x.title === "string" ? x.title : "Gráfico", image: x.image as string, ...(typeof x.source === "string" ? { source: x.source } : {}) })),
+        }
+      : {}),
     results_manual: results.filter((x): x is ManualResult => !!x && typeof x === "object").map((x) => ({
       date: typeof x.date === "string" ? x.date : "",
       opponent: typeof x.opponent === "string" ? x.opponent : "",

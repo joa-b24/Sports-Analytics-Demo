@@ -12,7 +12,7 @@ import { btn, btnPrimary, input } from "@/components/Shell";
 import { BIN_MEASURES, type BinMeasure, type Rate, type Tally } from "@/lib/analysis";
 import { useFixedParts } from "@/lib/fixed";
 import { passNetwork } from "@/lib/positions";
-import { NEED_TEXT, layoutOf, sectionDef, type SectionNeed } from "@/lib/reportSections";
+import { EXTRA_PREFIX, NEED_TEXT, layoutOf, sectionDef, withoutExtra, type SectionNeed } from "@/lib/reportSections";
 import { downloadText } from "@/lib/format";
 import { writeLocal } from "@/lib/local";
 import { possessionCover } from "@/lib/playgroundHealth";
@@ -102,7 +102,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
   const parts = fixed?.parts ?? [];
   const focus: Side = report.focus ?? "own";
   const F = focus === "own" ? A : B;
-  const layout = layoutOf(report.sections);
+  const layout = layoutOf(report.sections, report.extras);
 
   // What each section needs and whether this match has it. A section without its data hides itself.
   const src = data.cover.level.sources;
@@ -263,7 +263,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
         </button>
         {saved && <p className="w-full text-right text-xs text-faint">{saved}</p>}
       </div>
-      {editing && <SectionsEditor layout={layout} onChange={(l) => setReport({ sections: l })} missing={missing} onClose={() => setEditing(false)} />}
+      {editing && <SectionsEditor layout={layout} extras={report.extras ?? []} onChange={(l) => setReport({ sections: l })} onDropExtra={(id) => setReport(withoutExtra(report, id))} missing={missing} onClose={() => setEditing(false)} />}
 
       <Cover data={data} report={report} setReport={setReport} loading={!!match.folder && fixed === null} />
 
@@ -286,11 +286,22 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
         </div>
       </div>
 
-      {rest.map((id) => (
-        <Block key={id} title={sectionDef(id)?.title ?? id} note={sectionDef(id)?.both ? "Los dos equipos" : F} side={sectionDef(id)?.both ? null : focus} printHidden={printEmpty[id]}>
-          {section(id)}
-        </Block>
-      ))}
+      {rest.map((id) => {
+        // A chart added from the dashboard: its image as a section.
+        const extra = id.startsWith(EXTRA_PREFIX) ? (report.extras ?? []).find((x) => `${EXTRA_PREFIX}${x.id}` === id) : undefined;
+        if (extra)
+          return (
+            <Block key={id} title={extra.title} note="Del dashboard">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={extra.image} alt={extra.title} className="w-full rounded-md" />
+            </Block>
+          );
+        return (
+          <Block key={id} title={sectionDef(id)?.title ?? id} note={sectionDef(id)?.both ? "Los dos equipos" : F} side={sectionDef(id)?.both ? null : focus} printHidden={printEmpty[id]}>
+            {section(id)}
+          </Block>
+        );
+      })}
 
       {Object.keys(missing).length > 0 && (
         <p className="text-xs text-faint print:hidden">

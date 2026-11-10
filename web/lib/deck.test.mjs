@@ -38,3 +38,16 @@ test("blank and clip slides carry no chart; pieces are added, changed and droppe
   assert.equal(items[0].x, 0.5);
   assert.deepEqual(dropItem(items, "i1").map((x) => x.id), ["i2"]);
 });
+
+import { upsertChartSlide } from "./deck.ts";
+
+test("adding the same panel twice refreshes its slide instead of repeating it", () => {
+  let d = upsertChartSlide(undefined, "m1", { id: "a", title: "Mapa", note: "", image: "one", source: "mapa-de-tiros", at: 1 });
+  d = editSlide(d, "m1", "a", { note: "mirar el carril" });
+  d = upsertChartSlide(d, "m1", { id: "b", title: "Mapa", note: "", image: "two", source: "mapa-de-tiros", at: 2 });
+  d = upsertChartSlide(d, "m1", { id: "c", title: "Otro", note: "", image: "x", source: "otro", at: 3 });
+  const list = slidesOf(d, "m1");
+  assert.equal(list.length, 2);
+  assert.equal(list[0].image, "two");
+  assert.equal(list[0].note, "mirar el carril");
+});

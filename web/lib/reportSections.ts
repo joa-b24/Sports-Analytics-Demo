@@ -41,9 +41,25 @@ const byId = new Map(REPORT_SECTIONS.map((s) => [s.id, s]));
 export const sectionDef = (id: string) => byId.get(id);
 
 // The sections to show, in order: the analyst's layout (unknown ids dropped, locked ones never shown) or the default.
-export function layoutOf(sections: string[] | undefined): string[] {
-  const list = (sections ?? DEFAULT_SECTIONS).filter((id) => byId.has(id) && !byId.get(id)?.locked);
+// Sections «x:<id>» are charts added from the dashboard: they stay only while their extra exists.
+export const EXTRA_PREFIX = "x:";
+export function layoutOf(sections: string[] | undefined, extras: { id: string }[] = []): string[] {
+  const own = new Set(extras.map((x) => `${EXTRA_PREFIX}${x.id}`));
+  const list = (sections ?? [...DEFAULT_SECTIONS, ...own]).filter((id) => (byId.has(id) && !byId.get(id)?.locked) || own.has(id));
   return [...new Set(list)];
+}
+
+// The report with a chart added as a section at the end. The same source (the panel it came from) is refreshed, not repeated.
+export function withExtra<R extends { sections?: string[]; extras?: { id: string; title: string; image: string; source?: string }[] }>(report: R, extra: { id: string; title: string; image: string; source?: string }): R {
+  const extras = report.extras ?? [];
+  const same = extra.source ? extras.find((x) => x.source === extra.source) : undefined;
+  if (same) return { ...report, extras: extras.map((x) => (x === same ? { ...x, image: extra.image, title: extra.title } : x)) };
+  const layout = layoutOf(report.sections, extras);
+  return { ...report, extras: [...extras, extra], sections: [...layout, `${EXTRA_PREFIX}${extra.id}`] };
+}
+// The report without one of its added charts.
+export function withoutExtra<R extends { sections?: string[]; extras?: { id: string }[] }>(report: R, id: string): R {
+  return { ...report, extras: (report.extras ?? []).filter((x) => x.id !== id), sections: report.sections?.filter((s) => s !== `${EXTRA_PREFIX}${id}`) };
 }
 
 // Moves a section one place up (-1) or down (+1) in the layout; returns a new list.

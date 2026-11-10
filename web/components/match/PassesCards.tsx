@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Locked } from "@/components/Locked";
+import { Panel } from "@/components/match/Panel";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { Card } from "@/components/Shell";
 import { TrackingLoading } from "@/components/TrackingLoading";
@@ -79,7 +80,7 @@ export function PassesCards({
       ))}
     </div>
   );
-  if (!source && tracked.players.length === 0 && players.length === 0 && match.folder && fixed === null) {
+  if (match.folder && fixed === null) {
     return (
       <Card title="Red de pases y jugadoras">
         <TrackingLoading what="los pases" />
@@ -99,7 +100,7 @@ export function PassesCards({
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Card
+      <Panel
         title="Red de pases"
         note={
           source
@@ -150,88 +151,68 @@ export function PassesCards({
             El tracking tiene pases en {stretches.filter((r) => r.done).length} de {stretches.length} tramos de juego.
           </p>
         )}
-      </Card>
+      </Panel>
 
-      <Card title="Por jugadora" note={`${name(team)} · cada grupo de columnas dice su fuente`}>
+      <Panel title="Tabla por jugadora" note={name(team)}>
         {players.length === 0 && !has.tracking ? (
           <p className="text-sm text-muted">Sin pases ni eventos con jugadora todavía.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table-nocturne w-full text-left text-xs">
+          <div className="overflow-x-auto rounded-md shadow-[0_0_0_1px_var(--color-line-soft)]">
+            <table className="w-full min-w-max border-collapse text-left text-xs">
               <thead>
-                <tr className="text-faint">
-                  <th />
-                  {showTracked && (
-                    <th colSpan={4} className="pb-0.5 text-center font-normal">
-                      <span className="tag">Tracking</span>
-                    </th>
-                  )}
-                  {handStats.length > 0 && (
-                    <th colSpan={3} className="pb-0.5 text-center font-normal">
-                      <span className="tag">A mano</span>
-                    </th>
-                  )}
-                  <th colSpan={PER_PLAYER.length} className="pb-0.5 text-center font-normal">
-                    <span className="tag">Eventos etiquetados</span>
-                  </th>
-                  <th />
-                </tr>
-                <tr>
-                  <th className="pb-1">Jugadora</th>
+                <tr className="bg-bg/50 text-[11px] text-faint">
+                  <th className="sticky left-0 bg-bg/80 px-3 py-2 font-medium">Jugadora</th>
                   {showTracked && (
                     <>
-                      <th className="pb-1 text-right">Pases</th>
-                      <th className="pb-1 text-right">% compl.</th>
-                      <th className="pb-1 text-right">Recibidos</th>
-                      <th className="pb-1 text-right">Toques</th>
-                    </>
-                  )}
-                  {handStats.length > 0 && (
-                    <>
-                      <th className="pb-1 text-right">Pases</th>
-                      <th className="pb-1 text-right">% compl.</th>
-                      <th className="pb-1 text-right">Recibidos</th>
+                      <th className="px-2 py-2 text-right font-medium">Pases</th>
+                      <th className="px-2 py-2 font-medium">Completados</th>
+                      <th className="px-2 py-2 text-right font-medium">Recibidos</th>
+                      <th className="px-2 py-2 text-right font-medium">Toques</th>
                     </>
                   )}
                   {PER_PLAYER.map((t) => (
-                    <th key={t} className="pb-1 text-right">
+                    <th key={t} className="px-2 py-2 text-right font-medium">
                       {EVENT_LABELS[t]}
                     </th>
                   ))}
-                  <th className="pb-1 pl-3">Con quién más</th>
+                  <th className="px-3 py-2 font-medium">Con quién más</th>
                 </tr>
               </thead>
               <tbody>
                 {players.map((p) => {
                   const tr = trackedBy.get(p);
-                  const hd = handBy.get(p);
+                  const share = tr && tr.attempted > 0 ? Math.round((100 * tr.completed) / tr.attempted) : null;
                   return (
-                    <tr key={p} className="border-t border-line-soft">
-                      <td className="py-1 whitespace-nowrap text-ink">
-                        <span className="tc mr-1.5 text-faint">{numberOf.get(p) ?? ""}</span>
+                    <tr key={p} className="border-t border-line-soft transition-colors odd:bg-bg/20 hover:bg-raised/60">
+                      <td className="sticky left-0 bg-surface px-3 py-1.5 whitespace-nowrap text-ink">
+                        <span className="tc mr-2 inline-block w-5 text-right text-faint">{numberOf.get(p) ?? ""}</span>
                         {p}
                       </td>
                       {showTracked && (
                         <>
-                          <td className="tc text-right">{tr?.attempted ?? "–"}</td>
-                          <td className="tc text-right">{tr ? pct(tr.completed, tr.attempted) : "–"}</td>
-                          <td className="tc text-right">{tr?.received ?? "–"}</td>
-                          <td className="tc text-right">{tr?.touches ?? "–"}</td>
-                        </>
-                      )}
-                      {handStats.length > 0 && (
-                        <>
-                          <td className="tc text-right">{hd?.attempted ?? "–"}</td>
-                          <td className="tc text-right">{hd ? pct(hd.completed, hd.attempted) : "–"}</td>
-                          <td className="tc text-right">{hd?.received ?? "–"}</td>
+                          <td className="tc px-2 text-right">{tr?.attempted ?? "–"}</td>
+                          <td className="px-2">
+                            {share === null ? (
+                              <span className="tc text-faint">–</span>
+                            ) : (
+                              <span className="flex items-center gap-2" title={`${tr?.completed} de ${tr?.attempted} pases completos`}>
+                                <span className="h-1.5 w-14 overflow-hidden rounded-full bg-line-soft">
+                                  <span className="block h-full rounded-full" style={{ width: `${share}%`, background: color }} />
+                                </span>
+                                <span className="tc w-9 text-right text-ink-2">{share} %</span>
+                              </span>
+                            )}
+                          </td>
+                          <td className="tc px-2 text-right">{tr?.received ?? "–"}</td>
+                          <td className="tc px-2 text-right">{tr?.touches ?? "–"}</td>
                         </>
                       )}
                       {PER_PLAYER.map((t) => (
-                        <td key={t} className="tc text-right">
-                          {evCount(p, t) || ""}
+                        <td key={t} className="tc px-2 text-right text-ink-2">
+                          {evCount(p, t) || <span className="text-line-strong">·</span>}
                         </td>
                       ))}
-                      <td className="whitespace-nowrap pl-3 text-muted">{partnersOf(p).slice(0, 2).map((x) => `${label(x.player_id)} (${x.count})`).join(", ")}</td>
+                      <td className="px-3 whitespace-nowrap text-muted">{partnersOf(p).slice(0, 2).map((x) => `${label(x.player_id)} (${x.count})`).join(", ")}</td>
                     </tr>
                   );
                 })}
@@ -240,17 +221,12 @@ export function PassesCards({
           </div>
         )}
         {has.tracking && (
-          <p className="mt-2 text-xs text-pretty text-ink-2">
+          <p className="mt-3 mb-0 text-xs text-pretty text-ink-2">
             Equipo, del tracking: {tracked.completed} pases completos y {tracked.cut} cortados
             {tracked.approx > 0 && ` (aproximado: ${tracked.approx} sin nombre en la mesa de corrección, contados a nivel de equipo)`}.
           </p>
         )}
-        <p className="mt-2 text-[11px] text-pretty text-faint">
-          Del tracking: «pases» son los intentos de la jugadora (completos más cortados) y cuentan toques del balón seguido separados por
-          al menos 0,5 s; un cambio de fragmento de la misma jugadora no es un pase. «A mano» son pases etiquetados antes de quitar esa pasada.
-          Carga física: la referencia es la carga por RPE (Entrenamientos); la distancia medida en video no sirve para comparar jugadoras.
-        </p>
-      </Card>
+      </Panel>
     </div>
   );
 }

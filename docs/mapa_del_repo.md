@@ -417,6 +417,7 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 ### 5.11 Dashboard y presentación (2026-11-10)
 - Dashboard (`components/match/AnalysisTab.tsx`): cuatro secciones (General, Ataque, Defensa, Rendimiento individual) con sus pestañas y el filtro del partido en la barra superior (`AnalysisFilter.tsx`: tiempo o rango de minutos de juego). Ataque y Defensa abren con un mapa y «La cifra» (`FigureList` en `charts.tsx`); el resto va plegado (`Fold.tsx`). Momentum: `momentumCurve` en `lib/analysis.ts` (propia; referencia en el README). Los paneles que dependen del tracking muestran `TrackingLoading` mientras se lee la carpeta.
 - Presentación (`DeckView.tsx`): diapositivas de gráfico, en blanco o de clip (reproduce el MP4 exportado de `matches/<id>/clips/`), con texto, cuadros y flechas (`SlideEditor.tsx`, `SlideCanvas.tsx`, modelo en `lib/deck.ts`). En vivo: D marcador, L puntero, C borra, V deja de dibujar (lo dibujado no se guarda).
+- Cada panel del dashboard (`Panel.tsx`) guarda imagen, y se manda a la presentación o al informe; mandarlo otra vez actualiza su diapositiva o sección (`source` = id del panel). Los gráficos del informe viven en `Report.extras` y sus ids `x:<id>` en `Report.sections` (`lib/reportSections.ts`). El destino de un saque de meta se infiere del siguiente evento con posición (`goalKickLanding` en `lib/analysis.ts`).
 - `docs/propuesta_etiquetas_fuerzas_basicas.md`: cruce de las etiquetas de fuerzas básicas con el catálogo de eventos (propuesta, sin adoptar).
 
 ## 6. El paquete Python (`src/sportsan/`)

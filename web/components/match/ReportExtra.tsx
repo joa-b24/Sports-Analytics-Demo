@@ -235,7 +235,7 @@ export function PhysicalSection({ parts, side, team }: { parts: Oriented[]; side
 }
 
 // The analyst's layout: which sections, in what order. Locked ones stay listed with their reason.
-export function SectionsEditor({ layout, onChange, missing, onClose }: { layout: string[]; onChange: (l: string[]) => void; missing: Record<string, string>; onClose: () => void }) {
+export function SectionsEditor({ layout, extras, onChange, onDropExtra, missing, onClose }: { layout: string[]; extras: { id: string; title: string }[]; onChange: (l: string[]) => void; onDropExtra: (id: string) => void; missing: Record<string, string>; onClose: () => void }) {
   const shown = layout;
   const rest = REPORT_SECTIONS.filter((s) => !shown.includes(s.id));
   return (
@@ -249,19 +249,21 @@ export function SectionsEditor({ layout, onChange, missing, onClose }: { layout:
       <ol className="space-y-1">
         {shown.map((id, i) => {
           const d = REPORT_SECTIONS.find((s) => s.id === id);
-          if (!d) return null;
+          const extra = id.startsWith("x:") ? extras.find((x) => `x:${x.id}` === id) : undefined;
+          if (!d && !extra) return null;
           return (
             <li key={id} className="flex items-center gap-2 rounded-md bg-surface px-3 py-1.5 text-sm">
-              <span className="flex-1 text-ink">{d.title}</span>
-              {missing[id] && <span className="text-xs text-faint">{missing[id]}</span>}
-              {d.both && <span className="tag">compara</span>}
+              <span className="flex-1 text-ink">{d?.title ?? extra?.title}</span>
+              {extra && <span className="tag">del dashboard</span>}
+              {d && missing[id] && <span className="text-xs text-faint">{missing[id]}</span>}
+              {d?.both && <span className="tag">compara</span>}
               <button type="button" className="btn btn-ghost !p-1" aria-label="Subir" disabled={i === 0} onClick={() => onChange(moveSection(layout, id, -1))}>
                 <ArrowUp size={14} />
               </button>
               <button type="button" className="btn btn-ghost !p-1" aria-label="Bajar" disabled={i === shown.length - 1} onClick={() => onChange(moveSection(layout, id, 1))}>
                 <ArrowDown size={14} />
               </button>
-              <button type="button" className="btn btn-ghost !p-1" aria-label="Quitar del informe" onClick={() => onChange(toggleSection(layout, id))}>
+              <button type="button" className="btn btn-ghost !p-1" aria-label="Quitar del informe" title={extra ? "Quitar este gráfico del informe" : "Ocultar del informe"} onClick={() => (extra ? onDropExtra(extra.id) : onChange(toggleSection(layout, id)))}>
                 <EyeSlash size={14} />
               </button>
             </li>

@@ -41,6 +41,8 @@ export interface Slide {
   clip?: string;
   // Text, boxes and arrows over the slide.
   items?: SlideItem[];
+  // The panel of the dashboard it came from: adding the same panel again refreshes this slide instead of repeating it.
+  source?: string;
   at: number; // ms
 }
 export interface Deck {
@@ -83,3 +85,11 @@ export const upsertItem = (items: SlideItem[] | undefined, item: SlideItem): Sli
   return list.some((x) => x.id === item.id) ? list.map((x) => (x.id === item.id ? item : x)) : [...list, item];
 };
 export const dropItem = (items: SlideItem[] | undefined, id: string): SlideItem[] => (items ?? []).filter((x) => x.id !== id);
+
+// Adds a chart slide, or, if a slide of the same source exists, refreshes its image (its title, note and pieces stay).
+export function upsertChartSlide(decks: Deck[] | undefined, match_id: string, slide: Slide): Deck[] {
+  return withSlides(decks, match_id, (list) => {
+    const same = slide.source ? list.find((x) => x.source === slide.source) : undefined;
+    return same ? list.map((x) => (x === same ? { ...x, image: slide.image, at: slide.at } : x)) : [...list, slide];
+  });
+}

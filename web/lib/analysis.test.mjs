@@ -237,3 +237,22 @@ test("territoryGrid: each cell counts the actions of both teams and tells whose 
   assert.equal(g.cells[2][0].share, 0);
   assert.equal(g.cells[1][2].share, null);
 });
+
+import { goalKickLanding } from "./analysis.ts";
+
+test("goalKickLanding: the next positioned event soon after, within a window that depends on the kick", () => {
+  const ev = (id, t, type, x, y, extra = {}) => ({ event_id: id, t_video: t, type, x, y, team: "own", ...extra });
+  const events = [
+    ev("k1", 10, "goal_kick", 5, 30, { detail: "long" }),
+    ev("d1", 14, "duel", 70, 20),
+    ev("k2", 100, "goal_kick", 5, 30, { detail: "short" }),
+    ev("r1", 108, "recovery", 40, 30),
+    ev("k3", 200, "goal_kick", 5, 30),
+    ev("s1", 202, "substitution", null, null),
+    ev("e1", 205, "final_third_entry", 80, 10),
+  ];
+  const m = goalKickLanding(events);
+  assert.deepEqual(m.get("k1"), [70, 20]);
+  assert.equal(m.has("k2"), false, "a short kick does not take what happens 8 s later");
+  assert.deepEqual(m.get("k3"), [80, 10]);
+});

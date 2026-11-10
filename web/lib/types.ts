@@ -147,6 +147,15 @@ export interface Report {
   // The sections of the report, in order, by id (REPORT_SECTIONS in lib/reportSections.ts). Absent: the default
   // layout. A section left out is not shown; a section without data hides itself anyway.
   sections?: string[];
+  // Charts of the dashboard added to the report as a section (id «x:<id>» in `sections`): the image as the analyst saw it.
+  // `source` is the id of the panel they came from, so adding the same panel again refreshes it instead of repeating it.
+  extras?: ReportExtraSection[];
+}
+export interface ReportExtraSection {
+  id: string;
+  title: string;
+  image: string;
+  source?: string;
 }
 
 export const EMPTY_REPORT: Report = {

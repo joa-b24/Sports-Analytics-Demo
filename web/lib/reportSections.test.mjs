@@ -18,3 +18,19 @@ test("move and toggle", () => {
   assert.deepEqual(toggleSection(["a", "b"], "a"), ["b"]);
   assert.deepEqual(toggleSection(["b"], "a"), ["b", "a"]);
 });
+
+import { layoutOf as layoutOfX, withExtra, withoutExtra } from "./reportSections.ts";
+
+test("a chart added to the report is a section at the end; the same panel refreshes it; it can be removed", () => {
+  let r = withExtra({}, { id: "e1", title: "Mapa de tiros", image: "one", source: "mapa-de-tiros" });
+  assert.equal(r.sections.at(-1), "x:e1");
+  assert.ok(layoutOfX(r.sections, r.extras).includes("x:e1"));
+  r = withExtra(r, { id: "e2", title: "Mapa de tiros", image: "two", source: "mapa-de-tiros" });
+  assert.equal(r.extras.length, 1);
+  assert.equal(r.extras[0].image, "two");
+  assert.equal(r.sections.filter((s) => s === "x:e1").length, 1);
+  r = withoutExtra(r, "e1");
+  assert.equal(r.extras.length, 0);
+  assert.ok(!r.sections.includes("x:e1"));
+  assert.ok(!layoutOfX(["x:gone"], []).includes("x:gone"), "an extra that does not exist is dropped");
+});

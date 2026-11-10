@@ -43,7 +43,7 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
   const { options, label, placeholder = "—", variant = "chip", className = "", clearable = false, display, align = "left" } = props;
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
-  const [pos, setPos] = useState<{ left: number; top: number; minW: number; up: boolean } | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; minW: number; up: boolean; right: boolean } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   // A long list (more than SEARCH_FROM options) gets a search box at the top that filters it as you type.
@@ -61,7 +61,9 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
     const up = r.bottom + 280 > window.innerHeight && r.top > 280;
-    setPos({ left: align === "right" ? r.right : r.left, top: up ? r.top - 4 : r.bottom + 4, minW: r.width, up });
+    // A list that would run past the right edge of the window opens towards the left, from the right edge of the button.
+    const right = align === "right" || (r.left + Math.max(260, r.width) > window.innerWidth - 8 && r.right - Math.max(260, r.width) >= 8);
+    setPos({ left: right ? r.right : r.left, top: up ? r.top - 4 : r.bottom + 4, minW: r.width, up, right });
   };
   useLayoutEffect(() => {
     if (open) place();
@@ -164,11 +166,12 @@ export function Select<T extends string>(props: Single<T> | Multi<T>) {
             onKeyDown={onKey}
             className="enter fixed z-[70] max-h-80 overflow-y-auto rounded-lg bg-raised p-1 text-sm shadow-[0_0_0_1px_var(--color-line-strong),0_24px_48px_-16px_rgba(0,0,0,.7)]"
             style={{
-              left: align === "right" ? undefined : pos.left,
-              right: align === "right" ? window.innerWidth - pos.left : undefined,
+              left: pos.right ? undefined : pos.left,
+              right: pos.right ? window.innerWidth - pos.left : undefined,
               top: pos.up ? undefined : pos.top,
               bottom: pos.up ? window.innerHeight - pos.top : undefined,
               minWidth: Math.max(160, pos.minW),
+              maxWidth: "calc(100vw - 16px)",
             }}
           >
             {searchable && (

@@ -1,12 +1,14 @@
 "use client";
 
-import { ArrowsInSimple, ArrowsOutSimple, DownloadSimple, PresentationChart } from "@phosphor-icons/react";
+import { DownloadSimple, FileText, PresentationChart } from "@phosphor-icons/react";
 import { createContext, useContext, useRef, useState } from "react";
 import { Card } from "@/components/Shell";
-import { addSlide } from "@/lib/deck";
-import { mutate, setPref, uid, usePref } from "@/lib/store";
+import { slidesOf, upsertChartSlide } from "@/lib/deck";
+import { normalizeReport } from "@/lib/report";
+import { withExtra } from "@/lib/reportSections";
+import { mutate, uid, useStore } from "@/lib/store";
 
-// The match the panels belong to: «A la presentación» needs it to know whose deck gets the slide.
+// The match the panels belong to: «A la presentación» and «Al informe» need it to know whose deck and report get the chart.
 export const PanelMatch = createContext<string | null>(null);
 
 const slug = (t: string) =>
@@ -18,45 +20,51 @@ const slug = (t: string) =>
     .replace(/^-|-$/g, "")
     .slice(0, 60) || "grafico";
 
-// A card of the analysis dashboard: the same card, plus two tools the analyst uses before showing it — make it as wide as
-// the row (remembered per card in this browser) and save it as an image (PNG, with the colours of the app).
-export function Panel({ title, note, children, className = "", delay = 0, defaultWide = false }: { title: string; note?: React.ReactNode; children: React.ReactNode; className?: string; delay?: number; defaultWide?: boolean }) {
+type Sent = "deck" | "report" | null;
+
+// The three tools of a chart: save it as an image (PNG, with the colours of the app), put it in the presentation and put it
+// in the report. Sending the same chart again refreshes the slide (or section) it already made, never repeats it, and the
+// button says it is already there.
+export function Panel({ title, note, children, className = "", delay = 0 }: { title: string; note?: React.ReactNode; children: React.ReactNode; className?: string; delay?: number; defaultWide?: boolean }) {
   const id = slug(title);
-  const wide = usePref(`analysis:size:${id}`, defaultWide ? "wide" : "normal") === "wide";
   const box = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
-  const [added, setAdded] = useState(false);
+  const [flash, setFlash] = useState<Sent>(null);
   const matchId = useContext(PanelMatch);
+  const state = useStore();
+  const inDeck = !!matchId && slidesOf(state.decks, matchId).some((s) => s.source === id);
+  const inReport = !!matchId && !!state.matches.find((m) => m.match_id === matchId)?.report?.extras?.some((x) => x.source === id);
 
   const draw = async () => {
     const { toPng } = await import("html-to-image");
     const bg = getComputedStyle(document.body).backgroundColor;
     return toPng(box.current as HTMLElement, { pixelRatio: 2, backgroundColor: bg, filter: (n) => !(n instanceof HTMLElement && n.dataset.noCapture !== undefined) });
   };
-  const save = async () => {
+  const run = async (what: "save" | "deck" | "report") => {
     if (!box.current || busy) return;
-    setBusy(true);
-    try {
-      const a = document.createElement("a");
-      a.href = await draw();
-      a.download = `${id}.png`;
-      a.click();
-    } catch {
-      // A card that cannot be drawn (blocked fonts, huge SVG): nothing is saved and the button comes back.
-    } finally {
-      setBusy(false);
-    }
-  };
-  const toDeck = async () => {
-    if (!box.current || busy || !matchId) return;
+    if ((what === "deck" || what === "report") && !matchId) return;
     setBusy(true);
     try {
       const image = await draw();
-      mutate((st) => ({ ...st, decks: addSlide(st.decks, matchId, { id: uid("sl"), title, note: "", image, at: Date.now() }) }));
-      setAdded(true);
-      setTimeout(() => setAdded(false), 2000);
+      if (what === "save") {
+        const a = document.createElement("a");
+        a.href = image;
+        a.download = `${id}.png`;
+        a.click();
+        return;
+      }
+      if (what === "deck") {
+        mutate((st) => ({ ...st, decks: upsertChartSlide(st.decks, matchId as string, { id: uid("sl"), title, note: "", image, source: id, at: Date.now() }) }));
+      } else {
+        mutate((st) => ({
+          ...st,
+          matches: st.matches.map((m) => (m.match_id === matchId ? { ...m, report: withExtra(normalizeReport(m.report), { id: uid("x"), title, image, source: id }) } : m)),
+        }));
+      }
+      setFlash(what);
+      setTimeout(() => setFlash(null), 1800);
     } catch {
-      // See save().
+      // A card that cannot be drawn (blocked fonts, huge SVG): nothing is saved and the button comes back.
     } finally {
       setBusy(false);
     }
@@ -65,22 +73,38 @@ export function Panel({ title, note, children, className = "", delay = 0, defaul
   const tools = (
     <span data-no-capture className="inline-flex items-center gap-1 align-middle">
       {note && <span className="mr-1">{note}</span>}
-      <button type="button" className="btn btn-ghost !p-1" aria-label={wide ? "Tamaño normal" : "Ocupar todo el ancho"} title={wide ? "Tamaño normal" : "Ocupar todo el ancho"} onClick={() => setPref(`analysis:size:${id}`, wide ? "normal" : "wide")}>
-        {wide ? <ArrowsInSimple size={14} /> : <ArrowsOutSimple size={14} />}
-      </button>
       {matchId && (
-        <button type="button" className="btn btn-ghost !p-1" aria-label="Añadir a la presentación" title={added ? "Añadida a la presentación" : "Añadir a la presentación"} disabled={busy} onClick={() => void toDeck()}>
-          <PresentationChart size={14} weight={added ? "fill" : "regular"} />
+        <button
+          type="button"
+          className={`btn btn-ghost !p-1 ${inDeck ? "text-ok" : ""}`}
+          aria-label={inDeck ? "Ya está en la presentación: actualizar" : "Añadir a la presentación"}
+          title={flash === "deck" ? "Listo: en la presentación" : inDeck ? "Ya está en la presentación: clic para actualizar su imagen" : "Añadir a la presentación"}
+          disabled={busy}
+          onClick={() => void run("deck")}
+        >
+          <PresentationChart size={14} weight={inDeck ? "fill" : "regular"} />
         </button>
       )}
-      <button type="button" className="btn btn-ghost !p-1" aria-label="Guardar como imagen" title="Guardar como imagen" disabled={busy} onClick={() => void save()}>
+      {matchId && (
+        <button
+          type="button"
+          className={`btn btn-ghost !p-1 ${inReport ? "text-ok" : ""}`}
+          aria-label={inReport ? "Ya está en el informe: actualizar" : "Añadir al informe"}
+          title={flash === "report" ? "Listo: en el informe" : inReport ? "Ya está en el informe: clic para actualizar su imagen" : "Añadir al informe como sección"}
+          disabled={busy}
+          onClick={() => void run("report")}
+        >
+          <FileText size={14} weight={inReport ? "fill" : "regular"} />
+        </button>
+      )}
+      <button type="button" className="btn btn-ghost !p-1" aria-label="Guardar como imagen" title="Guardar como imagen" disabled={busy} onClick={() => void run("save")}>
         <DownloadSimple size={14} />
       </button>
     </span>
   );
 
   return (
-    <div ref={box} className={`min-w-0 ${wide ? "col-span-full" : ""} ${className}`}>
+    <div ref={box} className={`min-w-0 ${className}`}>
       <Card title={title} note={tools} delay={delay} className="h-full">
         {children}
       </Card>
