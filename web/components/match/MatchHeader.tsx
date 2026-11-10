@@ -1,7 +1,7 @@
 "use client";
 
 import { shootoutText } from "@/lib/shootout";
-import { FileText, Monitor, Path, PlayCircle, Scissors, SoccerBall, Strategy, Tag, Target, type Icon } from "@phosphor-icons/react";
+import { FileText, Monitor, Path, PlayCircle, PresentationChart, Scissors, SoccerBall, Strategy, Tag, Target, type Icon } from "@phosphor-icons/react";
 import { setHeaderSlot } from "@/lib/stepBus";
 import type { StepId, StepStatus } from "@/lib/steps";
 import type { Match, MatchEvent } from "@/lib/types";
@@ -36,13 +36,14 @@ export const MODES = [
     label: "Análisis",
     main: "analysis",
     steps: [
-      ["analysis", "Pantalla"],
+      ["analysis", "Dashboard"],
       ["report", "Informe"],
+      ["deck", "Presentación"],
     ],
   },
 ] as const;
 // One icon per step: in the bar of the match (green when the step is done) and in the match list (only the done ones).
-export const STEP_ICONS: Record<StepId, Icon> = {
+export const STEP_ICONS: Record<TabId, Icon> = {
   calibration: Target,
   segments: Scissors,
   tracking: Path,
@@ -52,6 +53,7 @@ export const STEP_ICONS: Record<StepId, Icon> = {
   board: Strategy,
   analysis: Monitor,
   report: FileText,
+  deck: PresentationChart,
 };
 
 export type ModeId = (typeof MODES)[number]["id"];

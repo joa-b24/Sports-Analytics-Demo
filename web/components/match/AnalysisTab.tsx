@@ -7,7 +7,6 @@ import { useMomentPlayer } from "@/components/match/MomentPlayer";
 import { PassesCards } from "@/components/match/PassesCards";
 import { PlayerProfile } from "@/components/match/PlayerProfile";
 import { PlayersCompare } from "@/components/match/PlayersCompare";
-import { DeckView } from "@/components/match/DeckView";
 import { Panel, PanelMatch } from "@/components/match/Panel";
 import { PositionsCards } from "@/components/match/PositionsCards";
 import { TeamShapeCard } from "@/components/match/TeamShape";
@@ -39,13 +38,12 @@ import { type Segment } from "@/lib/segments";
 import { countByType, shotsOf, zoneCounts } from "@/lib/stats";
 import { EVENT_DETAILS, EVENT_LABELS, EVENT_OUTCOMES, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
 
+// The sections of the dashboard, from the general reading to the individual one.
 const VIEWS = [
-  ["ataque", "Ataque y balón parado"],
-  ["defensa", "Transiciones y defensa"],
-  ["tiempo", "A lo largo del partido"],
-  ["jugadoras", "Jugadoras"],
-  ["posiciones", "Posiciones"],
-  ["presentacion", "Presentación"],
+  ["general", "General"],
+  ["ataque", "Ataque"],
+  ["defensa", "Defensa"],
+  ["individual", "Rendimiento individual"],
 ] as const;
 type ViewId = (typeof VIEWS)[number][0];
 
@@ -69,8 +67,8 @@ type Props = {
 };
 
 export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v1"], videoEvents, segmentsByVideo = {} }: Props) {
-  const viewPref = usePref("analysis:view", "ataque");
-  const view = (VIEWS.find(([id]) => id === viewPref)?.[0] ?? "ataque") as ViewId;
+  const viewPref = usePref("analysis:view", "general");
+  const view = (VIEWS.find(([id]) => id === viewPref)?.[0] ?? "general") as ViewId;
   const [zoneType, setZoneType] = useState<EventType>("recovery");
   const [zoneTeam, setZoneTeam] = useState<Side>("own");
   const [period, setPeriod] = useState<0 | 1 | 2>(0);
@@ -341,7 +339,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       )}
 
 
-      {view === "tiempo" && (
+      {view === "general" && (
         <>
       <Section title="A lo largo del partido">
         <div className="space-y-5">
@@ -389,7 +387,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         </>
       )}
 
-      {view === "jugadoras" && (
+      {view === "individual" && (
         <>
       <Section title="Ficha de jugadora" note="su partido: cifras, zonas, tiros y jugadas">
         <PlayerProfile match={match} events={evs} videoIds={videoIds} segmentsByVideo={segmentsByVideo} ownTimes={ownTimes} timeLabel={timeLabel} />
@@ -405,7 +403,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         </>
       )}
 
-      {view === "posiciones" && (
+      {view === "individual" && (
         <>
       <Section title="Con posiciones medidas" note="desde el tracking">
         <div className="mb-4">
@@ -415,7 +413,6 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       </Section>
         </>
       )}
-      {view === "presentacion" && <DeckView match={match} />}
     </div>
     </PanelMatch.Provider>
   );

@@ -29,12 +29,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { ClipEditor } from "@/components/clip/ClipEditor";
+import { TechModal } from "@/components/match/TechModal";
+import { DeckView } from "@/components/match/DeckView";
 import { AnalysisTab } from "@/components/match/AnalysisTab";
 import { PlaysTab } from "@/components/match/PlaysTab";
-import { ProcessesPanel } from "@/components/match/ProcessesPanel";
-import { TechPanel } from "@/components/match/TechPanel";
 import { MissingTag, VideoFilesBar } from "@/components/match/VideoDownload";
-import { Modal } from "@/components/Modal";
 import { techChanged } from "@/lib/tech";
 import { publishSteps, publishVideos } from "@/lib/stepBus";
 import { MODES, MatchHeader, isMode, mainOf, modeOf, type TabId } from "@/components/match/MatchHeader";
@@ -640,15 +639,19 @@ function MatchPage() {
         </Dropdown>
       </MatchHeader>
       <VideoFilesBar match={match} dl={videoDl} />
-      {procOpen && (
-        <Modal title="Procesos del partido" wide onClose={() => setProcOpen(false)}>
-          <ProcessesPanel match={match} />
-        </Modal>
-      )}
-      {techOpen && (
-        <Modal title="Detalles técnicos" wide onClose={() => setTechOpen(false)}>
-          <TechPanel match={match} />
-        </Modal>
+      {(techOpen || procOpen) && (
+        <TechModal
+          match={match}
+          section={techOpen ? "params" : "procesos"}
+          onSection={(x) => {
+            setTechOpen(x === "params");
+            setProcOpen(x === "procesos");
+          }}
+          onClose={() => {
+            setTechOpen(false);
+            setProcOpen(false);
+          }}
+        />
       )}
 
       {/* The video takes the room; the working panel keeps a fixed, narrower width (wider for the pitch animation). */}
@@ -805,6 +808,7 @@ function MatchPage() {
               }
             />
           )}
+          {tab === "deck" && <DeckView match={match} />}
           {tab === "report" && <ReportTab match={match} events={allEvents} plays={allPlays} segmentsByVideo={segmentsByVideo} />}
         </div>
       </div>

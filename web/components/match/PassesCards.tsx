@@ -37,7 +37,6 @@ export function PassesCards({
   const fixed = useFixedParts(match.folder, videoIds);
   const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
   const [team, setTeam] = useState<Side>("own");
-  const [pick, setPick] = useState<PassSource | null>(null);
   const hand = useMemo(() => all.filter((p) => p.match_id === match.match_id && p.team === team), [all, match.match_id, team]);
   const numberOf = new Map((match.kind === "own" ? roster : []).map((p) => [p.player_id, p.number]));
   const label = (id: string) => (numberOf.get(id) != null ? String(numberOf.get(id)) : id.replace(/^#/, ""));
@@ -49,7 +48,8 @@ export function PassesCards({
   const stretches = useMemo(() => passStretches(parts, segmentsByVideo), [parts, segmentsByVideo]);
 
   const has: Record<PassSource, boolean> = { tracking: tracked.completed + tracked.cut > 0, hand: hand.length > 0 };
-  const source: PassSource | null = pick && has[pick] ? pick : has.tracking ? "tracking" : has.hand ? "hand" : null;
+  // Passes are read from the tracking; hand-tagged ones only show for old matches that have nothing else (no toggle).
+  const source: PassSource | null = has.tracking ? "tracking" : has.hand ? "hand" : null;
   const color = team === "own" ? COLORS.own : COLORS.opp;
   const name = (s: Side) => (s === "own" ? match.focus_team : match.other_team);
   const net: Net | null = source === "tracking" ? trackedNetwork : source === "hand" ? handNet : null;
@@ -78,16 +78,6 @@ export function PassesCards({
       ))}
     </div>
   );
-  const sourceToggle = (
-    <div className="seg" role="group" aria-label="Fuente de los pases">
-      {(["tracking", "hand"] as const).map((s) => (
-        <button key={s} type="button" aria-pressed={source === s} disabled={!has[s]} onClick={() => setPick(s)} className="seg-opt" title={has[s] ? undefined : "Sin pases de esta fuente"}>
-          {PASS_SOURCE_LABEL[s]}
-        </button>
-      ))}
-    </div>
-  );
-
   if (!source && tracked.players.length === 0 && players.length === 0) {
     return (
       <Locked
@@ -111,7 +101,6 @@ export function PassesCards({
       >
         <div className="mb-3 flex flex-wrap items-center gap-2">
           {toggle}
-          {sourceToggle}
         </div>
         {!net || (net.nodes.length === 0 && source === "tracking") ? (
           <p className="text-sm text-pretty text-muted">
