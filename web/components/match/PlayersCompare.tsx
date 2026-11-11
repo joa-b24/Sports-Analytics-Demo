@@ -9,9 +9,9 @@ import { Card } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
 import { MAX_COMPARE, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
 import { heatmapSmooth, playerTouchPoints, type Oriented } from "@/lib/positions";
+import { RatingBadge } from "@/components/match/RatingBadge";
 import { rateAll } from "@/lib/rating";
 import { analysisParamsOf } from "@/lib/tech";
-import { RatingDetail } from "@/components/match/RatingBadge";
 import type { Segment } from "@/lib/segments";
 import { setPref, usePref, useStore } from "@/lib/store";
 import { PITCH, type Match, type MatchEvent } from "@/lib/types";
@@ -122,6 +122,7 @@ export function PlayersCompare({
           <span key={r.key} className="inline-flex items-center gap-2 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-sm text-ink">
             <span className="h-2.5 w-2.5 rounded-full" style={{ background: SLOTS[i] }} />
             {label(r)}
+            <RatingBadge rating={ratings.get(r.key)} mark={false} />
             <i className="h-3 w-1 rounded-full" style={{ background: r.team === "own" ? COLORS.own : COLORS.opp }} title={team(r.team)} />
             <button type="button" className="rounded-full p-1 text-faint hover:bg-raised hover:text-ink" aria-label={`Quitar a ${label(r)}`} onClick={() => setPicked(picked.filter((p) => p.key !== r.key))}>
               <X size={12} />
@@ -182,19 +183,6 @@ export function PlayersCompare({
             ) : (
               <p className="text-sm text-faint">Ninguna de las elegidas tiene posiciones con su nombre en el tracking corregido.</p>
             )}
-          </Card>
-          <Card title="Calificación" note={<span className="tag !px-1 !py-0 text-[9px] text-warn">en revisión</span>}>
-            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-              {picked.map((r, i) => (
-                <div key={r.key} className="min-w-0">
-                  <div className="mb-2 inline-flex items-center gap-2 text-sm text-ink">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: SLOTS[i] }} />
-                    {label(r)}
-                  </div>
-                  <RatingDetail rating={ratings.get(r.key)} />
-                </div>
-              ))}
-            </div>
           </Card>
           <Card title="Cifra por cifra" note={per10 ? "por 10 minutos en cuadro" : "totales del partido"}>
             <div className="mb-4 seg flex-wrap" role="group" aria-label="Tipo de datos que se comparan">

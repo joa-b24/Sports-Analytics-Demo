@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { CaretDown, CaretUp } from "@phosphor-icons/react";
 import { Locked } from "@/components/Locked";
+import { StatList } from "@/components/match/ReportExtra";
 import { usePlayersData } from "@/components/match/PlayersCompare";
 import { Panel } from "@/components/match/Panel";
 import { RatingBadge } from "@/components/match/RatingBadge";
@@ -80,6 +81,10 @@ export function PassesCards({
   ];
   const partnersOf = (p: string): PlayerPasses["partners"] => (source === "hand" ? handBy.get(p)?.partners : trackedBy.get(p)?.partners) ?? [];
   const showTracked = has.tracking && tracked.players.length > 0;
+  // The lists beside the network (as in the report): the five pairs with most passes between them and the five with most touches.
+  const nodeName = (key: string) => (source === "tracking" ? label(key) : (byKey.get(key)?.label ?? key));
+  const pairs = [...(net?.edges ?? [])].sort((x, y) => y.count - x.count).slice(0, 5);
+  const most = [...(net?.nodes ?? [])].sort((x, y) => y.touches - x.touches).slice(0, 5);
 
   // The columns: each one knows how to sort (a number, or text for the name). Short headers, the full name in the tooltip.
   type Col = { id: string; label: string; title?: string; flag?: string; left?: boolean; val: (p: string) => number | string };
@@ -155,33 +160,41 @@ export function PassesCards({
               : `No hay pases de ${name(team)} en ninguna de las dos fuentes.`}
           </p>
         ) : (
-          <>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_13rem]">
+            <div className="min-w-0">
             <Pitch>
-              {net.edges.map((e) => {
-                const a = byKey.get(e.a);
-                const b = byKey.get(e.b);
-                if (!a || !b) return null;
-                return (
-                  <line key={`${e.a}-${e.b}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={color} strokeWidth={0.3 + (2 * e.count) / maxEdge} opacity={0.35 + (0.55 * e.count) / maxEdge} strokeLinecap="round" />
-                );
-              })}
-              {net.nodes.map((n) => (
-                <g key={n.key} transform={`translate(${n.x} ${n.y})`}>
-                  <circle r={1.6 + Math.min(2.2, n.touches / 12)} fill={color} stroke="var(--color-bg)" strokeWidth={0.4} strokeDasharray={n.placed === "ring" ? "0.8 0.6" : undefined} />
-                  <text y={0.8} textAnchor="middle" fontSize={2.2} fontWeight={700} fill="var(--color-bg)" pointerEvents="none">
-                    {(source === "tracking" ? label(n.key) : n.label).slice(0, 3)}
-                  </text>
-                </g>
-              ))}
-            </Pitch>
-            <p className="mt-2 text-[11px] text-pretty text-faint">
-              Grosor: pases completos entre las dos (en los dos sentidos). Tamaño: toques.{" "}
-              {source === "tracking"
-                ? `Cada jugadora está en su posición media medida, con ${match.focus_team} atacando a la derecha.`
-                : `Cada jugadora está en la posición media de sus eventos etiquetados con posición, con ${match.focus_team} atacando a la derecha${net.nodes.some((n) => n.placed === "ring") ? "; las de borde punteado no tienen eventos con posición y van en círculo" : ""}.`}
-              {source === "tracking" && tracked.approx > 0 && ` ${tracked.approx} pase(s) sin nombre en un extremo no entran a la red (cifra aproximada).`}
-            </p>
-          </>
+                  {net.edges.map((e) => {
+                    const a = byKey.get(e.a);
+                    const b = byKey.get(e.b);
+                    if (!a || !b) return null;
+                    return (
+                      <line key={`${e.a}-${e.b}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={color} strokeWidth={0.3 + (2 * e.count) / maxEdge} opacity={0.35 + (0.55 * e.count) / maxEdge} strokeLinecap="round" />
+                    );
+                  })}
+                  {net.nodes.map((n) => (
+                    <g key={n.key} transform={`translate(${n.x} ${n.y})`}>
+                      <circle r={1.6 + Math.min(2.2, n.touches / 12)} fill={color} stroke="var(--color-bg)" strokeWidth={0.4} strokeDasharray={n.placed === "ring" ? "0.8 0.6" : undefined} />
+                      <text y={0.8} textAnchor="middle" fontSize={2.2} fontWeight={700} fill="var(--color-bg)" pointerEvents="none">
+                        {(source === "tracking" ? label(n.key) : n.label).slice(0, 3)}
+                      </text>
+                    </g>
+                  ))}
+                </Pitch>
+                <p className="mt-2 text-[11px] text-pretty text-faint">
+                  Grosor: pases completos entre las dos (en los dos sentidos). Tamaño: toques.{" "}
+                  {source === "tracking"
+                    ? `Cada jugadora está en su posición media medida, con ${match.focus_team} atacando a la derecha.`
+                    : `Cada jugadora está en la posición media de sus eventos etiquetados con posición, con ${match.focus_team} atacando a la derecha${net.nodes.some((n) => n.placed === "ring") ? "; las de borde punteado no tienen eventos con posición y van en círculo" : ""}.`}
+                  {source === "tracking" && tracked.approx > 0 && ` ${tracked.approx} pase(s) sin nombre en un extremo no entran a la red (cifra aproximada).`}
+                </p>
+            </div>
+            <div className="min-w-0">
+              <StatList title="Conexiones más usadas" items={pairs.map((e) => ({ label: `${nodeName(e.a)} – ${nodeName(e.b)}`, value: e.count }))} />
+              <div className="mt-4">
+                <StatList title="Más toques" items={most.map((n) => ({ label: nodeName(n.key), value: n.touches }))} />
+              </div>
+            </div>
+          </div>
         )}
         {stretches.length > 0 && (
           <p className="mt-2 text-[11px] text-faint">

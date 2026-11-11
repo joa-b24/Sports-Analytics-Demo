@@ -7,7 +7,7 @@ import { PlayerMap } from "@/components/match/PlayerMap";
 import { PlayerHeat, fmt, usePlayersData } from "@/components/match/PlayersCompare";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
 import { Panel } from "@/components/match/Panel";
-import { RatingBadge, RatingDetail } from "@/components/match/RatingBadge";
+import { RatingBadge } from "@/components/match/RatingBadge";
 import { COLORS } from "@/components/Pitch";
 import { Card } from "@/components/Shell";
 import { fmtT } from "@/lib/format";
@@ -98,10 +98,6 @@ export function PlayerProfile({
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
-        <Panel title="Calificación" note={<span className="tag !px-1 !py-0 text-[9px] text-warn">en revisión</span>}>
-          <RatingDetail rating={ratings.get(row.key)} onPick={(m) => moment.show({ video_id: m.video_id, t: m.t, label: m.label })} />
-        </Panel>
-
         <Panel title="Cifras individuales" note="del partido">
           <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
             {GROUPS.map((g) => {

@@ -54,3 +54,9 @@ Reglas de este bloque:
 - Una jugadora normal de su equipo saca **6** (antes 5); z = +2 es 10 y z = −2 es 2.
 - Nueva métrica «Toques» (≈10 de peso) y las pérdidas se comparan **por 100 toques** (quien toca más, pierde más).
 - Bonos nuevos: gol +0.7, tiro a puerta +0.25 (el tiro de un gol no cuenta aparte), pérdida que ella misma recupera en la ventana rápida +0.3, pase clave que acaba en tiro +0.3, córner a favor +0.1 (con remate +0.4), falta a favor +0.1 (con remate +0.3), falta provocada +0.3 (falta del rival marcada con su nombre). Tope de los bonos +3.
+
+## Ajuste del 2026-11-10 (cadenas y desglose)
+- El desglose de la calificación ya no se muestra en la ficha ni en el perfil comparativo (queda el número con «en revisión»). El cálculo sigue en `ratingAdjustments` y `RatingDetail` por si se vuelve a necesitar.
+- Los goles y tiros se leen como el resto de la app (`finishes`): un gol sin nombre con el tiro de una jugadora es de ella, y el tiro de un gol no suma aparte.
+- La falta ahora busca su consecuencia también en el tiro libre (o penal) que el rival cobra hasta 90 s después, y el gol o remate que sale de él. Una pérdida seguida de falta propia de la misma jugadora forma una cadena con la falta: juntas restan como máximo 1.5.
+- Recuperación que acaba en gol propio baja a +0.5 y en tiro a +0.2.

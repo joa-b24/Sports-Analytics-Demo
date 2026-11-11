@@ -48,7 +48,7 @@ test("descuentos: pérdida + falta que acaban en el mismo gol son una cadena con
   const chain = adj.filter((a) => a.event_id === "l1" || a.event_id === "f1");
   assert.equal(chain.length, 2);
   assert.ok(chain.reduce((s, a) => s + a.delta, 0) >= -1.5 - 1e-9);
-  assert.ok(adj.some((a) => a.delta === 0.3));
+  assert.ok(adj.some((a) => a.delta === 0.2));
   assert.ok(adj.some((a) => a.delta === -1.5 && /roja/.test(a.label)));
   // Otro video no cuenta.
   assert.equal(ratingAdjustments(kere, [ev("l", 100, "loss", "own", { player_id: "Kere" }), ev("g", 105, "goal", "opp", { video_id: "v2" })]).length, 0);
@@ -90,4 +90,29 @@ test("suman los goles, tiros a puerta, córners, faltas a favor, pase clave a ti
 test("la media del grupo ya no es 5: una jugadora normal saca 6", () => {
   const rows = [row("A"), row("B"), row("C"), row("D")];
   assert.equal(rateAll(rows, []).get("own|A").score, 6);
+});
+
+test("la secuencia de Kere: pérdida, falta con amarilla, tiro libre del rival 44 s después y gol: una cadena, con tope", () => {
+  const kere = row("Kere");
+  const events = [
+    ev("l", 2215.6, "loss", "own", { player_id: "Kere" }),
+    ev("f", 2222.5, "foul", "own", { player_id: "Kere", detail: "yellow" }),
+    ev("fk", 2266.47, "free_kick", "opp", { outcome: "shot" }),
+    ev("g", 2268.6, "goal", "opp"),
+  ];
+  const adj = ratingAdjustments(kere, events);
+  assert.equal(adj.length, 2);
+  assert.ok(adj.every((a) => a.delta < 0));
+  assert.ok(Math.abs(adj.reduce((s, a) => s + a.delta, 0) + 1.5) < 0.02, JSON.stringify(adj));
+  // Sin la pérdida, solo la falta: −1.0 (gol del tiro libre).
+  const soloFalta = ratingAdjustments(kere, events.slice(1));
+  assert.deepEqual(soloFalta.map((a) => a.delta), [-1]);
+  // Si el tiro libre llega mucho después (más de 90 s), ya no es consecuencia de la falta.
+  assert.equal(ratingAdjustments(kere, [events[1], ev("fk", 2400, "free_kick", "opp"), ev("g", 2402, "goal", "opp")]).length, 0);
+});
+
+test("un gol sin nombre con el tiro de Zoe es de Zoe: suma el gol, no el tiro a puerta", () => {
+  const events = [ev("s", 1443.4, "shot", "own", { player_id: "Zoe", outcome: "on_target" }), ev("g", 1446.5, "goal", "own")];
+  const adj = ratingAdjustments(row("Zoe"), events);
+  assert.deepEqual(adj.map((a) => [a.label, a.delta]), [["Gol", 0.7]]);
 });

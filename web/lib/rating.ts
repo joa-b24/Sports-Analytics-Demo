@@ -8,6 +8,7 @@
 //   3. then what her actions cost or gave is added: a loss that ended in a shot or a goal of the rival, a foul that gave a
 //      shot, a recovery that ended in an attack of hers... each one a line with its minute, never a hidden number.
 // A metric with no data does not count (its weight goes to the others); with fewer than MIN_METRICS there is no rating.
+import { finishes } from "./analysis.ts";
 import type { PlayerRow } from "./players.ts";
 import type { MatchEvent } from "./types.ts";
 
@@ -94,8 +95,9 @@ export interface RatingOptions {
   quickRecoveryS?: number;
 }
 
-// A goal and a shot of the same player closer than this (s) are one action (lib/analysis.ts SAME_ACTION_S).
-const SAME_ACTION_S = 5;
+// After a foul the rival takes a free kick (or a penalty): the goal that comes from it is the foul's consequence if the set piece
+// is taken within this many seconds of the foul (the game stops, so it is longer than the window of a loss).
+export const SET_PIECE_GAP_S = 90;
 const vid = (e: MatchEvent) => e.video_id ?? "v1";
 const other = (t: "own" | "opp") => (t === "own" ? "opp" : "own");
 const isShot = (e: MatchEvent) => e.type === "shot" || e.type === "goal";
@@ -138,38 +140,65 @@ export function ratingAdjustments(row: PlayerRow, events: MatchEvent[], opts: Ra
   const after = (e: MatchEvent, within: number, pred: (x: MatchEvent) => boolean) => sorted.find((x) => x !== e && vid(x) === vid(e) && x.t_video > e.t_video && x.t_video - e.t_video <= within && pred(x));
   type Hit = { delta: number; label: string; e: MatchEvent; target: string | null };
   const hits: Hit[] = [];
+
+  // Goals and shots of her team, as lib/analysis.ts reads them (a shot and its goal are one action): the goal goes to whoever
+  // scored it (the shooter when the goal was tagged with no name), a shot on target without goal to the shooter.
+  for (const f of finishes(events, row.team)) {
+    const scorer = clean(f.goal?.player_id) || clean(f.shot?.player_id);
+    const shooter = clean(f.shot?.player_id) || clean(f.goal?.player_id);
+    if (f.goal && scorer === row.id) hits.push({ delta: 0.7, label: "Gol", e: f.goal, target: null });
+    else if (!f.goal && f.shot && shooter === row.id && f.shot.outcome === "on_target") hits.push({ delta: 0.25, label: "Tiro a puerta", e: f.shot, target: null });
+  }
+
+  // What the rival got from a moment: a goal or a shot within `within` s, or, after a foul, from the free kick (or penalty) the
+  // rival takes: the set piece itself (outcome «remate») or a shot or goal within `within` s of it.
+  type Outcome = { kind: "goal" | "shot" | "entry"; ev: MatchEvent };
+  const direct = (from: MatchEvent, within: number, entries: boolean): Outcome | null => {
+    const goal = after(from, within, (x) => x.team === rival && x.type === "goal");
+    if (goal) return { kind: "goal", ev: goal };
+    const shot = after(from, within, (x) => x.team === rival && isShot(x));
+    if (shot) return { kind: "shot", ev: shot };
+    const entry = entries ? after(from, within, (x) => x.team === rival && x.type === "box_entry") : undefined;
+    return entry ? { kind: "entry", ev: entry } : null;
+  };
+  const afterFoul = (foul: MatchEvent): Outcome | null => {
+    const d = direct(foul, lossS, false);
+    if (d) return d;
+    const fk = after(foul, SET_PIECE_GAP_S, (x) => x.team === rival && (x.type === "free_kick" || x.type === "penalty"));
+    if (!fk) return null;
+    const goal = after(fk, lossS, (x) => x.team === rival && x.type === "goal");
+    if (goal || fk.type === "penalty") return goal ? { kind: "goal", ev: goal } : null;
+    const shot = after(fk, lossS, (x) => x.team === rival && isShot(x));
+    if (shot) return { kind: "shot", ev: shot };
+    return fk.outcome === "shot" ? { kind: "shot", ev: fk } : null;
+  };
+  const cost = (o: Outcome) => (o.kind === "goal" ? -1 : o.kind === "shot" ? -0.5 : -0.3);
+  const what = (o: Outcome) => (o.kind === "goal" ? "gol" : o.kind === "shot" ? "tiro" : "entrada al área");
+
   for (const e of sorted) {
     if (!mine(e)) continue;
-    if (e.type === "goal") {
-      hits.push({ delta: 0.7, label: "Gol", e, target: null });
-    } else if (e.type === "shot") {
-      // A shot on target; the shot of a goal is that goal (a goal tagged at most SAME_ACTION_S away is not counted twice).
-      const isGoalShot = sorted.some((x) => x.type === "goal" && mine(x) && vid(x) === vid(e) && Math.abs(x.t_video - e.t_video) <= SAME_ACTION_S);
-      if (e.outcome === "on_target" && !isGoalShot) hits.push({ delta: 0.25, label: "Tiro a puerta", e, target: null });
-    } else if (e.type === "corner") {
+    if (e.type === "corner") {
       hits.push(e.outcome === "shot" ? { delta: 0.4, label: "Córner que acaba en remate", e, target: null } : { delta: 0.1, label: "Córner a favor", e, target: null });
     } else if (e.type === "free_kick") {
       hits.push(e.outcome === "shot" ? { delta: 0.3, label: "Falta a favor que acaba en remate", e, target: null } : { delta: 0.1, label: "Falta a favor", e, target: null });
     } else if (e.type === "loss") {
       const again = after(e, quickS, (x) => x.type === "recovery" && mine(x));
       if (again) hits.push({ delta: 0.3, label: "Pérdida que ella misma recupera", e, target: null });
-      const goal = after(e, lossS, (x) => x.team === rival && x.type === "goal");
-      const shot = goal ?? after(e, lossS, (x) => x.team === rival && isShot(x));
-      const entry = shot ?? after(e, lossS, (x) => x.team === rival && x.type === "box_entry");
-      if (goal) hits.push({ delta: -1, label: "Pérdida que acaba en gol del rival", e, target: goal.event_id });
-      else if (shot) hits.push({ delta: -0.5, label: "Pérdida que acaba en tiro del rival", e, target: shot.event_id });
-      else if (entry) hits.push({ delta: -0.3, label: "Pérdida que acaba en entrada al área del rival", e, target: entry.event_id });
+      // The loss ends in the rival's action, or in her own foul (within the window) and what came from that foul: one chain.
+      const own = direct(e, lossS, true);
+      const foul = after(e, lossS, (x) => x.type === "foul" && mine(x));
+      const viaFoul = foul ? afterFoul(foul) : null;
+      const o = own && own.kind !== "entry" ? own : (viaFoul ?? own);
+      if (o) hits.push({ delta: cost(o), label: `Pérdida que acaba en ${viaFoul && o === viaFoul ? `falta y ${what(o)}` : what(o)} del rival`, e, target: o.ev.event_id });
     } else if (e.type === "foul") {
       if (e.detail === "red") hits.push({ delta: -1.5, label: "Tarjeta roja", e, target: null });
-      const goal = after(e, lossS, (x) => x.team === rival && x.type === "goal");
-      const shot = goal ?? after(e, lossS, (x) => x.team === rival && isShot(x));
-      if (goal) hits.push({ delta: -1, label: "Falta que acaba en gol del rival", e, target: goal.event_id });
-      else if (shot) hits.push({ delta: -0.5, label: "Falta que acaba en tiro del rival", e, target: shot.event_id });
+      const o = afterFoul(e);
+      if (o && o.kind !== "entry") hits.push({ delta: cost(o), label: `Falta que acaba en ${what(o)} del rival`, e, target: o.ev.event_id });
     } else if (e.type === "recovery") {
       const goal = after(e, recS, (x) => x.team === row.team && x.type === "goal");
       const shot = goal ?? after(e, recS, (x) => x.team === row.team && isShot(x));
-      if (goal) hits.push({ delta: 1, label: "Recuperación que acaba en gol propio", e, target: null });
-      else if (shot) hits.push({ delta: 0.3, label: "Recuperación que acaba en tiro propio", e, target: null });
+      if (goal) hits.push({ delta: 0.5, label: "Recuperación que acaba en gol propio", e, target: null });
+      else if (shot) hits.push({ delta: 0.2, label: "Recuperación que acaba en tiro propio", e, target: null });
     } else if (e.type === "key_pass") {
       const goal = after(e, 8, (x) => x.team === row.team && x.type === "goal");
       const shot = goal ?? after(e, 8, (x) => x.team === row.team && x.type === "shot");
