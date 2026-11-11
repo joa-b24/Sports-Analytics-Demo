@@ -1,6 +1,6 @@
 # Propuesta: calificación de jugadora (borrador para decidir)
 
-Estado: **sin implementar**. Hay que aprobar las métricas, los pesos y los descuentos antes de escribir código.
+Estado: **implementada y marcada «en revisión»** (`web/lib/rating.ts`, `components/match/RatingBadge.tsx`). Sale en la ficha, en la tabla por jugadora, en el perfil comparativo y en la tabla física del Informe. Los pesos y descuentos de abajo son los que usa; el cuerpo técnico debe aprobarlos o cambiarlos. Sin posición en la plantilla, todas se califican con los pesos de medio. Las acciones buenas con consecuencia también suman (recuperación que acaba en tiro +0.3 o gol +1.0; pase clave que acaba en gol +0.5; tope +2).
 
 ## Principios
 1. Una calificación de 0 a 10 por jugadora y partido, que **siempre muestra de dónde sale** (cada métrica con su aporte, y cada descuento con su momento en el video).

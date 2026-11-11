@@ -9,6 +9,9 @@ import { Card } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
 import { MAX_COMPARE, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
 import { heatmapSmooth, playerTouchPoints, type Oriented } from "@/lib/positions";
+import { rateAll } from "@/lib/rating";
+import { analysisParamsOf } from "@/lib/tech";
+import { RatingDetail } from "@/components/match/RatingBadge";
 import type { Segment } from "@/lib/segments";
 import { setPref, usePref, useStore } from "@/lib/store";
 import { PITCH, type Match, type MatchEvent } from "@/lib/types";
@@ -48,7 +51,12 @@ export function usePlayersData(match: Match, events: MatchEvent[], videoIds: str
       return n != null ? `${n} · ${r.id}` : r.id;
     };
   }, [state.roster, state.rivals, parts]);
-  return { rows, parts, label, fixed };
+  // The rating (in review) with the windows of the match's analysis settings.
+  const ratings = useMemo(() => {
+    const cfg = analysisParamsOf(match);
+    return rateAll(rows, events, { lossShotS: cfg.lossShotS, recoveryAttackS: cfg.recoveryAttackS });
+  }, [rows, events, match]);
+  return { rows, parts, label, fixed, ratings };
 }
 
 // Individual performance: up to MAX_COMPARE players of either team, figure by figure, with where each one played.
@@ -66,7 +74,7 @@ export function PlayersCompare({
   segmentsByVideo: Record<string, Segment[]>;
   periodNote?: boolean;
 }) {
-  const { rows, parts, label, fixed } = usePlayersData(match, events, videoIds, segmentsByVideo);
+  const { rows, parts, label, fixed, ratings } = usePlayersData(match, events, videoIds, segmentsByVideo);
   const prefKey = `players:${match.match_id}`;
   const saved = usePref(prefKey, "");
   const per10 = usePref("players:per10", "0") === "1";
@@ -174,6 +182,19 @@ export function PlayersCompare({
             ) : (
               <p className="text-sm text-faint">Ninguna de las elegidas tiene posiciones con su nombre en el tracking corregido.</p>
             )}
+          </Card>
+          <Card title="Calificación" note={<span className="tag !px-1 !py-0 text-[9px] text-warn">en revisión</span>}>
+            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+              {picked.map((r, i) => (
+                <div key={r.key} className="min-w-0">
+                  <div className="mb-2 inline-flex items-center gap-2 text-sm text-ink">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: SLOTS[i] }} />
+                    {label(r)}
+                  </div>
+                  <RatingDetail rating={ratings.get(r.key)} />
+                </div>
+              ))}
+            </div>
           </Card>
           <Card title="Cifra por cifra" note={per10 ? "por 10 minutos en cuadro" : "totales del partido"}>
             <div className="mb-4 seg flex-wrap" role="group" aria-label="Tipo de datos que se comparan">

@@ -2,7 +2,9 @@
 
 import { ArrowDown, ArrowUp, Eye, EyeSlash, Lock } from "@phosphor-icons/react";
 import { useState } from "react";
+import { RATING_NOTE, RatingBadge } from "@/components/match/RatingBadge";
 import { COLORS, Pitch } from "@/components/Pitch";
+import type { Rating } from "@/lib/rating";
 import { physical, teamBlock } from "@/lib/physical";
 import { heatmapSmooth, passArrows, type Oriented } from "@/lib/positions";
 import { NEED_TEXT, REPORT_SECTIONS, moveSection, toggleSection } from "@/lib/reportSections";
@@ -192,7 +194,7 @@ export function PassMapSection({ parts, side, team, segmentsByVideo, events = []
 }
 
 // Distance, top speed, high-speed running and sprints by player, over the time each one was measured.
-export function PhysicalSection({ parts, side, team }: { parts: Oriented[]; side: Side; team: string }) {
+export function PhysicalSection({ parts, side, team, ratings }: { parts: Oriented[]; side: Side; team: string; ratings?: Map<string, Rating> }) {
   const rows = physical(parts, side);
   if (rows.length === 0) return <p className="text-sm text-faint">Sin jugadoras con nombre de {team} en las partes revisadas.</p>;
   const maxD = Math.max(...rows.map((r) => r.distance_m), 1);
@@ -202,6 +204,11 @@ export function PhysicalSection({ parts, side, team }: { parts: Oriented[]; side
         <thead>
           <tr className="text-left text-xs text-faint">
             <th className="py-1 font-normal">Jugadora</th>
+            {ratings && (
+              <th className="py-1 text-right font-normal" title={RATING_NOTE}>
+                Calif. <span className="text-[9px] text-warn">en revisión</span>
+              </th>
+            )}
             <th className="py-1 text-right font-normal" title="Tiempo en cuadro (medido o rellenado)">Tiempo visto</th>
             <th className="py-1 text-right font-normal">Distancia</th>
             <th className="py-1 text-right font-normal">m/min</th>
@@ -219,6 +226,11 @@ export function PhysicalSection({ parts, side, team }: { parts: Oriented[]; side
                   <span className="block h-full rounded-full" style={{ width: `${(100 * r.distance_m) / maxD}%`, background: color(side) }} />
                 </span>
               </td>
+              {ratings && (
+                <td className="py-1.5 text-right">
+                  <RatingBadge rating={ratings.get(`${side}|${r.name}`)} mark={false} />
+                </td>
+              )}
               <td className="num py-1.5 text-right text-muted">{Math.round(r.seconds / 60)} min</td>
               <td className="num py-1.5 text-right text-ink">{r.distance_m.toLocaleString("es-MX")} m</td>
               <td className="num py-1.5 text-right text-ink">{r.per_min_m ?? "—"}</td>
@@ -229,6 +241,7 @@ export function PhysicalSection({ parts, side, team }: { parts: Oriented[]; side
           ))}
         </tbody>
       </table>
+      {ratings && <p className="mt-1 text-xs text-faint">Calificación (0-10, 5 = promedio de su equipo en el partido): {RATING_NOTE}</p>}
       <p className="mt-1 text-xs text-faint">
         Solo el tiempo en cuadro: lo que la cámara no ve no se mide. Velocidad sobre ventanas de 1 s; HSR: distancia a más de 18 km/h; sprint: más de 22 km/h durante 1 s o más.
       </p>

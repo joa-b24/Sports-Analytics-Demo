@@ -7,6 +7,7 @@ import { PlayerMap } from "@/components/match/PlayerMap";
 import { PlayerHeat, fmt, usePlayersData } from "@/components/match/PlayersCompare";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
 import { Panel } from "@/components/match/Panel";
+import { RatingBadge, RatingDetail } from "@/components/match/RatingBadge";
 import { COLORS } from "@/components/Pitch";
 import { Card } from "@/components/Shell";
 import { fmtT } from "@/lib/format";
@@ -36,7 +37,7 @@ export function PlayerProfile({
   ownTimes: Map<string, MatchEvent> | null;
   timeLabel?: (e: MatchEvent) => string;
 }) {
-  const { rows, parts, label, fixed } = usePlayersData(match, events, videoIds, segmentsByVideo);
+  const { rows, parts, label, fixed, ratings } = usePlayersData(match, events, videoIds, segmentsByVideo);
   const moment = useMomentPlayer(match);
   const showTouches = usePref("profile:touches", "0") === "1";
   const prefKey = `profile:${match.match_id}`;
@@ -77,7 +78,11 @@ export function PlayerProfile({
             {row.events > 0 ? ` · ${row.events} eventos con su nombre` : ""}
           </div>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap items-center gap-4">
+          <div className="text-right">
+            <div className="text-[11px] text-faint">Calificación</div>
+            <RatingBadge rating={ratings.get(row.key)} big />
+          </div>
           <Select
             variant="field"
             label="Elegir jugadora"
@@ -93,6 +98,10 @@ export function PlayerProfile({
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
+        <Panel title="Calificación" note={<span className="tag !px-1 !py-0 text-[9px] text-warn">en revisión</span>}>
+          <RatingDetail rating={ratings.get(row.key)} onPick={(m) => moment.show({ video_id: m.video_id, t: m.t, label: m.label })} />
+        </Panel>
+
         <Panel title="Cifras individuales" note="del partido">
           <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
             {GROUPS.map((g) => {

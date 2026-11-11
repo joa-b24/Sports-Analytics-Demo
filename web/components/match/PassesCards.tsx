@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { Locked } from "@/components/Locked";
+import { usePlayersData } from "@/components/match/PlayersCompare";
 import { Panel } from "@/components/match/Panel";
+import { RatingBadge } from "@/components/match/RatingBadge";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { Card } from "@/components/Shell";
 import { TrackingLoading } from "@/components/TrackingLoading";
@@ -37,6 +39,7 @@ export function PassesCards({
   const { passes: all = [], roster = [] } = useStore();
   const fixed = useFixedParts(match.folder, videoIds);
   const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
+  const { ratings } = usePlayersData(match, events, videoIds, segmentsByVideo);
   const [team, setTeam] = useState<Side>("own");
   const hand = useMemo(() => all.filter((p) => p.match_id === match.match_id && p.team === team), [all, match.match_id, team]);
   const numberOf = new Map((match.kind === "own" ? roster : []).map((p) => [p.player_id, p.number]));
@@ -166,6 +169,9 @@ export function PassesCards({
               <thead>
                 <tr className="bg-bg/50 text-[11px] text-faint">
                   <th className="sticky left-0 bg-bg/80 px-3 py-2 font-medium">Jugadora</th>
+                  <th className="px-2 py-2 text-right font-medium" title="Calificación del partido, en revisión (clic en la jugadora para ver de dónde sale)">
+                    Calif. <span className="text-[9px] text-warn">en revisión</span>
+                  </th>
                   {showTracked && (
                     <>
                       <th className="px-2 py-2 text-right font-medium">Pases</th>
@@ -200,6 +206,9 @@ export function PassesCards({
                       <td className="sticky left-0 bg-surface px-3 py-1.5 whitespace-nowrap text-ink">
                         <span className="tc mr-2 inline-block w-5 text-right text-faint">{numberOf.get(p) ?? ""}</span>
                         {p}
+                      </td>
+                      <td className="px-2 text-right">
+                        <RatingBadge rating={ratings.get(`${team}|${p}`)} mark={false} />
                       </td>
                       {showTracked && (
                         <>

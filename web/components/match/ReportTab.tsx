@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
+import { usePlayersData } from "@/components/match/PlayersCompare";
 import { PanelMatch, usePanelTools } from "@/components/match/Panel";
 import Link from "next/link";
 import { DownloadSimple, FilmStrip, PencilSimple, Printer, Plus, Trash } from "@phosphor-icons/react";
@@ -99,6 +100,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
   };
 
   const player = useMomentPlayer(match, { bare: true });
+  const players = usePlayersData(match, events, videoIds, segmentsByVideo);
   const A = data.cover.focus_team;
   const B = data.cover.other_team;
   const closingHint = data.texts.closing.key === "plan" ? "Qué hacer con y sin balón contra este rival." : "Qué salió bien, qué no y qué se trabaja en la semana.";
@@ -170,7 +172,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       case "duels":
         return <Duels data={data} side={focus} />;
       case "physical":
-        return <PhysicalSection parts={parts} side={focus} team={F} />;
+        return <PhysicalSection parts={parts} side={focus} team={F} ratings={players.ratings} />;
       case "set_pieces":
         return (
           <>
