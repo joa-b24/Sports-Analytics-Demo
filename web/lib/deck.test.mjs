@@ -51,3 +51,13 @@ test("adding the same panel twice refreshes its slide instead of repeating it", 
   assert.equal(list[0].image, "two");
   assert.equal(list[0].note, "mirar el carril");
 });
+
+import { boardSlide } from "./deck.ts";
+test("una diapositiva de animación apunta a un pizarrón o a una jugada", () => {
+  const a = boardSlide("s1", { board: "b1" }, "ABP");
+  assert.equal(a.kind, "board");
+  assert.equal(a.board, "b1");
+  const b = boardSlide("s2", { play: "p1" }, "Jugada");
+  assert.equal(b.play, "p1");
+  assert.equal(b.board, undefined);
+});

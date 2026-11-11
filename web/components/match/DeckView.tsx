@@ -1,12 +1,14 @@
 "use client";
 
-import { ArrowDown, ArrowUp, CaretLeft, CaretRight, Eraser, FilmSlate, PencilSimple, PencilSimpleLine, Play, Plus, Target, Trash, X } from "@phosphor-icons/react";
+import { ArrowDown, ArrowUp, CaretLeft, CaretRight, Eraser, FilmSlate, PencilSimple, PersonSimpleRun, PencilSimpleLine, Play, Plus, Target, Trash, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SLIDE_H, SLIDE_W, SlideCanvas } from "@/components/match/SlideCanvas";
 import { SlideEditor } from "@/components/match/SlideEditor";
 import { Select } from "@/components/Select";
 import { Card, input } from "@/components/Shell";
-import { addSlide, blankSlide, clipSlide, editSlide, moveSlide, removeSlide, slidesOf, type Slide } from "@/lib/deck";
+import { BoardSlide, boardOfSlide } from "@/components/match/BoardSlide";
+import { boardsOf } from "@/lib/boards";
+import { addSlide, blankSlide, boardSlide, clipSlide, editSlide, moveSlide, removeSlide, slidesOf, type Slide } from "@/lib/deck";
 import { listLocal, localUrl } from "@/lib/local";
 import { mutate, uid, useStore } from "@/lib/store";
 import type { Match } from "@/lib/types";
@@ -21,6 +23,8 @@ export function DeckView({ match }: { match: Match }) {
   const [playing, setPlaying] = useState<number | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const edits = (state.edits ?? []).filter((e) => e.match_id === id);
+  const plays = (state.plays ?? []).filter((p) => p.match_id === id && p.keyframes.length > 1);
+  const boards = boardsOf(state);
   const push = (s: Slide) => mutate((st) => ({ ...st, decks: addSlide(st.decks, id, s) }));
   const editingSlide = slides.find((s) => s.id === editing) ?? null;
 
@@ -45,6 +49,35 @@ export function DeckView({ match }: { match: Match }) {
           if (e) push(clipSlide(uid("sl"), e.edit_id, e.title || "Clip"));
         }}
         options={edits.length ? edits.map((e) => ({ value: e.edit_id, label: e.title || e.edit_id })) : [{ value: "-", label: "No hay clips editados (se hacen en Estudio › Jugadas)" }]}
+      />
+      <Select
+        variant="field"
+        label="Añadir una animación"
+        value={null}
+        display={
+          <span className="inline-flex items-center gap-1.5">
+            <PersonSimpleRun size={14} aria-hidden />
+            Añadir animación
+          </span>
+        }
+        onChange={(v) => {
+          if (!v) return;
+          if (v.startsWith("b:")) {
+            const b = boards.find((x) => x.board_id === v.slice(2));
+            if (b) push(boardSlide(uid("sl"), { board: b.board_id }, b.title || "Pizarrón"));
+          } else if (v.startsWith("p:")) {
+            const p = plays.find((x) => x.play_id === v.slice(2));
+            if (p) push(boardSlide(uid("sl"), { play: p.play_id }, p.title || "Jugada"));
+          }
+        }}
+        options={
+          boards.length + plays.length
+            ? [
+                ...plays.map((p, i) => ({ value: `p:${p.play_id}`, label: p.title || p.play_id, group: i === 0 ? "Jugadas de este partido" : undefined })),
+                ...boards.map((b, i) => ({ value: `b:${b.board_id}`, label: b.title || b.board_id, group: i === 0 ? "Pizarrón" : undefined })),
+              ]
+            : [{ value: "-", label: "No hay jugadas ni pizarrones (se hacen en Estudio)" }]
+        }
       />
     </div>
   );
@@ -82,6 +115,11 @@ export function DeckView({ match }: { match: Match }) {
                   <FilmSlate size={28} />
                 </span>
               )}
+              {s.kind === "board" && (
+                <span className="absolute inset-0 grid place-items-center bg-bg/50 text-ink">
+                  <PersonSimpleRun size={28} />
+                </span>
+              )}
             </button>
             <div className="min-w-0 flex-1 space-y-2">
               <input className={`${input} w-full`} aria-label="Título de la diapositiva" value={s.title} onChange={(e) => mutate((st) => ({ ...st, decks: editSlide(st.decks, id, s.id, { title: e.target.value }) }))} />
@@ -92,6 +130,7 @@ export function DeckView({ match }: { match: Match }) {
                 value={s.note}
                 onChange={(e) => mutate((st) => ({ ...st, decks: editSlide(st.decks, id, s.id, { note: e.target.value }) }))}
               />
+              {s.kind === "board" && <p className="m-0 text-xs text-faint">Animación: se reproduce al presentar, con sus pasos y dibujos; se puede pausar o mover con la barra.</p>}
               {s.kind !== "clip" && (
                 <button type="button" className="btn" onClick={() => setEditing(s.id)}>
                   <PencilSimpleLine size={14} />
@@ -147,6 +186,7 @@ const PEN_COLORS = ["#ff4d4d", "#ffd23f", "#ffffff", "#3ddc97"];
 // Full screen: one slide at a time, arrows / space / swipe to move, Esc to leave. With the pen (D) or the pointer (L) the
 // presenter draws or points over the slide while talking; C clears the drawing of the slide, V stops drawing.
 function Stage({ match, slides, start, onClose }: { match: Match; slides: Slide[]; start: number; onClose: () => void }) {
+  const state = useStore();
   const [i, setI] = useState(start);
   const [tool, setTool] = useState<Tool>("none");
   const [penColor, setPenColor] = useState(PEN_COLORS[0]);
@@ -280,6 +320,7 @@ function Stage({ match, slides, start, onClose }: { match: Match; slides: Slide[
                   )}
                 </div>
               ))}
+            {s.kind === "board" && <BoardSlide key={s.id} board={boardOfSlide(state, s)} live />}
             {drawing}
           </SlideCanvas>
         </div>

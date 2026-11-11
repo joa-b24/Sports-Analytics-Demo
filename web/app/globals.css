@@ -56,6 +56,9 @@
 }
 
 :root {
+  /* Heat maps: how much stronger they are drawn (light backgrounds hide pale colour). Opacity = floor + gain x value. */
+  --heat-gain: 1;
+  --heat-floor: 0;
   color-scheme: dark;
   /* Texto sobre un relleno del equipo (número dentro del círculo, etiqueta). */
   --on-own: #ffffff;
@@ -81,6 +84,8 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
+  --heat-gain: 1.35;
+  --heat-floor: 0.12;
   --color-bg: #e9e3d4;
   --color-surface: #f4efe3;
   --color-raised: #efe9da;
@@ -801,6 +806,8 @@ input[type="range"] {
   }
   :root[data-paper="white"] {
     color-scheme: light;
+    --heat-gain: 1.35;
+    --heat-floor: 0.12;
     --color-bg: #ffffff;
     --color-surface: #ffffff;
     --color-raised: #f1f3f8;

@@ -25,7 +25,7 @@ export function TerritoryMap({ events, aLabel, bLabel, cols: nc = 6, rows: nr = 
             const n = c.own + c.opp;
             return (
               <g key={`${r}-${k}`}>
-                <rect x={k * cw + 0.4} y={r * ch + 0.4} width={cw - 0.8} height={ch - 0.8} rx={1.5} fill={c.share >= 0.5 ? COLORS.own : COLORS.opp} opacity={0.14 + 0.62 * lead}>
+                <rect x={k * cw + 0.4} y={r * ch + 0.4} width={cw - 0.8} height={ch - 0.8} rx={1.5} fill={c.share >= 0.5 ? COLORS.own : COLORS.opp} style={{ opacity: `calc(var(--heat-floor) * 0.5 + var(--heat-gain) * ${0.14 + 0.62 * lead})` }}>
                   <title>{`${aLabel}: ${c.own} · ${bLabel}: ${c.opp} acciones marcadas`}</title>
                 </rect>
                 <text x={k * cw + cw / 2} y={r * ch + ch / 2 + 1.4} textAnchor="middle" fontSize={4} fontWeight={700} fill="var(--color-ink)" opacity={n > 0 ? 0.85 : 0} pointerEvents="none">

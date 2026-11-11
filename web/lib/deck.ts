@@ -34,11 +34,14 @@ export interface Slide {
   note: string;
   // «chart» (default): the chart as an image. «blank»: only the pieces drawn on it. «clip»: an edited clip of the match
   // (Estudio), played from its exported MP4.
-  kind?: "chart" | "blank" | "clip";
+  kind?: "chart" | "blank" | "clip" | "board";
   // The chart as a PNG data URL, as the analyst saw it (colours of the app). Absent in blank and clip slides.
   image?: string;
   // The clip of a «clip» slide (edit_id of an edit of the match).
   clip?: string;
+  // A «board» slide plays an animation: a board of the pizarrón (board_id) or the animation of a play of Estudio (play_id).
+  board?: string;
+  play?: string;
   // Text, boxes and arrows over the slide.
   items?: SlideItem[];
   // The panel of the dashboard it came from: adding the same panel again refreshes this slide instead of repeating it.
@@ -78,6 +81,9 @@ export const moveSlide = (decks: Deck[] | undefined, match_id: string, id: strin
 // A slide with no chart: pieces only (a title card, a lineup) or a clip of the match.
 export const blankSlide = (id: string, title = "Diapositiva"): Slide => ({ id, title, note: "", kind: "blank", items: [], at: Date.now() });
 export const clipSlide = (id: string, edit_id: string, title: string): Slide => ({ id, title, note: "", kind: "clip", clip: edit_id, items: [], at: Date.now() });
+
+// An animated slide: a board of the pizarrón or the animation of a play of the match.
+export const boardSlide = (id: string, ref: { board: string } | { play: string }, title: string): Slide => ({ id, title, note: "", kind: "board", ...ref, items: [], at: Date.now() });
 
 // The pieces of a slide after an edit of one of them (or after adding or removing one).
 export const upsertItem = (items: SlideItem[] | undefined, item: SlideItem): SlideItem[] => {

@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { FigureRow, StatList } from "@/components/match/ReportExtra";
 import { COLORS, Pitch } from "@/components/Pitch";
-import { possessionCover } from "@/lib/playgroundHealth";
 import type { BallSummary, NetworkData, ReportData, TouchRow } from "@/lib/report";
 import { LANES_5, THIRDS_3 } from "@/lib/stats";
 
@@ -27,20 +26,10 @@ export function BallBlock({ data }: { data: ReportData }) {
   const name = (s: Side) => (s === "own" ? A : B);
   const assigned = b.possession.own + b.possession.opp;
   const total = assigned + b.possession.unassigned;
-  // The possession never goes without its coverage; a low coverage or little measured contact warns (no global threshold: each
-  // figure says what it rests on).
-  const cov = possessionCover(b.possession_detail);
   return (
     <div className="space-y-6">
       <div className="break-inside-avoid">
         <div className="text-sm font-medium text-ink">Posesión</div>
-        <p className="text-xs text-faint">Leída del balón seguido, {coverageText(b)}.</p>
-        <p className="text-xs text-ink-2">
-          Posesión {cov.text}.
-        </p>
-        {cov.warning && <p className="text-xs text-warn">{cov.warning}</p>}
-        {b.possession_warning && <p className="text-xs text-warn">{b.possession_warning}</p>}
-        <p className="text-[11px] text-faint print:hidden">{b.possession_params}. Se cambian en Configuración del partido › Detalles técnicos.</p>
         <div className="mt-3 flex items-baseline justify-between text-sm">
           <span>
             <span className="num text-3xl" style={{ color: COLORS.own }}>
@@ -95,7 +84,7 @@ export function BallBlock({ data }: { data: ReportData }) {
           <ZoneTable title="Por carril de origen" labels={[...LANES_5]} get={(s) => [b.passes[s].completed_by_lane, b.passes[s].cut_by_lane]} name={name} />
         </div>
         <p className="mt-2 text-xs text-faint">
-          Origen visto por el equipo que pasa, atacando hacia la derecha. Cambios de equipo leídos del balón: {b.changes.confirmed} confirmados por una pérdida
+          Cada celda es «completos / cortados» de los pases que <b className="font-medium">salieron</b> de esa zona. Tercio: 1.º cerca de su portería, 3.º cerca de la rival. Carril: de la banda izquierda a la derecha. Visto con el equipo que pasa atacando hacia la derecha. Cambios de equipo leídos del balón: {b.changes.confirmed} confirmados por una pérdida
           etiquetada a menos de 2 s y {b.changes.inferred} solo inferidos
           {b.changes.tagged_unmatched > 0 && `; ${b.changes.tagged_unmatched} pérdida(s) etiquetada(s) con el balón seguido no tienen cambio leído`}.
         </p>

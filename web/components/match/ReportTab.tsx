@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMomentPlayer } from "@/components/match/MomentPlayer";
+import { PanelMatch, usePanelTools } from "@/components/match/Panel";
 import Link from "next/link";
 import { DownloadSimple, FilmStrip, PencilSimple, Printer, Plus, Trash } from "@phosphor-icons/react";
 import { BinChart, Legend, MirrorBars, ZoneMap } from "@/components/charts";
@@ -96,6 +98,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
     );
   };
 
+  const player = useMomentPlayer(match, { bare: true });
   const A = data.cover.focus_team;
   const B = data.cover.other_team;
   const closingHint = data.texts.closing.key === "plan" ? "Qué hacer con y sin balón contra este rival." : "Qué salió bien, qué no y qué se trabaja en la semana.";
@@ -142,15 +145,15 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       case "transitions":
         return <Transitions data={data} side={focus} />;
       case "shots":
-        return <Shots data={data} side={focus} />;
+        return <Shots data={data} side={focus} onPick={player.show} />;
       case "crosses":
-        return <Crosses data={data} side={focus} />;
+        return <Crosses data={data} side={focus} onPick={player.show} />;
       case "network": {
         const net = focus === "own" ? data.summary.network : oppNet;
         return net ? <NetworkBlock net={net} team={F} side={focus} /> : <GateLine gate={data.summary.network_gate} />;
       }
       case "pass_map":
-        return <PassMapSection parts={parts} side={focus} team={F} segmentsByVideo={segmentsByVideo} events={events} />;
+        return <PassMapSection parts={parts} side={focus} team={F} segmentsByVideo={segmentsByVideo} events={events} onPick={player.show} />;
       case "touches":
         return data.summary.ball ? (
           <TouchesBlock
@@ -227,24 +230,16 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
   };
 
   return (
+    <PanelMatch.Provider value={match.match_id}>
     <div className="print-sheet mx-auto max-w-5xl space-y-8 print:max-w-none print:space-y-6">
-      <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
-        <label className="mr-auto flex items-center gap-1.5 text-xs text-muted" title="Cambia los nombres por el dorsal, para compartir fuera del cuerpo técnico">
-          <input type="checkbox" checked={anon} onChange={(e) => setAnon(e.target.checked)} />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-raised/70 px-3 py-2 shadow-[inset_0_0_0_1px_var(--color-line-soft)] print:hidden">
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-muted" title="Cambia los nombres por el dorsal, para compartir fuera del cuerpo técnico">
+          <button type="button" role="switch" aria-checked={anon} aria-label="Sin nombres" onClick={() => setAnon(!anon)} className={`relative h-4.5 w-8 rounded-full transition-colors ${anon ? "bg-own" : "bg-line-strong"}`}>
+            <i className={`absolute top-0.5 left-0.5 h-3.5 w-3.5 rounded-full bg-white transition-transform ${anon ? "translate-x-3.5" : ""}`} aria-hidden />
+          </button>
           Sin nombres
         </label>
-        <button type="button" className={btn} onClick={() => setEditing((v) => !v)} aria-pressed={editing}>
-          <PencilSimple size={15} />
-          Secciones
-        </button>
-        <button type="button" className={btn} onClick={() => void exportData()}>
-          <DownloadSimple size={15} />
-          Datos
-        </button>
-        <button type="button" className={btn} onClick={() => void exportClips()} title="Transiciones y jugadas del informe como lista de clips (los editados salen con sus dibujos)">
-          <FilmStrip size={15} />
-          Clips
-        </button>
+        <span className="mr-auto" />
         <div className="seg" role="group" aria-label="Color del PDF" title="Color del PDF: el de la app o papel blanco (para imprimir en papel)">
           {(
             [
@@ -257,6 +252,19 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
             </button>
           ))}
         </div>
+        <span className="h-5 w-px bg-line" aria-hidden />
+        <button type="button" className="btn btn-ghost" onClick={() => setEditing((v) => !v)} aria-pressed={editing} title="Qué secciones salen y en qué orden">
+          <PencilSimple size={15} />
+          Secciones
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={() => void exportData()} title="Descargar los datos del informe">
+          <DownloadSimple size={15} />
+          Datos
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={() => void exportClips()} title="Transiciones y jugadas del informe como lista de clips (los editados salen con sus dibujos)">
+          <FilmStrip size={15} />
+          Clips
+        </button>
         <button type="button" className={btnPrimary} onClick={() => window.print()}>
           <Printer size={15} />
           PDF
@@ -313,7 +321,11 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
         </p>
       )}
 
+      {player.panel && (
+        <div className="fixed right-4 bottom-4 z-40 w-[min(30rem,92vw)] rounded-lg bg-raised p-3 shadow-[0_0_0_1px_var(--color-line-strong),0_20px_40px_-12px_rgba(0,0,0,.6)] print:hidden">{player.panel}</div>
+      )}
     </div>
+    </PanelMatch.Provider>
   );
 }
 
@@ -324,8 +336,10 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
 function Block({ title, note, side, gate, printHidden, children }: { title: string; note?: string; side?: Side | null; gate?: Gate; printHidden?: boolean; children?: React.ReactNode }) {
   // A section with nothing but its level line is left out of the printout.
   const onlyGate = gate && !gate.ok && !children;
+  const box = useRef<HTMLElement>(null);
+  const tools = usePanelTools(title, box, undefined, false);
   return (
-    <section className={onlyGate || printHidden ? "print:hidden" : ""}>
+    <section ref={box} className={onlyGate || printHidden ? "print:hidden" : ""}>
       <div className="flex flex-wrap items-center gap-3 break-after-avoid">
         <h3 className="sec-tag">{title}</h3>
         <span className="h-px flex-1 bg-line" />
@@ -335,6 +349,7 @@ function Block({ title, note, side, gate, printHidden, children }: { title: stri
             {note}
           </span>
         )}
+        <span className="print:hidden">{tools}</span>
       </div>
       <div className="mt-3 rounded-md border border-line-soft bg-surface p-5 print:p-4">
         {gate && <GateLine gate={gate} />}
@@ -407,9 +422,6 @@ function Cover({ data, report, setReport, loading }: { data: ReportData; report:
             ))}
           </dl>
         )}
-      </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-        <span className="tag">Datos {c.level.label.replace(/^Nivel de datos:\s*/, "")}</span>
       </div>
       {c.level.next && <p className="text-xs text-faint print:hidden">{c.level.next}</p>}
       {loading && <p className="text-xs text-faint print:hidden">Leyendo el tracking de la carpeta del partido…</p>}
@@ -540,7 +552,9 @@ const sideColor = (s: Side) => (s === "own" ? COLORS.own : COLORS.opp);
 const OUTCOME_COLOR: Record<string, string> = { shot: "var(--color-ok)", cleared: "var(--color-muted)", play_on: "var(--color-accent-400)" };
 const teamName = (data: ReportData, s: Side) => (s === "own" ? data.cover.focus_team : data.cover.other_team);
 
-function Shots({ data, side }: { data: ReportData; side: Side }) {
+type PickMoment = (m: { video_id: string; t: number; label: string }) => void;
+
+function Shots({ data, side, onPick }: { data: ReportData; side: Side; onPick?: PickMoment }) {
   const T = teamName(data, side);
   const m = data.maps;
   const shots = m.shots.filter((s) => s.team === side);
@@ -556,8 +570,18 @@ function Shots({ data, side }: { data: ReportData; side: Side }) {
         />
         <Pitch className="mt-2">
           {shots.map((s) => (
-            <circle key={s.id} cx={s.x} cy={s.y} r={1.5} fill={s.goal ? sideColor(side) : "var(--color-surface)"} stroke={sideColor(side)} strokeWidth={0.55}>
-              <title>{`${s.goal ? "Gol" : (EVENT_OUTCOMES.shot?.[s.outcome ?? ""] ?? "Tiro")} · ${when(s.moment)}${s.player ? ` · ${s.player}` : ""}`}</title>
+            <circle
+              key={s.id}
+              cx={s.x}
+              cy={s.y}
+              r={1.5}
+              fill={s.goal ? sideColor(side) : "var(--color-surface)"}
+              stroke={sideColor(side)}
+              strokeWidth={0.55}
+              style={onPick ? { cursor: "pointer" } : undefined}
+              onClick={onPick ? () => onPick({ video_id: s.moment.video_id, t: s.moment.t, label: `${s.goal ? "Gol" : "Tiro"}${s.player ? ` · ${s.player}` : ""}` }) : undefined}
+            >
+              <title>{`${s.goal ? "Gol" : (EVENT_OUTCOMES.shot?.[s.outcome ?? ""] ?? "Tiro")} · ${when(s.moment)}${s.player ? ` · ${s.player}` : ""}${onPick ? " · clic para ver el video" : ""}`}</title>
             </circle>
           ))}
         </Pitch>
@@ -582,7 +606,7 @@ function Shots({ data, side }: { data: ReportData; side: Side }) {
   );
 }
 
-function Crosses({ data, side }: { data: ReportData; side: Side }) {
+function Crosses({ data, side, onPick }: { data: ReportData; side: Side; onPick?: PickMoment }) {
   const m = data.maps;
   const crossLabels = EVENT_OUTCOMES.cross ?? {};
   const arrows = m.crosses.filter((c) => c.team === side);
@@ -620,8 +644,10 @@ function Crosses({ data, side }: { data: ReportData; side: Side }) {
             strokeWidth={0.6}
             strokeDasharray={c.outcome ? undefined : "1.2 0.8"}
             markerEnd={`url(#arrow-${side})`}
+            style={onPick ? { cursor: "pointer", pointerEvents: "stroke" } : undefined}
+            onClick={onPick ? () => onPick({ video_id: c.moment.video_id, t: c.moment.t, label: `Centro${c.player ? ` · ${c.player}` : ""}` }) : undefined}
           >
-            <title>{`${when(c.moment)} · ${c.outcome ? crossLabels[c.outcome] : "sin resultado"}${c.player ? ` · ${c.player}` : ""}`}</title>
+            <title>{`${when(c.moment)} · ${c.outcome ? crossLabels[c.outcome] : "sin resultado"}${c.player ? ` · ${c.player}` : ""}${onPick ? " · clic para ver el video" : ""}`}</title>
           </line>
         ))}
       </Pitch>

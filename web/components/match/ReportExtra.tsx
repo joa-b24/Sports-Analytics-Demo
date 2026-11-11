@@ -81,7 +81,7 @@ export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; sid
       }
     >
         <Pitch showDirection={false}>
-          {cells.map((c, k) => c.o > 0.08 && <rect key={k} x={c.x} y={c.y} width={cw} height={ch} fill={color(side)} opacity={0.75 * c.o} />)}
+          {cells.map((c, k) => c.o > 0.08 && <rect key={k} x={c.x} y={c.y} width={cw} height={ch} fill={color(side)} style={{ opacity: `calc(var(--heat-floor) + var(--heat-gain) * ${0.75 * c.o})` }} />)}
           {b.line_m !== null && (
             <>
               <line
@@ -111,7 +111,7 @@ export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; sid
 }
 
 // Every pass as an arrow from the passer to the receiver; progressive ones (10 m or more forward) in full color.
-export function PassMapSection({ parts, side, team, segmentsByVideo, events = [] }: { parts: Oriented[]; side: Side; team: string; segmentsByVideo: Record<string, Segment[]>; events?: MatchEvent[] }) {
+export function PassMapSection({ parts, side, team, segmentsByVideo, events = [], onPick }: { parts: Oriented[]; side: Side; team: string; segmentsByVideo: Record<string, Segment[]>; events?: MatchEvent[]; onPick?: (m: { video_id: string; t: number; label: string }) => void }) {
   const [all, setAll] = useState(false);
   const keyEvents = events.filter((e) => e.type === "key_pass" && e.team === side);
   const arrows = passArrows(parts, side, segmentsByVideo, keyEvents);
@@ -120,6 +120,9 @@ export function PassMapSection({ parts, side, team, segmentsByVideo, events = []
   const id = `pm-${side}`;
   const keys = arrows.filter((a) => a.key);
   const drawn = all ? arrows : arrows.filter((a) => a.progressive || a.key);
+  // A click on an arrow plays the pass: a few seconds before it, in the player of the report.
+  const hit = (a: { from: string | null; video_id: string; t: number }) =>
+    onPick ? { style: { cursor: "pointer", pointerEvents: "stroke" as const }, onClick: () => onPick({ video_id: a.video_id, t: a.t, label: `Pase${a.from ? ` de ${a.from}` : ""}` }) } : {};
   const byPlayer = new Map<string, number>();
   for (const a of arrows) if (a.progressive && a.from) byPlayer.set(a.from, (byPlayer.get(a.from) ?? 0) + 1);
   const top = [...byPlayer].sort((x, y) => y[1] - x[1]).slice(0, 5);
@@ -169,15 +172,16 @@ export function PassMapSection({ parts, side, team, segmentsByVideo, events = []
             strokeOpacity={a.progressive ? 0.95 : 0.45}
             strokeWidth={a.progressive ? 0.45 : 0.3}
             markerEnd={`url(#${id})`}
+            {...hit(a)}
           >
-            <title>{a.from ?? "sin nombre"}</title>
+            <title>{`${a.from ?? "sin nombre"}${onPick ? " · clic para ver el video" : ""}`}</title>
           </line>
         ))}
         {keys.map((a, i) => (
           <g key={`k${i}`}>
             <line x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2} stroke="var(--color-bg)" strokeWidth={1.3} strokeOpacity={0.7} />
-            <line x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2} stroke="var(--color-ball-track)" strokeWidth={0.7} markerEnd={`url(#${id})`}>
-              <title>{`Pase clave${a.from ? ` de ${a.from}` : ""}`}</title>
+            <line x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2} stroke="var(--color-ball-track)" strokeWidth={0.7} markerEnd={`url(#${id})`} {...hit(a)}>
+              <title>{`Pase clave${a.from ? ` de ${a.from}` : ""}${onPick ? " · clic para ver el video" : ""}`}</title>
             </line>
             <circle cx={a.x2} cy={a.y2} r={1.1} fill="var(--color-ball-track)" stroke="var(--color-bg)" strokeWidth={0.3} />
           </g>
@@ -198,13 +202,12 @@ export function PhysicalSection({ parts, side, team }: { parts: Oriented[]; side
         <thead>
           <tr className="text-left text-xs text-faint">
             <th className="py-1 font-normal">Jugadora</th>
-            <th className="py-1 text-right font-normal" title="Tiempo en cuadro (medido o rellenado); el relleno va en su propia columna">Tiempo visto</th>
+            <th className="py-1 text-right font-normal" title="Tiempo en cuadro (medido o rellenado)">Tiempo visto</th>
             <th className="py-1 text-right font-normal">Distancia</th>
             <th className="py-1 text-right font-normal">m/min</th>
             <th className="py-1 text-right font-normal">Vel. máx. km/h</th>
             <th className="py-1 text-right font-normal" title="Carrera de alta velocidad: distancia a más de 18 km/h">HSR</th>
             <th className="py-1 text-right font-normal">Sprints</th>
-            <th className="py-1 text-right font-normal" title="Parte del tiempo visto que viene de posiciones rellenadas (extrapoladas), no medidas">% relleno</th>
           </tr>
         </thead>
         <tbody>
@@ -222,13 +225,12 @@ export function PhysicalSection({ parts, side, team }: { parts: Oriented[]; side
               <td className="num py-1.5 text-right text-ink">{r.top_kmh ?? "—"}</td>
               <td className="num py-1.5 text-right text-ink">{r.hsr_m} m</td>
               <td className="num py-1.5 text-right text-ink">{r.sprints}</td>
-              <td className="num py-1.5 text-right text-muted">{Math.round(r.fill_time_pct)} %</td>
             </tr>
           ))}
         </tbody>
       </table>
       <p className="mt-1 text-xs text-faint">
-        Solo el tiempo en cuadro: lo que la cámara no ve no se mide. Velocidad sobre ventanas de 1 s; HSR: distancia a más de 18 km/h; sprint: más de 22 km/h durante 1 s o más. % relleno: parte del tiempo visto con posición rellenada, no medida.
+        Solo el tiempo en cuadro: lo que la cámara no ve no se mide. Velocidad sobre ventanas de 1 s; HSR: distancia a más de 18 km/h; sprint: más de 22 km/h durante 1 s o más.
       </p>
     </div>
   );
@@ -239,10 +241,12 @@ export function SectionsEditor({ layout, extras, onChange, onDropExtra, missing,
   const shown = layout;
   const rest = REPORT_SECTIONS.filter((s) => !shown.includes(s.id));
   return (
-    <div className="rounded-lg bg-raised p-4 print:hidden">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="cond text-base font-extrabold text-ink uppercase">Secciones</h3>
-        <button type="button" className="btn" onClick={onClose}>
+    <div className="rounded-lg bg-raised p-4 shadow-[inset_0_0_0_1px_var(--color-line-soft)] print:hidden">
+      <div className="mb-3 flex items-center gap-3">
+        <h3 className="cond m-0 text-base font-extrabold text-ink uppercase">Secciones</h3>
+        <span className="text-xs text-faint">{shown.length} en el informe · ordénalas con las flechas</span>
+        <span className="flex-1" />
+        <button type="button" className="btn btn-primary" onClick={onClose}>
           Listo
         </button>
       </div>
@@ -252,17 +256,20 @@ export function SectionsEditor({ layout, extras, onChange, onDropExtra, missing,
           const extra = id.startsWith("x:") ? extras.find((x) => `x:${x.id}` === id) : undefined;
           if (!d && !extra) return null;
           return (
-            <li key={id} className="flex items-center gap-2 rounded-md bg-surface px-3 py-1.5 text-sm">
+            <li key={id} className="flex items-center gap-2 rounded-md bg-surface px-3 py-1.5 text-sm shadow-[inset_0_0_0_1px_var(--color-line-soft)]">
+              <span className="tc w-5 text-right text-xs text-faint">{i + 1}</span>
               <span className="flex-1 text-ink">{d?.title ?? extra?.title}</span>
               {extra && <span className="tag">del dashboard</span>}
               {d && missing[id] && <span className="text-xs text-faint">{missing[id]}</span>}
               {d?.both && <span className="tag">compara</span>}
-              <button type="button" className="btn btn-ghost !p-1" aria-label="Subir" disabled={i === 0} onClick={() => onChange(moveSection(layout, id, -1))}>
-                <ArrowUp size={14} />
-              </button>
-              <button type="button" className="btn btn-ghost !p-1" aria-label="Bajar" disabled={i === shown.length - 1} onClick={() => onChange(moveSection(layout, id, 1))}>
-                <ArrowDown size={14} />
-              </button>
+              <span className="inline-flex overflow-hidden rounded-md shadow-[inset_0_0_0_1px_var(--color-line)]">
+                <button type="button" className="btn btn-ghost !rounded-none !p-1" aria-label="Subir" disabled={i === 0} onClick={() => onChange(moveSection(layout, id, -1))}>
+                  <ArrowUp size={14} />
+                </button>
+                <button type="button" className="btn btn-ghost !rounded-none !p-1" aria-label="Bajar" disabled={i === shown.length - 1} onClick={() => onChange(moveSection(layout, id, 1))}>
+                  <ArrowDown size={14} />
+                </button>
+              </span>
               <button type="button" className="btn btn-ghost !p-1" aria-label="Quitar del informe" title={extra ? "Quitar este gráfico del informe" : "Ocultar del informe"} onClick={() => (extra ? onDropExtra(extra.id) : onChange(toggleSection(layout, id)))}>
                 <EyeSlash size={14} />
               </button>

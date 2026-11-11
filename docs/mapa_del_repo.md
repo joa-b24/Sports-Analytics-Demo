@@ -427,6 +427,11 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 - Un tiro libre marcado «Tiro directo» o con resultado «Remate», sin tiro propio, cuenta como tiro (`finishes` en `lib/analysis.ts`).
 - Videos de los paneles: R (o clic otra vez en el evento) vuelve a la marca (`MomentPlayer.tsx`).
 
+### 5.13 Informe y presentación (2026-11-10)
+- Informe: cada sección trae los botones de guardar imagen y añadir a la presentación (`usePanelTools` en `components/match/Panel.tsx`); tiros, centros y pases abren el reproductor al hacer clic (ventana flotante; `PassArrow` trae `video_id` y `t`). Barra superior y editor de secciones rediseñados. Se quitaron las notas de posesión y la etiqueta de nivel de datos de la portada, y «% relleno» de la tabla física.
+- Mapas de calor: opacidad con `--heat-gain` y `--heat-floor` (`globals.css`), más fuertes en tema claro y en papel blanco.
+- Presentación: diapositivas de animación (`kind: "board"`, `components/match/BoardSlide.tsx`) de un pizarrón (`board`) o de una jugada del partido (`play`); se reproducen al presentar.
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |

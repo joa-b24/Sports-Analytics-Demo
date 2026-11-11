@@ -25,9 +25,10 @@ type Sent = "deck" | "report" | null;
 // The three tools of a chart: save it as an image (PNG, with the colours of the app), put it in the presentation and put it
 // in the report. Sending the same chart again refreshes the slide (or section) it already made, never repeats it, and the
 // button says it is already there.
-export function Panel({ title, note, children, className = "", delay = 0 }: { title: string; note?: React.ReactNode; children: React.ReactNode; className?: string; delay?: number; defaultWide?: boolean }) {
+// The tools as a hook: `box` is the element drawn into the image; `withReport` adds the «al informe» button (the report's own
+// sections do not need it). Panel and the sections of the report share it.
+export function usePanelTools(title: string, box: React.RefObject<HTMLElement | null>, note?: React.ReactNode, withReport = true) {
   const id = slug(title);
-  const box = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<Sent>(null);
   const matchId = useContext(PanelMatch);
@@ -85,7 +86,7 @@ export function Panel({ title, note, children, className = "", delay = 0 }: { ti
           <PresentationChart size={14} weight={inDeck ? "fill" : "regular"} />
         </button>
       )}
-      {matchId && (
+      {matchId && withReport && (
         <button
           type="button"
           className={`btn btn-ghost !p-1 ${inReport ? "text-ok" : ""}`}
@@ -103,6 +104,12 @@ export function Panel({ title, note, children, className = "", delay = 0 }: { ti
     </span>
   );
 
+  return tools;
+}
+
+export function Panel({ title, note, children, className = "", delay = 0 }: { title: string; note?: React.ReactNode; children: React.ReactNode; className?: string; delay?: number; defaultWide?: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
+  const tools = usePanelTools(title, box, note);
   return (
     <div ref={box} className={`min-w-0 ${className}`}>
       <Card title={title} note={tools} delay={delay} className="h-full">

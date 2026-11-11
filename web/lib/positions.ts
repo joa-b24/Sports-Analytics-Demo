@@ -693,6 +693,8 @@ export interface PassArrow {
   from: string | null; // passer's name
   progressive: boolean; // gains at least PROGRESSIVE_M towards the rival goal
   key?: true; // the analyst tagged a key pass (event) on it
+  video_id: string; // where it is seen (video of its part) and when (t_video, s)
+  t: number;
 }
 export const KEY_PASS_WINDOW_S = 3;
 export const PROGRESSIVE_M = 10;
@@ -726,7 +728,7 @@ export function passArrows(
       const t1 = p.frame / o.file.fps + KEY_PASS_WINDOW_S;
       const k = keyPasses.findIndex((e, i) => !usedKey.has(i) && (e.video_id ?? "v1") === o.file.video_id && e.t_video >= t0 && e.t_video <= t1 && (!e.player_id || !from || e.player_id === from));
       if (k >= 0) usedKey.add(k);
-      out.push({ x1, y1, x2, y2, from, progressive: (x2 - x1) * mx >= PROGRESSIVE_M, ...(k >= 0 ? { key: true as const } : {}) });
+      out.push({ x1, y1, x2, y2, from, video_id: o.file.video_id, t: p.from_frame / o.file.fps, progressive: (x2 - x1) * mx >= PROGRESSIVE_M, ...(k >= 0 ? { key: true as const } : {}) });
     }
   }
   return out;

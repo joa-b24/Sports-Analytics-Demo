@@ -251,7 +251,7 @@ export function PlayerHeat({ parts, row, color, name, touchLayer = false, segmen
             let i = k % h.nx;
             let j = Math.floor(k / h.nx);
             if (row.team === "opp") [i, j] = [h.nx - 1 - i, h.ny - 1 - j];
-            return <rect key={k} x={i * cw} y={j * ch} width={cw} height={ch} fill={color} opacity={0.85 * (v / max)} />;
+            return <rect key={k} x={i * cw} y={j * ch} width={cw} height={ch} fill={color} style={{ opacity: `calc(var(--heat-floor) + var(--heat-gain) * ${0.85 * (v / max)})` }} />;
           })}
           {dots.map(([x, y], n) => (
             <circle key={`t${n}`} cx={x} cy={y} r={0.8} fill="var(--color-ink)" stroke="var(--color-bg)" strokeWidth={0.25} opacity={0.9} />

@@ -51,7 +51,7 @@ export function PositionsCards({ match, videoIds }: { match: Match; videoIds: st
     const ch = PITCH.width / h.ny;
     return h.seconds.map((v, k) =>
       v / max <= 0.03 ? null : (
-        <rect key={k} x={(k % h.nx) * cw} y={Math.floor(k / h.nx) * ch} width={cw} height={ch} fill={side === "own" ? COLORS.own : COLORS.opp} opacity={0.08 + 0.8 * Math.sqrt(v / max)} pointerEvents="none" />
+        <rect key={k} x={(k % h.nx) * cw} y={Math.floor(k / h.nx) * ch} width={cw} height={ch} fill={side === "own" ? COLORS.own : COLORS.opp} style={{ opacity: `calc(var(--heat-floor) + var(--heat-gain) * ${0.08 + 0.8 * Math.sqrt(v / max)})` }} pointerEvents="none" />
       ),
     );
   };
