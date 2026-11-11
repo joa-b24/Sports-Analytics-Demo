@@ -1,6 +1,6 @@
 {
   "installCommand": "cd web && npm ci",
-  "buildCommand": "node scripts/build_mobile.mjs",
+  "buildCommand": "node scripts/build_mobile.mjs --full",
   "outputDirectory": "web/dist-mobile",
   "cleanUrls": true
 }
