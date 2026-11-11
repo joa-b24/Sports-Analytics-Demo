@@ -174,3 +174,19 @@ test("el CSV de eventos lleva quién entra en los cambios, y solo en ellos", asy
   assert.equal(r.playerInDropped, 1);
   assert.equal(r.events[1].detail, "yellow");
 });
+
+test("eventsFromCsv: una marca a pocos metros fuera de la cancha (gol en la red) queda en la línea, no vacía; muy lejos sí se vacía", () => {
+  const out = eventsFromCsv(
+    [
+      { t_video: "10", type: "goal", team: "own", x: "108.9", y: "34" },
+      { t_video: "20", type: "recovery", team: "own", x: "50", y: "-0.5" },
+      { t_video: "30", type: "recovery", team: "own", x: "130", y: "34" },
+    ],
+    "m1",
+    (() => { let n = 0; return () => `e${n++}`; })(),
+  );
+  assert.deepEqual([out.events[0].x, out.events[0].y], [105, 34]);
+  assert.deepEqual([out.events[1].x, out.events[1].y], [50, 0]);
+  assert.equal(out.events[2].x, null);
+  assert.equal(out.offPitch, 1);
+});

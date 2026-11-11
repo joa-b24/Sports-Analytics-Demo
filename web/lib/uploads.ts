@@ -229,6 +229,9 @@ const num = (v: string | undefined): number | null => {
 
 // Rows of an events CSV onto events of one match. A row without a valid t_video (seconds, >= 0) or with a type outside
 // the catalogue is skipped and counted; coordinates outside the 105 x 68 pitch become missing, an unknown team "unk".
+// How far outside the pitch (m) a mark may be and still be taken as on the line.
+export const OUTSIDE_TOL_M = 5;
+
 export function eventsFromCsv(
   rows: Record<string, string>[],
   matchId: string,
@@ -239,13 +242,16 @@ export function eventsFromCsv(
   let offPitch = 0;
   // player_in only belongs to substitutions; in any other row it is left out, and counted so the import says so.
   let playerInDropped = 0;
+  // A mark a little outside the pitch is a mark on the line (a goal taken in the net, a ball at the touchline): the app lets
+  // it be tagged there, so the import keeps it on the line instead of emptying it (which made the event «por revisar» in the
+  // other copy of the app). Farther than OUTSIDE_TOL_M it is an error: left empty and counted.
   const coord = (v: number | null, max: number) => {
     if (v === null) return null;
-    if (v < 0 || v > max) {
+    if (v < -OUTSIDE_TOL_M || v > max + OUTSIDE_TOL_M) {
       offPitch++;
       return null;
     }
-    return v;
+    return Math.min(max, Math.max(0, v));
   };
   for (const r of rows) {
     const t = num(r.t_video);
