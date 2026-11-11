@@ -796,6 +796,7 @@ export interface PassArrow {
   key?: true; // the analyst tagged a key pass (event) on it
   video_id: string; // where it is seen (video of its part) and when (t_video, s)
   t: number;
+  t_end: number; // when the receiver has it
 }
 export const KEY_PASS_WINDOW_S = 3;
 export const PROGRESSIVE_M = 10;
@@ -808,7 +809,6 @@ export function passArrows(
   playByVideo: Record<string, Segment[]> = {},
   keyPasses: { video_id?: string; t_video: number; player_id?: string | null }[] = [],
 ): PassArrow[] {
-  const usedKey = new Set<number>();
   const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
   const out: PassArrow[] = [];
   for (const o of parts) {
@@ -823,16 +823,24 @@ export function passArrows(
       let [x1, y1] = orient(o, a.x, a.y);
       let [x2, y2] = orient(o, b.x, b.y);
       if (team === "opp") [x1, y1, x2, y2] = [PITCH.length - x1, PITCH.width - y1, PITCH.length - x2, PITCH.width - y2];
-      const from = name.get(p.from) ?? null;
-      // A key pass event within a few seconds of the pass (and the passer's name, when both have one) marks the arrow.
-      const t0 = p.from_frame / o.file.fps - KEY_PASS_WINDOW_S;
-      const t1 = p.frame / o.file.fps + KEY_PASS_WINDOW_S;
-      const k = keyPasses.findIndex((e, i) => !usedKey.has(i) && (e.video_id ?? "v1") === o.file.video_id && e.t_video >= t0 && e.t_video <= t1 && (!e.player_id || !from || e.player_id === from));
-      if (k >= 0) usedKey.add(k);
-      out.push({ x1, y1, x2, y2, from, video_id: o.file.video_id, t: p.from_frame / o.file.fps, progressive: (x2 - x1) * mx >= PROGRESSIVE_M, ...(k >= 0 ? { key: true as const } : {}) });
+      out.push({ x1, y1, x2, y2, from: name.get(p.from) ?? null, video_id: o.file.video_id, t: p.from_frame / o.file.fps, t_end: p.frame / o.file.fps, progressive: (x2 - x1) * mx >= PROGRESSIVE_M });
     }
   }
-  return out;
+  return markKeyPasses(out, keyPasses);
+}
+
+// A key pass event within a few seconds of the pass (and the passer's name, when both have one) marks the arrow; each event
+// marks at most one. Works on saved arrows too (they carry when the pass started and ended).
+export function markKeyPasses(arrows: PassArrow[], keyPasses: { video_id?: string; t_video: number; player_id?: string | null }[]): PassArrow[] {
+  if (keyPasses.length === 0) return arrows.map(({ key: _k, ...a }) => a);
+  const used = new Set<number>();
+  return arrows.map(({ key: _k, ...a }) => {
+    const t0 = a.t - KEY_PASS_WINDOW_S;
+    const t1 = a.t_end + KEY_PASS_WINDOW_S;
+    const k = keyPasses.findIndex((e, i) => !used.has(i) && (e.video_id ?? "v1") === a.video_id && e.t_video >= t0 && e.t_video <= t1 && (!e.player_id || !a.from || e.player_id === a.from));
+    if (k >= 0) used.add(k);
+    return k >= 0 ? { ...a, key: true as const } : a;
+  });
 }
 
 // Where one player touched the ball (measured touches only, see touches()), with her team attacking right. For the map

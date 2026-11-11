@@ -9,8 +9,7 @@ import { Fold } from "@/components/match/Fold";
 import { analysisParamsOf } from "@/lib/tech";
 import { Select } from "@/components/Select";
 import { useHeaderRightSlot, useHeaderSlot } from "@/lib/stepBus";
-import { useFixedParts } from "@/lib/fixed";
-import { trackedPasses } from "@/lib/passSources";
+import { useTracking } from "@/lib/useTracking";
 import { BinChart, EventTimeline, FigureList, MirrorBars, MomentumChart, PartsDuo, ScoreStrip, ShotMap, ZoneMap, type PartsRow } from "@/components/charts";
 import { GoalsList } from "@/components/match/GoalsList";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
@@ -86,14 +85,13 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const headerSlot = useHeaderSlot();
   const rightSlot = useHeaderRightSlot();
   // Passes completed (read from the tracking): the headline row counts them with possession.
-  const fixed = useFixedParts(match.folder, videoIds);
+  const trk = useTracking(match, videoIds, segmentsByVideo);
   const passTotals = useMemo(() => {
-    const parts = fixed?.parts ?? [];
-    if (parts.length === 0) return null;
-    const own = trackedPasses(parts, "own", segmentsByVideo);
-    const opp = trackedPasses(parts, "opp", segmentsByVideo);
+    const own = trk.view.passes("own");
+    const opp = trk.view.passes("opp");
+    if (!own || !opp) return null;
     return own.completed + own.cut + opp.completed + opp.cut > 0 ? { own, opp } : null;
-  }, [fixed, segmentsByVideo]);
+  }, [trk]);
   // Analysis works on a joined axis: a moment is looked up by event id among the events with their own video times.
   const ownTimes = useMemo(() => (videoEvents ? new Map(videoEvents.map((e) => [e.event_id, e])) : null), [videoEvents]);
 

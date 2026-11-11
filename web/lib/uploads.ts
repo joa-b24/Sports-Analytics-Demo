@@ -10,7 +10,7 @@ import { EMPTY_REPORT, EVENT_TYPES, type EventType, type Match, type MatchEvent,
 export const VIDEO_EXT = ["mp4", "webm", "mkv", "mov"] as const;
 const INNER_RULES: { kind: UploadKind; re: RegExp }[] = [
   { kind: "video", re: /^video\/[\w-]+\.(mp4|webm|mkv|mov)$/i },
-  { kind: "tracking", re: /^tracking\/(tracks|calib|library|anchors|labels|ball|tracking)_[\w.-]+\.(json|npz|parquet)$/ },
+  { kind: "tracking", re: /^tracking\/(tracks|calib|library|anchors|labels|ball|tracking|aggregates)_[\w.-]+\.(json|npz|parquet)$/ },
   { kind: "match", re: /^(match\.yaml|segments\.csv|events_[\w.-]+\.csv)$/ },
   { kind: "edits", re: /^edits\/edit_[\w.-]+\.json$/ },
   { kind: "report", re: /^(report|clips)_[\w.-]+\.json$/ },

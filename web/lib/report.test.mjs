@@ -315,3 +315,22 @@ test("tarjetas, fueras de lugar y atajadas solo aparecen si se etiquetaron; camb
   assert.deepEqual(r.summary.substitutions.map((s) => [s.out, s.in]), [["Sale", "Entra"]]);
   assert.deepEqual([r.cover.shootout.own, r.cover.shootout.opp], [1, 0]);
 });
+
+import { reportEvents, reportTracking } from "./report.ts";
+test("el informe armado con los datos guardados (agregados) es idéntico al armado con las posiciones", () => {
+  const people = [{ id: 1, team: "own", player_id: "Ana Uno", tracks: [1] }, { id: 2, team: "own", player_id: "Bea Dos", tracks: [2] }];
+  const frames = Array.from({ length: 100 }, (_, i) => ({ frame: i * 3, positions: [{ id: 1, x: 40, y: 20, source: "auto" }, { id: 2, x: 60, y: 40, source: "auto" }] }));
+  const ball = Array.from({ length: 100 }, (_, i) => {
+    const ana = Math.floor(i / 20) % 2 === 0;
+    return { frame: i * 3, x: ana ? 40.3 : 60.3, y: ana ? 20 : 40, source: i % 20 < 14 ? "manual" : "interpolated" };
+  });
+  const parts = [{ ownRight: true, file: { kind: "tracks_fixed", match_id: "m1", video_id: "v1", fps: 30, start_frame: 0, end_frame: 300, stride: 3, people, frames, ball } }];
+  const seg = { v1: [{ segment_id: "s01", start: 0, end: 10, tipo: "juego" }] };
+  const base = input({ events: sample(), segmentsByVideo: seg });
+  const live = buildReport({ ...base, parts });
+  // What the aggregates save: worked out once, through the file (text and back), and the report made with no positions.
+  const raw = reportEvents(base.match, base.events);
+  const saved = JSON.parse(JSON.stringify(reportTracking({ match: base.match, parts, segmentsByVideo: seg, raw })));
+  const light = buildReport({ ...base, parts: [], tracking: saved });
+  assert.deepEqual(JSON.parse(JSON.stringify(light)), JSON.parse(JSON.stringify(live)));
+});

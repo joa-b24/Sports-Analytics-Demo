@@ -10,10 +10,9 @@ import { RatingBadge } from "@/components/match/RatingBadge";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { Card } from "@/components/Shell";
 import { TrackingLoading } from "@/components/TrackingLoading";
-import { useFixedParts } from "@/lib/fixed";
+import { useTracking } from "@/lib/useTracking";
 import { networkFromPasses, passStats, type Net, type PlayerPasses } from "@/lib/passes";
-import { PASS_SOURCE_LABEL, trackedNet, trackedPasses, type PassSource } from "@/lib/passSources";
-import { passStretches } from "@/lib/positions";
+import { PASS_SOURCE_LABEL, type PassSource } from "@/lib/passSources";
 import { type Segment } from "@/lib/segments";
 import { setPref, useStore } from "@/lib/store";
 import { EVENT_LABELS, type EventType, type Match, type MatchEvent } from "@/lib/types";
@@ -39,8 +38,9 @@ export function PassesCards({
   segmentsByVideo?: Record<string, Segment[]>;
 }) {
   const { passes: all = [], roster = [] } = useStore();
-  const fixed = useFixedParts(match.folder, videoIds);
-  const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
+  const trk = useTracking(match, videoIds, segmentsByVideo);
+  const fixed = trk.loading ? null : trk;
+  const view = trk.view;
   const { ratings } = usePlayersData(match, events, videoIds, segmentsByVideo);
   const [team, setTeam] = useState<Side>("own");
   // Order of the table: a click on a header sorts by it (down, then up, then back to the original order).
@@ -49,11 +49,11 @@ export function PassesCards({
   const numberOf = new Map((match.kind === "own" ? roster : []).map((p) => [p.player_id, p.number]));
   const label = (id: string) => (numberOf.get(id) != null ? String(numberOf.get(id)) : id.replace(/^#/, ""));
 
-  const tracked = useMemo(() => trackedPasses(parts, team, segmentsByVideo), [parts, team, segmentsByVideo]);
-  const trackedNetwork = useMemo(() => trackedNet(parts, team, segmentsByVideo), [parts, team, segmentsByVideo]);
+  const tracked = useMemo(() => view.passes(team) ?? { completed: 0, cut: 0, approx: 0, players: [] }, [view, team]);
+  const trackedNetwork = useMemo(() => view.net(team) ?? { nodes: [], edges: [], passes: 0, completed: 0, unnamed: 0 }, [view, team]);
   const handNet = useMemo(() => networkFromPasses(hand, events, team, label), [hand, events, team]); // eslint-disable-line react-hooks/exhaustive-deps -- label follows the roster
   const handStats = useMemo(() => passStats(hand), [hand]);
-  const stretches = useMemo(() => passStretches(parts, segmentsByVideo), [parts, segmentsByVideo]);
+  const stretches = useMemo(() => view.stretches(), [view]);
 
   const has: Record<PassSource, boolean> = { tracking: tracked.completed + tracked.cut > 0, hand: hand.length > 0 };
   // Passes are read from the tracking; hand-tagged ones only show for old matches that have nothing else (no toggle).

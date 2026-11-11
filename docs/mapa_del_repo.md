@@ -445,6 +445,13 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 ### 5.16 Calificación de jugadora, en revisión (2026-11-10)
 - `lib/rating.ts` (test: `rating.test.mjs`): z contra su equipo, pesos por línea, descuentos y bonos por consecuencia (ventanas de Configuración › Análisis). `components/match/RatingBadge.tsx` la dibuja marcada «en revisión»; sale en Ficha, Tabla por jugadora, Perfil comparativo e Informe (tabla física). Detalle y fórmula en `docs/propuesta_calificacion_jugadora.md`. La «Tabla por jugadora» (`PassesCards.tsx`) ocupa el ancho completo y se ordena con clic en los encabezados.
 
+### 5.17 Datos del tracking resumidos y zip ligero (2026-11-11)
+- **Agregados** (`lib/aggregates.ts`, archivo `tracking/aggregates_<carpeta>.json`): lo que la app calcula de las posiciones (mapas de calor por equipo y jugadora, pases, red de pases, toques, bloque por tramos de 5 y 10 min, carga física, cifras por jugadora, y lo que lee el Informe: posesión, balón, red) calculado una vez. Pesa unos cientos de KB; el tracking, decenas de MB por parte.
+- **Cómo se leen** (`lib/useTracking.ts`, `lib/trackingView.ts`): los paneles piden la vista de tracking (`view.heat`, `view.passes`, `view.block`...) sin saber si sale de las posiciones o de los agregados. Si el archivo existe y su huella coincide (archivos de tracking con su tamaño, tramos de juego, direcciones de ataque, cambios, tarjetas rojas, pérdidas y recuperaciones) se lee eso y **no se cargan las posiciones**; si no, se leen las posiciones, se muestra ya y se arman los agregados en segundo plano y se guardan. Varios paneles comparten una sola lectura.
+- **Zip ligero** (Datos › «Descargar el zip de un partido» › Ligero): match.yaml, segments, eventos de ahora, ediciones, informe y los agregados, sin tracking. Lo abre el celular. «Completo» lleva además todo el tracking. Antes de armar cualquiera se aseguran los agregados al día (`ensureAggregates`).
+- Sin posiciones solo se ve lo que está en los agregados (la mesa de corrección y los clips no). Un panel que pide algo que no se guardó (la ficha de una jugadora sin nombre en el tracking) lo dice y queda vacío.
+- Pruebas: `aggregates.test.mjs` (los datos guardados dan lo mismo que calcular de las posiciones) y la del Informe en `report.test.mjs`.
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |

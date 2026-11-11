@@ -37,7 +37,7 @@ export function PlayerProfile({
   ownTimes: Map<string, MatchEvent> | null;
   timeLabel?: (e: MatchEvent) => string;
 }) {
-  const { rows, parts, label, fixed, ratings } = usePlayersData(match, events, videoIds, segmentsByVideo);
+  const { rows, view, label, fixed, ratings } = usePlayersData(match, events, videoIds, segmentsByVideo);
   const moment = useMomentPlayer(match);
   const showTouches = usePref("profile:touches", "0") === "1";
   const prefKey = `profile:${match.match_id}`;
@@ -134,13 +134,13 @@ export function PlayerProfile({
                 <input type="checkbox" checked={showTouches} onChange={(e) => setPref("profile:touches", e.target.checked ? "1" : "0")} />
                 Sobreponer los toques de balón
               </label>
-              <PlayerHeat parts={parts} row={row} color={color} name={label(row)} touchLayer={showTouches} segmentsByVideo={segmentsByVideo} />
+              <PlayerHeat view={view} row={row} color={color} name={label(row)} touchLayer={showTouches} />
             </>
           ) : <p className="text-sm text-faint">No hay posiciones con su nombre en el tracking corregido.</p>}
         </Panel>
 
         <Panel title="Mapa de acciones" note="elige qué ver; atacando hacia la derecha">
-          <PlayerMap row={row} events={mine} parts={parts} segmentsByVideo={segmentsByVideo} color={color} onPick={open} />
+          <PlayerMap row={row} events={mine} view={view} color={color} onPick={open} />
         </Panel>
 
         <Panel title="Eventos de la jugadora" note={`${mine.length} con su nombre`}>

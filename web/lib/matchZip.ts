@@ -15,7 +15,11 @@ export interface ZipProgress {
 
 // Paths (inside the folder) of every file that goes in: the accepted kinds but the video and the events CSV on disk (the
 // events come from the browser).
-export async function matchZipPaths(folder: string): Promise<string[]> {
+// `light`: only what is needed to read the match (no tracking but the aggregates): a few MB, for the phone.
+export type ZipMode = "full" | "light";
+export const isLightPath = (rel: string) => !rel.startsWith("tracking/") || /^tracking\/aggregates_/.test(rel);
+
+export async function matchZipPaths(folder: string, mode: ZipMode = "full"): Promise<string[]> {
   const out: string[] = [];
   const walk = async (inner: string, depth: number) => {
     const list = await listLocal(`matches/${folder}${inner ? `/${inner}` : ""}`);
@@ -27,6 +31,7 @@ export async function matchZipPaths(folder: string): Promise<string[]> {
       }
       const kind = innerKind(rel);
       if (!kind || kind === "video" || /^(events\/)?events_[\w.-]+\.csv$/.test(rel)) continue;
+      if (mode === "light" && !isLightPath(rel)) continue;
       out.push(rel);
     }
   };
@@ -36,8 +41,8 @@ export async function matchZipPaths(folder: string): Promise<string[]> {
 
 // The zip as bytes. The files are read one by one (a tracking part is tens of MB); a file that cannot be read is listed
 // in `failed` and the zip is still made with the rest.
-export async function buildMatchZip(folder: string, events: MatchEvent[], onProgress: (p: ZipProgress) => void): Promise<{ bytes: Uint8Array; files: number; failed: string[] }> {
-  const paths = await matchZipPaths(folder);
+export async function buildMatchZip(folder: string, events: MatchEvent[], onProgress: (p: ZipProgress) => void, mode: ZipMode = "full"): Promise<{ bytes: Uint8Array; files: number; failed: string[] }> {
+  const paths = await matchZipPaths(folder, mode);
   const files: Record<string, Uint8Array | [Uint8Array, { level: 0 }]> = {};
   const failed: string[] = [];
   let done = 0;

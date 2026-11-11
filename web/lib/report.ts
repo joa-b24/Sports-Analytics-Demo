@@ -33,7 +33,7 @@ import {
 } from "./analysis.ts";
 import type { ClipEdit } from "./annotations.ts";
 import { fmtT, youtubeLink } from "./format.ts";
-import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, type Oriented, type PossessionState, type TeamPasses } from "./positions.ts";
+import { COVER_STEP_S, PASS_MAX_S, POSSESS_M, ballReport, passNetwork, type BallReport, type Oriented, type PassNetwork, type PossessionState, type TeamPasses } from "./positions.ts";
 import { possessionParamsOf, techSummary } from "./tech.ts";
 import { trackingParamsOf } from "./techTracking.ts";
 import { anchorPossessionToEvents } from "./possessionEvents.ts";
@@ -147,7 +147,20 @@ function addSpan(cells: Set<string>, video: string, t0: number, t1: number, play
   }
 }
 
+// What the tracking says about the level (it does not depend on the events): the play time, how much of it has the ball
+// followed and positions reviewed, and how many of the positions of the analysed team have a name.
+export interface LevelIngredients {
+  play_s: number | null;
+  ball: Coverage;
+  tracking: Coverage;
+  named_share: number | null;
+}
+
 export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, Segment[]>, parts: Oriented[], poss: PossessionResult = possessionIntervals(parts, segmentsByVideo)): LevelInfo {
+  return composeLevel(events.length, levelIngredients(segmentsByVideo, parts, poss));
+}
+
+export function levelIngredients(segmentsByVideo: Record<string, Segment[]>, parts: Oriented[], poss: PossessionResult): LevelIngredients {
   const closed = (v: string) => (segmentsByVideo[v] ?? []).filter((g) => g.tipo === "juego" && g.end !== null);
   const hasPlay = Object.keys(segmentsByVideo).some((v) => closed(v).length > 0);
   const play_s = hasPlay ? Object.keys(segmentsByVideo).reduce((s, v) => s + playInside(closed(v), 0, Infinity), 0) : null;
@@ -178,8 +191,13 @@ export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, 
   const ball: Coverage = { seconds: ballS, share: share(ballS) };
   const tracking: Coverage = { seconds: trackS, share: share(trackS) };
   const named_share = ownSeen > 0 ? ownNamed / ownSeen : null;
+  return { play_s, ball, tracking, named_share };
+}
 
-  const sources = { events: events.length > 0, ball: ball.seconds > 0, tracking: trackS > 0, names: (named_share ?? 0) > 0 };
+export function composeLevel(eventCount: number, ing: LevelIngredients): LevelInfo {
+  const { play_s, ball, tracking, named_share } = ing;
+  const trackS = tracking.seconds;
+  const sources = { events: eventCount > 0, ball: ball.seconds > 0, tracking: trackS > 0, names: (named_share ?? 0) > 0 };
   // The level is the last of the ladder with its source there (N3 needs N2: the ball is marked in the reviewed parts).
   const level: Level = !sources.events ? 0 : !sources.ball ? 1 : !sources.tracking ? 2 : !sources.names ? 3 : 4;
   const cover = (c: Coverage) => (c.share !== null ? pct(c.share) : `${Math.round(c.seconds / 60)} min`);
@@ -197,7 +215,7 @@ export function dataLevel(events: MatchEvent[], segmentsByVideo: Record<string, 
       : play_s === null && (sources.ball || sources.tracking)
         ? "Marca los tramos de juego para saber qué parte del partido está medida."
         : null;
-  return { level, events: events.length, play_s, ball, tracking, named_share, sources, label: `Nivel de datos: N${level} · ${tail}`, next };
+  return { level, events: eventCount, play_s, ball, tracking, named_share, sources, label: `Nivel de datos: N${level} · ${tail}`, next };
 }
 
 // What a section needs. `ok` false: the report shows `need` instead (and nothing when printed).
@@ -490,6 +508,8 @@ export interface ReportInput {
   segmentsByVideo: Record<string, Segment[]>;
   // Corrected (tracks_fixed) or processed parts, oriented with the analysed team attacking right (lib/fixed.ts).
   parts: Oriented[];
+  // What the tracking gives the report, already worked out (from the saved aggregates). Without it, it is worked out from `parts`.
+  tracking?: ReportTracking | null;
   roster: RosterPlayer[];
   // Every match in the app with its events, for the recent results.
   library: { match: Match; events: MatchEvent[] }[];
@@ -518,6 +538,41 @@ function optionalRows(events: MatchEvent[], own: Record<string, number>, opp: Re
     { key: "saves", label: "Atajadas de la portera", own: saves("opp"), opp: saves("own") },
   ];
   return rows.filter((r) => r.own + r.opp > 0);
+}
+
+// Everything the report reads from the positions and the ball, once worked out (the aggregates save it, lib/aggregates.ts,
+// so the report can be made where the positions are not: the lightweight copy of the match). Plain data.
+export interface ReportTracking {
+  ingredients: LevelIngredients;
+  ball: BallReport | null;
+  possession: PossessionSummary | null;
+  net: PassNetwork | null;
+  // Names of the players in the tracking (to scrub them when the report is anonymised).
+  names: string[];
+}
+
+// The events of the match that count for the report: those of its videos.
+export const reportEvents = (match: Match, events: MatchEvent[]) => {
+  const videos = matchVideos(match);
+  return events.filter((e) => e.match_id === match.match_id && videos.some((v) => v.video_id === videoOf(e)));
+};
+
+export function reportTracking({ match, parts, segmentsByVideo, raw }: { match: Match; parts: Oriented[]; segmentsByVideo: Record<string, Segment[]>; raw: MatchEvent[] }): ReportTracking {
+  // Possession as intervals (lib/possession.ts): one reading for the coverage, the possession and its warnings.
+  // Held to the tagged losses and recoveries (lib/possessionEvents.ts): the tracking alone credits whoever is nearest.
+  const poss = anchorPossessionToEvents(possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match), undefined, trackingParamsOf(match).ballJumpMs), raw);
+  const ingredients = levelIngredients(segmentsByVideo, parts, poss);
+  const hasBall = ingredients.ball.seconds > 0;
+  const br = hasBall ? ballReport(parts, segmentsByVideo, raw, possessionCellsOf(poss.samples)) : null;
+  const names = new Set<string>();
+  for (const o of parts) for (const p of o.file.people) if (p.player_id) names.add(p.player_id);
+  return {
+    ingredients,
+    ball: br,
+    possession: br ? summarizePossession(poss.samples) : null,
+    net: (ingredients.named_share ?? 0) > 0 && hasBall ? passNetwork(parts, "own", segmentsByVideo) : null,
+    names: [...names],
+  };
 }
 
 export function buildReport(input: ReportInput): ReportData {
@@ -557,12 +612,10 @@ export function buildReport(input: ReportInput): ReportData {
   };
   const side = (e: MatchEvent) => e.team as Side;
 
-  // Possession as intervals (lib/possession.ts): one reading for the coverage, the possession and its warnings.
-  // Held to the tagged losses and recoveries (lib/possessionEvents.ts): the tracking alone credits whoever is nearest.
-  const poss = anchorPossessionToEvents(possessionIntervals(parts, segmentsByVideo, possessionParamsOf(match), undefined, trackingParamsOf(match).ballJumpMs), raw);
-  const level = dataLevel(raw, segmentsByVideo, parts, poss);
-  const br = level.sources.ball ? ballReport(parts, segmentsByVideo, raw, possessionCellsOf(poss.samples)) : null;
-  const possSummary = br ? summarizePossession(poss.samples) : null;
+  const trk = input.tracking ?? reportTracking({ match, parts, segmentsByVideo, raw });
+  const level = composeLevel(raw.length, trk.ingredients);
+  const br = trk.ball;
+  const possSummary = trk.possession;
   const ballSummary: BallSummary | null = br && {
     followed_s: br.followed_s,
     share: level.play_s ? Math.min(1, br.followed_s / level.play_s) : null,
@@ -578,7 +631,7 @@ export function buildReport(input: ReportInput): ReportData {
     },
     leftovers: br.leftovers.map((l) => ({ team: l.team, moment: momentAt(l.video_id, l.t0), seconds: Math.round((l.t1 - l.t0) * 10) / 10 })),
   };
-  const net = level.sources.names && level.sources.ball ? passNetwork(parts, "own", segmentsByVideo) : null;
+  const net = trk.net;
   const network: NetworkData | null =
     net && net.passes > 0
       ? {
@@ -814,6 +867,7 @@ function anonymize(data: ReportData, input: ReportInput): ReportData {
   for (const e of input.events) if (e.player_id) names.add(e.player_id);
   for (const p of input.roster) names.add(p.player_id);
   for (const o of input.parts) for (const p of o.file.people) if (p.player_id) names.add(p.player_id);
+  for (const n of input.tracking?.names ?? []) names.add(n);
   const number = new Map(input.roster.map((p) => [p.player_id.toLowerCase(), p.number]));
   const code = new Map<string, string>();
   let k = 0;

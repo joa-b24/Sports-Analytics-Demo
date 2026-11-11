@@ -13,8 +13,7 @@ import { FigureRow, PassMapSection, PhysicalSection, SectionsEditor, StatList, T
 import { COLORS, Pitch } from "@/components/Pitch";
 import { btn, btnPrimary, input } from "@/components/Shell";
 import { BIN_MEASURES, type BinMeasure, type Rate, type Tally } from "@/lib/analysis";
-import { useFixedParts } from "@/lib/fixed";
-import { passNetwork } from "@/lib/positions";
+import { useTracking } from "@/lib/useTracking";
 import { EXTRA_PREFIX, NEED_TEXT, layoutOf, sectionDef, withoutExtra, type SectionNeed } from "@/lib/reportSections";
 import { downloadText } from "@/lib/format";
 import { writeLocal } from "@/lib/local";
@@ -32,7 +31,9 @@ type Side = "own" | "opp";
 export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Match; events: MatchEvent[]; plays: Play[]; segmentsByVideo: Record<string, Segment[]> }) {
   const state = useStore();
   const videoIds = matchVideos(match).map((v) => v.video_id);
-  const fixed = useFixedParts(match.folder, videoIds);
+  const trk = useTracking(match, videoIds, segmentsByVideo);
+  const view = trk.view;
+  const fixed = trk.loading ? null : trk;
   const [anon, setAnon] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -51,13 +52,14 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       plays,
       edits: state.edits ?? [],
       segmentsByVideo,
-      parts: fixed?.parts ?? [],
+      parts: view.parts,
+      tracking: view.report(),
       roster: state.roster ?? [],
       library: state.matches.map((m) => ({ match: m, events: state.events.filter((e) => e.match_id === m.match_id) })),
       anonymize,
       now: new Date().toISOString().slice(0, 10),
     });
-  const data = useMemo(() => build(false), [match, events, plays, segmentsByVideo, fixed, state.roster, state.matches, state.events, state.edits]); // eslint-disable-line react-hooks/exhaustive-deps
+  const data = useMemo(() => build(false), [match, events, plays, segmentsByVideo, trk, state.roster, state.matches, state.events, state.edits]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The possession goes into the match too, for its summary in the match list.
   const poss = data.summary.ball?.possession;
@@ -104,7 +106,6 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
   const A = data.cover.focus_team;
   const B = data.cover.other_team;
   const closingHint = data.texts.closing.key === "plan" ? "Qué hacer con y sin balón contra este rival." : "Qué salió bien, qué no y qué se trabaja en la semana.";
-  const parts = fixed?.parts ?? [];
   const focus: Side = report.focus ?? "own";
   const F = focus === "own" ? A : B;
   const layout = layoutOf(report.sections, report.extras);
@@ -131,8 +132,8 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
   const oppNet =
     focus === "opp" && src.names && src.ball
       ? (() => {
-          const n = passNetwork(parts, "opp", segmentsByVideo);
-          if (n.passes === 0) return null;
+          const n = view.passNetwork("opp");
+          if (!n || n.passes === 0) return null;
           // Turned so the rival also attacks right.
           return { nodes: n.nodes.map((x) => ({ player: x.label, x: 105 - x.x, y: 68 - x.y, touches: x.touches })), edges: n.edges, passes: n.passes, unnamed: n.unnamed };
         })()
@@ -143,7 +144,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       case "general":
         return <General data={data} />;
       case "block":
-        return <TeamBlockSection parts={parts} side={focus} team={F} />;
+        return <TeamBlockSection view={view} side={focus} team={F} />;
       case "transitions":
         return <Transitions data={data} side={focus} />;
       case "shots":
@@ -155,7 +156,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
         return net ? <NetworkBlock net={net} team={F} side={focus} /> : <GateLine gate={data.summary.network_gate} />;
       }
       case "pass_map":
-        return <PassMapSection parts={parts} side={focus} team={F} segmentsByVideo={segmentsByVideo} events={events} onPick={player.show} />;
+        return <PassMapSection view={view} side={focus} team={F} events={events} onPick={player.show} />;
       case "touches":
         return data.summary.ball ? (
           <TouchesBlock
@@ -172,7 +173,7 @@ export function ReportTab({ match, events, plays, segmentsByVideo }: { match: Ma
       case "duels":
         return <Duels data={data} side={focus} />;
       case "physical":
-        return <PhysicalSection parts={parts} side={focus} team={F} ratings={players.ratings} />;
+        return <PhysicalSection view={view} side={focus} team={F} ratings={players.ratings} />;
       case "set_pieces":
         return (
           <>

@@ -6,8 +6,8 @@ import { Select } from "@/components/Select";
 import { TrackingLoading } from "@/components/TrackingLoading";
 import { Locked } from "@/components/Locked";
 import { Card } from "@/components/Shell";
-import { blockShape, MIN_VISIBLE, type ShapeMeasure } from "@/lib/blockShape";
-import { useFixedParts } from "@/lib/fixed";
+import { MIN_VISIBLE, type ShapeMeasure } from "@/lib/blockShape";
+import { useTracking } from "@/lib/useTracking";
 import { readLocal } from "@/lib/local";
 import type { Segment } from "@/lib/segments";
 import type { Match } from "@/lib/types";
@@ -50,13 +50,14 @@ export function TeamShapeCard({ match, videoIds, segmentsByVideo = {} }: { match
   const [measure, setMeasure] = useState<ShapeMeasure>("line_height");
   const folder = match.folder;
   const key = videoIds.join(",");
-  const fixed = useFixedParts(folder, videoIds);
-  const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
-  const shape = useMemo(() => (parts.length ? blockShape(parts, segmentsByVideo, videoIds, binMin) : null), [parts, segmentsByVideo, videoIds, binMin]);
+  const trk = useTracking(match, videoIds, segmentsByVideo);
+  const fixed = trk.loading ? null : trk;
+  const shape = useMemo(() => trk.view.shape(binMin), [trk, binMin]);
+  const parts = trk.view.parts;
 
   // Fallback: the file written by Python, only read when the app has no positions of its own to calculate from.
   const [files, setFiles] = useState<TeamMetrics[] | null>(null);
-  const needFile = !!folder && !!fixed && parts.length === 0;
+  const needFile = !!folder && !!fixed && !shape;
   useEffect(() => {
     if (!folder || !needFile) return;
     let live = true;

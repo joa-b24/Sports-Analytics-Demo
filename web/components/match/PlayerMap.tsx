@@ -5,8 +5,7 @@ import { Pitch } from "@/components/Pitch";
 import { finishEvents } from "@/lib/analysis";
 import { fmtT } from "@/lib/format";
 import type { PlayerRow } from "@/lib/players";
-import { passArrows, type Oriented } from "@/lib/positions";
-import type { Segment } from "@/lib/segments";
+import type { TrackingView } from "@/lib/trackingView";
 import { setPref, usePref } from "@/lib/store";
 import { EVENT_LABELS, PITCH, type MatchEvent } from "@/lib/types";
 
@@ -37,16 +36,14 @@ function Glyph({ id, tone }: { id: LayerId; tone: string }) {
 export function PlayerMap({
   row,
   events,
-  parts,
-  segmentsByVideo,
+  view,
   color,
   onPick,
 }: {
   row: PlayerRow;
   // Her events (tagged with her name).
   events: MatchEvent[];
-  parts: Oriented[];
-  segmentsByVideo: Record<string, Segment[]>;
+  view: TrackingView;
   color: string;
   onPick?: (e: MatchEvent) => void;
 }) {
@@ -65,7 +62,7 @@ export function PlayerMap({
   const shots = useMemo(() => finishEvents(events), [events]);
   const byType = (t: MatchEvent["type"]) => events.filter((e) => e.type === t);
   const sets: Record<Exclude<LayerId, "pass">, MatchEvent[]> = { shot: shots, loss: byType("loss"), recovery: byType("recovery"), duel: byType("duel") };
-  const arrows = useMemo(() => passArrows(parts, row.team, segmentsByVideo).filter((p) => p.from === row.id), [parts, row.team, row.id, segmentsByVideo]);
+  const arrows = useMemo(() => view.arrows(row.team).filter((p) => p.from === row.id), [view, row.team, row.id]);
   const counts: Record<LayerId, number> = { shot: shots.length, pass: arrows.length, loss: sets.loss.length, recovery: sets.recovery.length, duel: sets.duel.length };
   const missing = (Object.keys(sets) as Exclude<LayerId, "pass">[]).filter((k) => on.has(k)).reduce((n, k) => n + sets[k].filter((e) => at(e) === null).length, 0);
 

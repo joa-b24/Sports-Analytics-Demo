@@ -6,9 +6,10 @@ import { COLORS, Pitch } from "@/components/Pitch";
 import { Select } from "@/components/Select";
 import { TrackingLoading } from "@/components/TrackingLoading";
 import { Card } from "@/components/Shell";
-import { useFixedParts } from "@/lib/fixed";
+import { useTracking } from "@/lib/useTracking";
+import type { TrackingView } from "@/lib/trackingView";
 import { MAX_COMPARE, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
-import { heatmapSmooth, playerTouchPoints, type Oriented } from "@/lib/positions";
+
 import { RatingBadge } from "@/components/match/RatingBadge";
 import { rateAll } from "@/lib/rating";
 import { analysisParamsOf } from "@/lib/tech";
@@ -26,8 +27,12 @@ export const fmt = (v: number) => (Number.isInteger(v) ? v.toLocaleString("es-MX
 // The data every player view needs: the rows of lib/players (events + tracking), the corrected parts and how to write a name.
 export function usePlayersData(match: Match, events: MatchEvent[], videoIds: string[], segmentsByVideo: Record<string, Segment[]>) {
   const state = useStore();
-  const fixed = useFixedParts(match.folder, videoIds);
-  const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
+  // From the saved aggregates when they are there (nothing to read), else from the positions of the folder.
+  const trk = useTracking(match, videoIds, segmentsByVideo);
+  const view = trk.view;
+  const parts = view.parts;
+  // «Reading»: null until it is known what the tracking is (the screens show their loading state with it).
+  const fixed = trk.loading ? null : trk;
   // Which half each video is (a half can come in several videos); absent = first video 1, others 2.
   const videoPeriods = useMemo(() => matchVideos(match).map((v, i) => ({ video_id: v.video_id, period: v.period ?? (i === 0 ? 1 : 2) })), [match]);
   const videoHalves = useMemo(() => {
@@ -38,25 +43,28 @@ export function usePlayersData(match: Match, events: MatchEvent[], videoIds: str
     }
     return out;
   }, [match]);
-  const rows = useMemo(() => playerRows({ events, parts, playByVideo: segmentsByVideo, videoPeriods, videoHalves }), [events, parts, segmentsByVideo, videoPeriods, videoHalves]);
+  const rows = useMemo(
+    () => playerRows({ events, parts, playByVideo: segmentsByVideo, videoPeriods, videoHalves, facts: view.source === "agg" ? view.facts({ events, playByVideo: segmentsByVideo, videoPeriods, videoHalves }) : null }),
+    [events, parts, view, segmentsByVideo, videoPeriods, videoHalves],
+  );
   // Names to show: dorsal from our squad; a rival "R7" with the name given in the quick review, if any.
   const label = useMemo(() => {
     const number = new Map((state.roster ?? []).map((r) => [r.player_id, r.number]));
     const rival = new Map<string, string>();
-    for (const mid of new Set(parts.map((o) => o.file.match_id)))
+    for (const mid of view.matchIds)
       for (const r of state.rivals?.[mid] ?? []) rival.set(`R${r.number}`, r.name ? `${r.number} ${r.name}` : `Rival ${r.number}`);
     return (r: PlayerRow) => {
       if (r.team === "opp") return rival.get(r.id) ?? (/^R\d+$/.test(r.id) ? `Rival ${r.id.slice(1)}` : r.id);
       const n = number.get(r.id);
       return n != null ? `${n} · ${r.id}` : r.id;
     };
-  }, [state.roster, state.rivals, parts]);
+  }, [state.roster, state.rivals, view]);
   // The rating (in review) with the windows of the match's analysis settings.
   const ratings = useMemo(() => {
     const cfg = analysisParamsOf(match);
     return rateAll(rows, events, { lossShotS: cfg.lossShotS, recoveryAttackS: cfg.recoveryAttackS, quickRecoveryS: cfg.quickRecoveryS });
   }, [rows, events, match]);
-  return { rows, parts, label, fixed, ratings };
+  return { rows, parts, view, label, fixed, ratings };
 }
 
 // Individual performance: up to MAX_COMPARE players of either team, figure by figure, with where each one played.
@@ -74,7 +82,7 @@ export function PlayersCompare({
   segmentsByVideo: Record<string, Segment[]>;
   periodNote?: boolean;
 }) {
-  const { rows, parts, label, fixed, ratings } = usePlayersData(match, events, videoIds, segmentsByVideo);
+  const { rows, view, label, fixed, ratings } = usePlayersData(match, events, videoIds, segmentsByVideo);
   const prefKey = `players:${match.match_id}`;
   const saved = usePref(prefKey, "");
   const per10 = usePref("players:per10", "0") === "1";
@@ -177,7 +185,7 @@ export function PlayersCompare({
             {anyMinutes ? (
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 {picked.map((r, i) => (
-                  <PlayerHeat key={r.key} parts={parts} row={r} color={SLOTS[i]} name={label(r)} />
+                  <PlayerHeat key={r.key} view={view} row={r} color={SLOTS[i]} name={label(r)} />
                 ))}
               </div>
             ) : (
@@ -236,9 +244,9 @@ function MetricRow({ m, rows, per10 }: { m: Metric; rows: PlayerRow[]; per10: bo
   );
 }
 
-export function PlayerHeat({ parts, row, color, name, touchLayer = false, segmentsByVideo = {} }: { parts: Oriented[]; row: PlayerRow; color: string; name: string; touchLayer?: boolean; segmentsByVideo?: Record<string, Segment[]> }) {
-  const h = useMemo(() => heatmapSmooth(parts, row.team, row.id), [parts, row.team, row.id]);
-  const dots = useMemo(() => (touchLayer ? playerTouchPoints(parts, row.team, row.id, segmentsByVideo) : []), [touchLayer, parts, row.team, row.id, segmentsByVideo]);
+export function PlayerHeat({ view, row, color, name, touchLayer = false }: { view: TrackingView; row: PlayerRow; color: string; name: string; touchLayer?: boolean }) {
+  const h = useMemo(() => view.heat(row.team, row.id) ?? { nx: 42, ny: 28, seconds: [] as number[], total: 0 }, [view, row.team, row.id]);
+  const dots = useMemo(() => (touchLayer ? view.touchPoints(row.team, row.id) : []), [touchLayer, view, row.team, row.id]);
   const max = Math.max(...h.seconds, 1e-9);
   const cw = PITCH.length / h.nx;
   const ch = PITCH.width / h.ny;

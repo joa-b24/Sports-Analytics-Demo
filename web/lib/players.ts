@@ -1,5 +1,5 @@
 import { finishes } from "./analysis.ts";
-import { physical } from "./physical.ts";
+import { physical, type PhysicalRow } from "./physical.ts";
 import { inStretches, passArrows, passesAndTurnovers, type Oriented } from "./positions.ts";
 import type { Segment } from "./segments.ts";
 import type { MatchEvent } from "./types.ts";
@@ -61,7 +61,53 @@ export interface PlayersInput {
 
 const clean = (s: string | null | undefined) => (s ?? "").trim();
 
-export function playerRows({ events, parts, playByVideo = {}, videoPeriods, videoHalves }: PlayersInput): PlayerRow[] {
+// What the tracking gives about the players, ready to join with the events (see playerRows). `ball` is null when no part
+// has the ball followed. Plain data: it is saved in the aggregates.
+export interface TrackingFacts {
+  physical: Record<Side, PhysicalRow[]>;
+  // Minutes played on the clock, by player key.
+  minutes: [string, number | null][];
+  ball: Record<string, { touches: number; passes: number; passes_cut: number; progressive: number }> | null;
+}
+
+export function trackingFacts({ events, parts, playByVideo = {}, videoPeriods, videoHalves }: PlayersInput): TrackingFacts {
+  const out: TrackingFacts = { physical: { own: physical(parts, "own"), opp: physical(parts, "opp") }, minutes: [...playedMinutes({ events, parts, playByVideo, videoPeriods, videoHalves })], ball: null };
+  const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
+  if (!parts.some((o) => o.file.ball.length > 0)) return out;
+  const ball: NonNullable<TrackingFacts["ball"]> = {};
+  const at = (team: Side, name: string | null | undefined) => {
+    const n = clean(name);
+    if (!n) return null;
+    return (ball[`${team}|${n}`] ??= { touches: 0, passes: 0, passes_cut: 0, progressive: 0 });
+  };
+  for (const o of parts) {
+    const f = o.file;
+    const play = usePlay ? (playByVideo[f.video_id] ?? []) : null;
+    const name = new Map(f.people.map((p) => [p.id, clean(p.player_id)]));
+    const res = passesAndTurnovers(f);
+    for (const t of res.touches) {
+      const r = inStretches(play, t.frame / f.fps) ? at(t.team, name.get(t.id)) : null;
+      if (r) r.touches++;
+    }
+    for (const p of res.passes) {
+      const r = inStretches(play, p.from_frame / f.fps) ? at(p.team, name.get(p.from)) : null;
+      if (r) r.passes++;
+    }
+    for (const tv of res.turnovers) {
+      const r = inStretches(play, tv.from_frame / f.fps) ? at(tv.lost, name.get(tv.from)) : null;
+      if (r) r.passes_cut++;
+    }
+  }
+  for (const team of ["own", "opp"] as const)
+    for (const a of passArrows(parts, team, playByVideo)) {
+      const r = a.progressive ? at(team, a.from) : null;
+      if (r) r.progressive++;
+    }
+  out.ball = ball;
+  return out;
+}
+
+export function playerRows({ events, parts, playByVideo = {}, videoPeriods, videoHalves, facts }: PlayersInput & { facts?: TrackingFacts | null }): PlayerRow[] {
   const rows = new Map<string, PlayerRow>();
   const row = (team: Side, id: string): PlayerRow => {
     const key = `${team}|${id}`;
@@ -106,10 +152,13 @@ export function playerRows({ events, parts, playByVideo = {}, videoPeriods, vide
 
   for (const r of rows.values()) r.tagged = events.some((e) => e.team === r.team && clean(e.player_id) !== "");
 
-  if (parts.length > 0) {
+  // What the tracking says (physical load, minutes played, touches and passes): computed from the parts, or taken from the
+  // facts saved in the aggregates (lib/aggregates.ts) when the parts are not loaded (the lightweight copy of the match).
+  const tf = facts ?? (parts.length > 0 ? trackingFacts({ events, parts, playByVideo, videoPeriods, videoHalves }) : null);
+  if (tf) {
     // Physical: everyone with a name and positions.
     for (const team of ["own", "opp"] as const)
-      for (const p of physical(parts, team)) {
+      for (const p of tf.physical[team]) {
         const r = row(team, p.name);
         r.minutes = Math.round((p.seconds / 60) * 10) / 10;
         r.fill_time_pct = p.fill_time_pct;
@@ -120,48 +169,19 @@ export function playerRows({ events, parts, playByVideo = {}, videoPeriods, vide
         r.hsr_m = p.hsr_m;
         r.sprints = p.sprints;
       }
-    for (const [key, m] of playedMinutes({ events, parts, playByVideo, videoPeriods, videoHalves })) {
+    for (const [key, m] of tf.minutes) {
       const r = rows.get(key);
       if (r) r.minutes_played = m;
     }
     // Ball: touches, passes completed and cut, by the passer. Only with the ball followed in some part.
-    const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
-    const withBall = parts.some((o) => o.file.ball.length > 0);
-    if (withBall) {
+    if (tf.ball) {
       for (const r of rows.values())
         if (r.minutes !== null) {
-          r.touches = 0;
-          r.passes = 0;
-          r.passes_cut = 0;
-          r.progressive = 0;
-        }
-      for (const o of parts) {
-        const f = o.file;
-        const play = usePlay ? (playByVideo[f.video_id] ?? []) : null;
-        const name = new Map(f.people.map((p) => [p.id, clean(p.player_id)]));
-        const res = passesAndTurnovers(f);
-        const named = (id: number, team: Side) => {
-          const n = name.get(id);
-          const r = n ? rows.get(`${team}|${n}`) : undefined;
-          return r && r.touches !== null ? r : null;
-        };
-        for (const t of res.touches) {
-          const r = inStretches(play, t.frame / f.fps) ? named(t.id, t.team) : null;
-          if (r) r.touches = (r.touches ?? 0) + 1;
-        }
-        for (const p of res.passes) {
-          const r = inStretches(play, p.from_frame / f.fps) ? named(p.from, p.team) : null;
-          if (r) r.passes = (r.passes ?? 0) + 1;
-        }
-        for (const tv of res.turnovers) {
-          const r = inStretches(play, tv.from_frame / f.fps) ? named(tv.from, tv.lost) : null;
-          if (r) r.passes_cut = (r.passes_cut ?? 0) + 1;
-        }
-      }
-      for (const team of ["own", "opp"] as const)
-        for (const a of passArrows(parts, team, playByVideo)) {
-          const r = a.progressive && a.from ? rows.get(`${team}|${clean(a.from)}`) : undefined;
-          if (r && r.progressive !== null) r.progressive++;
+          const c = tf.ball[r.key];
+          r.touches = c?.touches ?? 0;
+          r.passes = c?.passes ?? 0;
+          r.passes_cut = c?.passes_cut ?? 0;
+          r.progressive = c?.progressive ?? 0;
         }
     }
   }

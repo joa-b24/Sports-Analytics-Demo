@@ -31,7 +31,7 @@ const READABLE = [/^matches$/, /^weights$/, /^matches\/[\w.-]+(\/.*)?$/, /^confi
 // Backups of one match (lib/saveAll.ts backupName): the only files the app may delete (to keep the 5 newest).
 const BACKUP = /^matches\/[\w.-]+\/respaldo\/respaldo_\d{4}-\d{2}-\d{2}_\d{4}\.json$/;
 const WRITABLE = [
-  /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors|labels)_[\w.-]+\.json$/,
+  /^matches\/[\w.-]+\/tracking\/(tracks_fixed|anchors|labels|aggregates)_[\w.-]+\.json$/,
   // Hand samples of the ball for training (Playground > Balón, lib/playground.ts); read by sportsan.tracking.ball train.
   /^matches\/[\w.-]+\/tracking\/ball_samples_v\d+\.json$/,
   // Possession check (Playground > Posesión, lib/possession.ts): the interval table of a video and the analyst's verdicts on it.

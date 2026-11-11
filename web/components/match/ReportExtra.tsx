@@ -5,10 +5,8 @@ import { useState } from "react";
 import { RATING_NOTE, RatingBadge } from "@/components/match/RatingBadge";
 import { COLORS, Pitch } from "@/components/Pitch";
 import type { Rating } from "@/lib/rating";
-import { physical, teamBlock } from "@/lib/physical";
-import { heatmapSmooth, passArrows, type Oriented } from "@/lib/positions";
+import type { TrackingView } from "@/lib/trackingView";
 import { NEED_TEXT, REPORT_SECTIONS, moveSection, toggleSection } from "@/lib/reportSections";
-import type { Segment } from "@/lib/segments";
 import { PITCH, type MatchEvent } from "@/lib/types";
 
 type Side = "own" | "opp";
@@ -47,9 +45,9 @@ export function StatList({ items, title }: { items: { label: string; value: Reac
 }
 
 // Bloque: where the team spent its time (heat), each player's average position and the block measures.
-export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; side: Side; team: string }) {
-  const b = teamBlock(parts, side);
-  const h = heatmapSmooth(parts, side);
+export function TeamBlockSection({ view, side, team }: { view: TrackingView; side: Side; team: string }) {
+  const b = view.block(side) ?? { players: [], line_m: null, length_m: null, width_m: null, seconds: 0 };
+  const h = view.heat(side) ?? { nx: 42, ny: 28, seconds: [] as number[], total: 0 };
   const max = Math.max(...h.seconds, 1e-9);
   const cw = PITCH.length / h.nx;
   const ch = PITCH.width / h.ny;
@@ -87,8 +85,8 @@ export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; sid
           {b.line_m !== null && (
             <>
               <line
-                x1={(b.line_m * PITCH.length) / (parts[0]?.file.venue?.length_m ?? PITCH.length)}
-                x2={(b.line_m * PITCH.length) / (parts[0]?.file.venue?.length_m ?? PITCH.length)}
+                x1={(b.line_m * PITCH.length) / (view.venueLength ?? PITCH.length)}
+                x2={(b.line_m * PITCH.length) / (view.venueLength ?? PITCH.length)}
                 y1={1}
                 y2={PITCH.width - 1}
                 stroke="var(--color-ink)"
@@ -113,10 +111,10 @@ export function TeamBlockSection({ parts, side, team }: { parts: Oriented[]; sid
 }
 
 // Every pass as an arrow from the passer to the receiver; progressive ones (10 m or more forward) in full color.
-export function PassMapSection({ parts, side, team, segmentsByVideo, events = [], onPick }: { parts: Oriented[]; side: Side; team: string; segmentsByVideo: Record<string, Segment[]>; events?: MatchEvent[]; onPick?: (m: { video_id: string; t: number; label: string }) => void }) {
+export function PassMapSection({ view, side, team, events = [], onPick }: { view: TrackingView; side: Side; team: string; events?: MatchEvent[]; onPick?: (m: { video_id: string; t: number; label: string }) => void }) {
   const [all, setAll] = useState(false);
   const keyEvents = events.filter((e) => e.type === "key_pass" && e.team === side);
-  const arrows = passArrows(parts, side, segmentsByVideo, keyEvents);
+  const arrows = view.arrows(side, keyEvents);
   if (arrows.length === 0) return <p className="text-sm text-faint">Sin pases de {team} leídos del balón.</p>;
   const prog = arrows.filter((a) => a.progressive).length;
   const id = `pm-${side}`;
@@ -194,8 +192,8 @@ export function PassMapSection({ parts, side, team, segmentsByVideo, events = []
 }
 
 // Distance, top speed, high-speed running and sprints by player, over the time each one was measured.
-export function PhysicalSection({ parts, side, team, ratings }: { parts: Oriented[]; side: Side; team: string; ratings?: Map<string, Rating> }) {
-  const rows = physical(parts, side);
+export function PhysicalSection({ view, side, team, ratings }: { view: TrackingView; side: Side; team: string; ratings?: Map<string, Rating> }) {
+  const rows = view.physical(side);
   if (rows.length === 0) return <p className="text-sm text-faint">Sin jugadoras con nombre de {team} en las partes revisadas.</p>;
   const maxD = Math.max(...rows.map((r) => r.distance_m), 1);
   return (
