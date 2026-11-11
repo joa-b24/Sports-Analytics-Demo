@@ -40,7 +40,17 @@ export interface Transitions {
   recoveriesToShot: MatchEvent[];
 }
 
-export function transitions(all: MatchEvent[], team: Side): Transitions {
+// The windows of the transitions (s): by default the constants above; the match settings can change them.
+export interface TransitionWindows {
+  lossShotS?: number;
+  quickRecoveryS?: number;
+  recoveryAttackS?: number;
+}
+
+export function transitions(all: MatchEvent[], team: Side, win: TransitionWindows = {}): Transitions {
+  const lossShot = win.lossShotS ?? SHOT_WINDOW_S;
+  const quick = win.quickRecoveryS ?? COUNTERPRESS_WINDOW_S;
+  const attack = win.recoveryAttackS ?? SHOT_WINDOW_S;
   const events = byTime(all);
   const out: Transitions = { lossToShotAgainst: { k: 0, n: 0 }, counterpress: { k: 0, n: 0 }, recoveryToShot: { k: 0, n: 0 }, recoveriesToShot: [] };
   events.forEach((e, i) => {
@@ -48,11 +58,11 @@ export function transitions(all: MatchEvent[], team: Side): Transitions {
     if (e.type === "loss") {
       out.lossToShotAgainst.n++;
       out.counterpress.n++;
-      if (followed(events, i, SHOT_WINDOW_S, (x) => x.team === other(team) && isShot(x))) out.lossToShotAgainst.k++;
-      if (followed(events, i, COUNTERPRESS_WINDOW_S, (x) => x.team === team && x.type === "recovery")) out.counterpress.k++;
+      if (followed(events, i, lossShot, (x) => x.team === other(team) && isShot(x))) out.lossToShotAgainst.k++;
+      if (followed(events, i, quick, (x) => x.team === team && x.type === "recovery")) out.counterpress.k++;
     } else if (e.type === "recovery") {
       out.recoveryToShot.n++;
-      if (followed(events, i, SHOT_WINDOW_S, (x) => x.team === team && isShot(x))) {
+      if (followed(events, i, attack, (x) => x.team === team && isShot(x))) {
         out.recoveryToShot.k++;
         out.recoveriesToShot.push(e);
       }

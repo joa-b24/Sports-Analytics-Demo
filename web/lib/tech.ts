@@ -126,3 +126,54 @@ export function techSummary(m: TechHolder): string {
   });
   return parts.length === 0 ? "Parámetros por defecto" : `Parámetros cambiados: ${parts.join(", ")}`;
 }
+
+// ------------------------------------------------------------------------------------------------------- analysis
+// What the Dashboard counts and how it cuts the pitch: lanes, zones and the windows of the transitions. Per match, only
+// what the analyst changed is stored (Match.tech.analysis).
+export interface AnalysisParams {
+  lanes: number; // horizontal bands of the pitch (entries, territory)
+  zones: number; // zones from own goal to rival goal
+  lossShotS: number; // a loss that ends in a shot of the rival within this many s is an influential loss
+  quickRecoveryS: number; // a recovery within this many s of a loss is a quick recovery
+  recoveryAttackS: number; // a recovery followed by an own shot within this many s is a recovery that becomes an attack
+}
+export const ANALYSIS_DEFAULTS: AnalysisParams = { lanes: 5, zones: 3, lossShotS: 15, quickRecoveryS: 8, recoveryAttackS: 15 };
+export interface AnalysisField {
+  key: keyof AnalysisParams;
+  label: string;
+  unit: string;
+  help: string;
+  min: number;
+  max: number;
+  step: number;
+  group: "cut" | "windows";
+}
+export const ANALYSIS_FIELDS: AnalysisField[] = [
+  { key: "lanes", label: "Número de carriles", unit: "", help: "En cuántas franjas a lo ancho se corta la cancha (entradas al último tercio, dominio territorial).", min: 3, max: 7, step: 1, group: "cut" },
+  { key: "zones", label: "Número de zonas", unit: "", help: "En cuántas zonas a lo largo se corta la cancha, de la portería propia a la rival.", min: 2, max: 5, step: 1, group: "cut" },
+  { key: "lossShotS", label: "Pérdida influyente", unit: "s", help: "Una pérdida cuenta como influyente si el rival tira en menos de este tiempo.", min: 3, max: 60, step: 1, group: "windows" },
+  { key: "quickRecoveryS", label: "Recuperación rápida", unit: "s", help: "Recuperar el balón en menos de este tiempo después de perderlo.", min: 2, max: 30, step: 1, group: "windows" },
+  { key: "recoveryAttackS", label: "Recuperación y ataque", unit: "s", help: "Una recuperación acaba en ataque si hay un tiro propio en menos de este tiempo.", min: 3, max: 60, step: 1, group: "windows" },
+];
+export const clampAnalysis = (f: AnalysisField, v: number, prev: number): number => (Number.isFinite(v) ? Math.min(f.max, Math.max(f.min, f.step >= 1 ? Math.round(v) : v)) : prev);
+export function analysisParamsOf(m: TechHolder): AnalysisParams {
+  const out = { ...ANALYSIS_DEFAULTS };
+  const set = m?.tech?.analysis;
+  if (!set) return out;
+  for (const f of ANALYSIS_FIELDS) {
+    const v = set[f.key];
+    if (typeof v === "number" && Number.isFinite(v) && v >= f.min && v <= f.max) out[f.key] = v;
+  }
+  return out;
+}
+export const analysisChanged = (m: TechHolder): string[] => {
+  const p = analysisParamsOf(m);
+  return ANALYSIS_FIELDS.filter((f) => p[f.key] !== ANALYSIS_DEFAULTS[f.key]).map((f) => f.key);
+};
+export function withAnalysisParam(m: Match, key: keyof AnalysisParams, value: number): Match {
+  const next = { ...analysisParamsOf(m), [key]: value };
+  const diff: Partial<Record<string, number>> = {};
+  for (const f of ANALYSIS_FIELDS) if (next[f.key] !== ANALYSIS_DEFAULTS[f.key]) diff[f.key] = next[f.key];
+  return withTech(m, { analysis: Object.keys(diff).length ? diff : undefined });
+}
+export const resetAnalysisTech = (m: Match): Match => withTech(m, { analysis: undefined });

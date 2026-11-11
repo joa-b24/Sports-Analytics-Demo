@@ -229,6 +229,8 @@ export interface Match {
     autoEvents?: string[];
     // Parameters of the tracking tools (fill, green gaps, ball confidence, search strip, g key): lib/tech.ts TRACKING_FIELDS.
     tracking?: Partial<Record<string, number | boolean>>;
+    // Parameters of the analysis (lanes, zones, windows of the transitions): lib/tech.ts ANALYSIS_FIELDS, only what changed.
+    analysis?: Partial<Record<string, number>>;
     // Download by itself the videos of this match that have a link but no file in its folder (app on this computer only).
     // Absent = on; false = off (lib/downloads.ts autoDownloadOn).
     autoDownload?: boolean;

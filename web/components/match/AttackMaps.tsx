@@ -9,8 +9,8 @@ import { EVENT_LABELS, PITCH, type MatchEvent } from "@/lib/types";
 
 // The pitch in a 6 x 3 grid, each cell coloured by the team with more tagged actions there (the stronger the colour, the
 // clearer the lead). It reads as «who played where»; our team attacks to the right.
-export function TerritoryMap({ events, aLabel, bLabel }: { events: MatchEvent[]; aLabel: string; bLabel: string }) {
-  const g = territoryGrid(events);
+export function TerritoryMap({ events, aLabel, bLabel, cols: nc = 6, rows: nr = 3 }: { events: MatchEvent[]; aLabel: string; bLabel: string; cols?: number; rows?: number }) {
+  const g = territoryGrid(events, nc, nr);
   const cols = g.cells[0].length;
   const rows = g.cells.length;
   const cw = PITCH.length / cols;
@@ -153,18 +153,21 @@ export const GOAL_KICK_STYLES: Record<string, OutcomeStyle> = {
   lost: { label: "La pierden", color: "var(--color-danger)" },
 };
 
+// Names of the lanes from the top of the drawing to the bottom (3: left, centre, right; more: numbered with the sides named).
+const laneNames = (n: number): string[] => (n === 3 ? ["Izquierda", "Centro", "Derecha"] : n === 5 ? ["Banda izq.", "Interior izq.", "Centro", "Interior der.", "Banda der."] : Array.from({ length: n }, (_, i) => `Carril ${i + 1}`));
+
 // Dots of one kind of event (for instance the entries to the last third), coloured by team, with the count per lane.
-export function EntryMap({ events, team }: { events: MatchEvent[]; team: Side }) {
+export function EntryMap({ events, team, lanes: nLanes = 3 }: { events: MatchEvent[]; team: Side; lanes?: number }) {
   const turn = (x: number, y: number): [number, number] => (team === "opp" ? [PITCH.length - x, PITCH.width - y] : [x, y]);
   const color = team === "own" ? COLORS.own : COLORS.opp;
   const placed = events.filter((e) => e.x !== null && e.y !== null);
-  const lane = (y: number) => (y < PITCH.width / 3 ? 0 : y < (2 * PITCH.width) / 3 ? 1 : 2);
-  const lanes = [0, 0, 0];
+  const lane = (y: number) => Math.min(nLanes - 1, Math.floor((y / PITCH.width) * nLanes));
+  const lanes = Array.from({ length: nLanes }, () => 0);
   for (const e of placed) lanes[lane(turn(e.x as number, e.y as number)[1])]++;
   return (
     <div>
       <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-        {["Izquierda", "Centro", "Derecha"].map((n, i) => (
+        {laneNames(nLanes).map((n, i) => (
           <span key={n} className="inline-flex items-center gap-1.5">
             {n}
             <b className="num text-ink">{lanes[i]}</b>
@@ -172,8 +175,8 @@ export function EntryMap({ events, team }: { events: MatchEvent[]; team: Side })
         ))}
       </div>
       <Pitch showDirection>
-        {[1, 2].map((k) => (
-          <line key={k} x1={0} x2={PITCH.length} y1={(k * PITCH.width) / 3} y2={(k * PITCH.width) / 3} stroke="var(--color-line)" strokeWidth={0.25} strokeDasharray="1.5 2" />
+        {Array.from({ length: nLanes - 1 }, (_, k) => k + 1).map((k) => (
+          <line key={k} x1={0} x2={PITCH.length} y1={(k * PITCH.width) / nLanes} y2={(k * PITCH.width) / nLanes} stroke="var(--color-line)" strokeWidth={0.25} strokeDasharray="1.5 2" />
         ))}
         {placed.map((e) => {
           const [x, y] = turn(e.x as number, e.y as number);

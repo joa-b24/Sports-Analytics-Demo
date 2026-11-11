@@ -420,6 +420,13 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 - Cada panel del dashboard (`Panel.tsx`) guarda imagen, y se manda a la presentación o al informe; mandarlo otra vez actualiza su diapositiva o sección (`source` = id del panel). Los gráficos del informe viven en `Report.extras` y sus ids `x:<id>` en `Report.sections` (`lib/reportSections.ts`). El destino de un saque de meta se infiere del siguiente evento con posición (`goalKickLanding` en `lib/analysis.ts`).
 - `docs/propuesta_etiquetas_fuerzas_basicas.md`: cruce de las etiquetas de fuerzas básicas con el catálogo de eventos (propuesta, sin adoptar).
 
+### 5.12 Configuración del partido y ficha (2026-11-10)
+- **Configuración del partido** (`components/match/TechModal.tsx`): menú lateral con grupos (Cálculo, Análisis, Herramientas, Partido, Ejecución); cada página es corta (`TechPanel.tsx`, `TECH_PAGES`). Cada ajuste usa `TechField.tsx` (número o interruptor): un valor distinto del original se marca en amarillo con un botón que lo restablece, y el menú marca con un punto amarillo las páginas con cambios.
+- **Análisis** (`lib/tech.ts`, `Match.tech.analysis`): carriles, zonas y ventanas de transición (pérdida influyente, recuperación rápida, recuperación y ataque). El Dashboard los usa (`transitions(..., ventanas)`, territorio, entradas); el Informe todavía usa 15 s.
+- **Ficha de jugadora**: clic en una fila de «Tabla por jugadora» la elige en la ficha; tabla de eventos con filtros y páginas; toques sobre el mapa de calor (`playerTouchPoints` en `lib/positions.ts`); formas del mapa de acciones según resultado y anillo del evento abierto.
+- Un tiro libre marcado «Tiro directo» o con resultado «Remate», sin tiro propio, cuenta como tiro (`finishes` en `lib/analysis.ts`).
+- Videos de los paneles: R (o clic otra vez en el evento) vuelve a la marca (`MomentPlayer.tsx`).
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |

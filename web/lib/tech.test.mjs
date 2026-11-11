@@ -72,3 +72,15 @@ test("parámetros de eventos y lista «automático» viven en tech sin romper la
   assert.equal(eventParamsOf({ tech: { events: { restS: 999 } } }).restS, EVENT_DEFAULTS.restS);
   assert.equal(withAutoEvent(withAutoEvent(match, "corner", true), "corner", false).tech, undefined);
 });
+
+import { ANALYSIS_DEFAULTS, analysisChanged, analysisParamsOf, resetAnalysisTech, withAnalysisParam } from "./tech.ts";
+test("parámetros del análisis: solo se guarda lo distinto del defecto y se restablece", () => {
+  const m = { match_id: "x" };
+  assert.deepEqual(analysisParamsOf(m), ANALYSIS_DEFAULTS);
+  const c = withAnalysisParam(m, "lossShotS", 20);
+  assert.equal(analysisParamsOf(c).lossShotS, 20);
+  assert.deepEqual(analysisChanged(c), ["lossShotS"]);
+  assert.equal(withAnalysisParam(c, "lossShotS", ANALYSIS_DEFAULTS.lossShotS).tech, undefined);
+  assert.equal(resetAnalysisTech(c).tech, undefined);
+  assert.equal(analysisParamsOf({ tech: { analysis: { lanes: 99 } } }).lanes, ANALYSIS_DEFAULTS.lanes);
+});

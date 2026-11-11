@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { AnalysisFilter, type MinuteRange, type Period } from "@/components/match/AnalysisFilter";
 import { EntryMap, GOAL_KICK_STYLES, OutcomeMap, SET_PIECE_STYLES, TerritoryMap } from "@/components/match/AttackMaps";
 import { Fold } from "@/components/match/Fold";
+import { analysisParamsOf } from "@/lib/tech";
 import { Select } from "@/components/Select";
 import { useHeaderRightSlot, useHeaderSlot } from "@/lib/stepBus";
 import { useFixedParts } from "@/lib/fixed";
@@ -24,7 +25,6 @@ import { Card, Section } from "@/components/Shell";
 import { setPref, usePref } from "@/lib/store";
 import {
   BIN_MEASURES,
-  COUNTERPRESS_WINDOW_S,
   SHOT_WINDOW_S,
   boxEntries,
   firstPass,
@@ -138,7 +138,8 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
     );
   }
 
-  const tr = { own: transitions(evs, "own"), opp: transitions(evs, "opp") };
+  const cfg = analysisParamsOf(match);
+  const tr = { own: transitions(evs, "own", cfg), opp: transitions(evs, "opp", cfg) };
   const bins = timeBins(evs, segments, binMin);
   const mom = momentumCurve(evs, segments);
   const counterZones = zoneCounts(tr[counterTeam].recoveriesToShot);
@@ -268,7 +269,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             </p>
           </Panel>
           <Panel title="Dominio territorial" note="quién ocupó cada zona" delay={80}>
-            <TerritoryMap events={evs} aLabel={A} bLabel={B} />
+            <TerritoryMap events={evs} aLabel={A} bLabel={B} cols={cfg.zones * 2} rows={cfg.lanes} />
             <div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-1">
               <span className="text-xs text-muted">Field tilt</span>
               <span className="num text-2xl" style={{ color: COLORS.own }}>
@@ -393,7 +394,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             <div className={`grid gap-5 ${sides.length > 1 ? "" : "xl:grid-cols-2"}`}>
               <Panel title="Entradas al último tercio" note="por dónde llegan">
                 {maps((t) => (
-                  <EntryMap events={of(t, (e) => e.type === "final_third_entry")} team={t} />
+                  <EntryMap events={of(t, (e) => e.type === "final_third_entry")} team={t} lanes={cfg.lanes} />
                 ))}
               </Panel>
               <Panel title="Saques de meta" note="de dónde a dónde (inferido) y si la conservan">
@@ -449,9 +450,9 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
               bLabel={B}
               rows={[
                 { label: "Recuperaciones en campo rival", a: highPct("own"), b: highPct("opp"), unit: " %", note: `${recH.own.rival} de ${a.recovery} · ${recH.opp.rival} de ${b.recovery}` },
-                { label: "Pérdidas que acaban en tiro del contrario", a: rate(tr.own.lossToShotAgainst), b: rate(tr.opp.lossToShotAgainst), unit: " %", note: `en menos de ${SHOT_WINDOW_S} s (menos es mejor)` },
-                { label: "Pérdidas que recuperan enseguida", a: rate(tr.own.counterpress), b: rate(tr.opp.counterpress), unit: " %", note: `en menos de ${COUNTERPRESS_WINDOW_S} s` },
-                { label: "Recuperaciones que acaban en tiro", a: rate(tr.own.recoveryToShot), b: rate(tr.opp.recoveryToShot), unit: " %", note: `en menos de ${SHOT_WINDOW_S} s` },
+                { label: "Pérdidas que acaban en tiro del contrario", a: rate(tr.own.lossToShotAgainst), b: rate(tr.opp.lossToShotAgainst), unit: " %", note: `en menos de ${cfg.lossShotS} s (menos es mejor)` },
+                { label: "Pérdidas que recuperan enseguida", a: rate(tr.own.counterpress), b: rate(tr.opp.counterpress), unit: " %", note: `en menos de ${cfg.quickRecoveryS} s` },
+                { label: "Recuperaciones que acaban en tiro", a: rate(tr.own.recoveryToShot), b: rate(tr.opp.recoveryToShot), unit: " %", note: `en menos de ${cfg.recoveryAttackS} s` },
               ]}
             />
           </Panel>
