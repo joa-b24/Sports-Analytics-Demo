@@ -264,8 +264,8 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         <div className="grid gap-5 md:grid-cols-[minmax(0,3fr)_minmax(15rem,2fr)]">
           <Panel title="Momentum" note="quién crea más peligro, y cuánto dura">
             <MomentumChart curve={mom} aLabel={A} bLabel={B} />
-            <p className="mt-2 text-xs text-pretty text-faint">
-              Cada evento de ataque suma peligro (gol 5, tiro 3, entrada al área 2, último tercio, córner y centro 1) y se va apagando con los minutos (vida media de 1.5 min); la curva es la diferencia entre equipos, suavizada, y su mayor oscilación vale ±100. Pasa el cursor por un minuto para ver las cifras.
+            <p className="mt-2 mb-0 text-[11px] text-pretty text-faint">
+              <b className="font-medium text-muted">Nota metodológica.</b> Cada evento etiquetado suma peligro a su equipo (gol 5, tiro 3, entrada al área 2; entrada al último tercio, córner y centro 1) y ese peligro se apaga con una vida media de 1.5 min. La curva es el peligro propio menos el rival, suavizado, y su mayor oscilación del partido vale ±100: es relativa a este partido, no se compara entre partidos. Solo cuenta lo etiquetado y solo el pasado de cada instante. Los pesos son una convención del proyecto, no una medición.
             </p>
           </Panel>
           <Panel title="Dominio territorial" note="quién ocupó cada zona" delay={80}>
@@ -285,7 +285,9 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
             <p className="mt-2 mb-0 text-xs text-pretty text-faint">
               {possOwn !== null ? `Posesión: ${possOwn} % – ${100 - possOwn} %. ` : "Sin posesión calculada (se calcula con el balón seguido en el Informe). "}
               {territoryRead}
-              {" "}El field tilt parte de las entradas al último tercio y al área.
+            </p>
+            <p className="mt-2 mb-0 text-[11px] text-pretty text-faint">
+              <b className="font-medium text-muted">Nota metodológica.</b> Field tilt = entradas al último tercio y al área de un equipo ÷ las de los dos, tal como se etiquetaron: mide quién jugó más cerca de la portería rival, no quién tuvo el balón. En el mapa, cada cuadro es de quien tiene más acciones marcadas ahí (tiros, entradas, pérdidas, recuperaciones y otras) y el número es su parte. Sin entradas etiquetadas no se calcula.
             </p>
           </Panel>
         </div>

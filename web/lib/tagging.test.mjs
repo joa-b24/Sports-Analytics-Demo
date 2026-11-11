@@ -95,3 +95,16 @@ test("pasada 3: un gol con su tiro no pide destino dos veces; el tiro lo pide po
   const marked = [{ ...shot, goal_y: 3, goal_z: 1 }, goal, lone];
   assert.equal(missingEnd(marked[0], marked), false);
 });
+
+import { normalizeEvents } from "./tagging.ts";
+test("normalizeEvents: recorta nombres y devuelve un duelo con nombre a nuestro equipo", () => {
+  const ev = (o) => ({ event_id: o.id, match_id: "m", t_video: 1, period: 1, type: "loss", team: "own", player_id: null, ...o });
+  const list = [ev({ id: "a", player_id: "Lelo " }), ev({ id: "b", type: "duel", team: "opp", player_id: "Kat", outcome: "lost" }), ev({ id: "c", type: "duel", team: "opp", outcome: "won" })];
+  const out = normalizeEvents(list);
+  assert.equal(out[0].player_id, "Lelo");
+  assert.equal(out[1].team, "own");
+  assert.equal(out[1].outcome, "lost");
+  assert.equal(out[2].team, "opp");
+  const ok = [ev({ id: "d", player_id: "Lelo" })];
+  assert.equal(normalizeEvents(ok), ok);
+});

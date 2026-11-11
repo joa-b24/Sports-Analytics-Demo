@@ -432,6 +432,10 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 - Mapas de calor: opacidad con `--heat-gain` y `--heat-floor` (`globals.css`), más fuertes en tema claro y en papel blanco.
 - Presentación: diapositivas de animación (`kind: "board"`, `components/match/BoardSlide.tsx`) de un pizarrón (`board`) o de una jugada del partido (`play`); se reproducen al presentar.
 
+### 5.14 Zip del partido y limpieza de eventos (2026-11-10)
+- Datos › «Descargar el zip de un partido» (`components/data/ZipExportCard.tsx`, `lib/matchZip.ts`): guarda lo pendiente en la carpeta y arma en el navegador un zip con match.yaml, segments.csv, tracking, ediciones, informe y los eventos de ahora, sin video. Se importa en la otra app con Datos › .zip. Las jugadas, el pizarrón y la presentación viajan en el respaldo.
+- `normalizeEvents` (`lib/tagging.ts`, aplicado en `lib/store.ts` al iniciar y en cada cambio de eventos): recorta espacios en `player_id` («Lelo » era otra jugadora para las tablas) y devuelve a nuestro equipo un duelo que lleva nombre de jugadora pero estaba marcado del rival.
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |

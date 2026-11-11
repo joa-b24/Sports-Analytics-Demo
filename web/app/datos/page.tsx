@@ -5,8 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 import { BackupCard } from "@/components/data/BackupCard";
 import { FolderList, MatchFiles } from "@/components/data/MatchFiles";
 import { ZipCard } from "@/components/data/ZipCard";
+import { ZipExportCard } from "@/components/data/ZipExportCard";
 import { PageHeader, Section } from "@/components/Shell";
 import { listLocal } from "@/lib/local";
+import { MOBILE } from "@/lib/mobile";
 
 // Datos: load the files of a match (events, video, tracking, or the whole folder as a .zip) and the full backup of this
 // browser. Videos and tracking are written into matches/<folder>/ through app/api/local and app/api/unzip, so they only
@@ -45,6 +47,7 @@ export default function Page() {
         )}
         <div className="grid gap-5">
           <ZipCard local={local} folders={folders} onFolders={refresh} />
+          {!MOBILE && <ZipExportCard local={local} />}
           <MatchFiles local={local} folders={folders} onFolders={refresh} />
         </div>
       </Section>

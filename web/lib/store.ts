@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import type { State } from "./types";
 import { createWriter, loadInitial } from "./storeIdb.ts";
+import { normalizeEvents } from "./tagging.ts";
 
 // Local-first storage: everything lives in the browser (IndexedDB, no practical size cap) and is moved between devices
 // with export/import. The old localStorage copy (`sportsan:v1`) is copied once on the first start and then left alone as
@@ -96,6 +97,12 @@ async function init() {
   }
   for (const fn of queued) base = fn(base);
   if (queued.length) dirty = true;
+  // Names with spaces and duels under the wrong team are fixed on every start (see normalizeEvents).
+  const clean = normalizeEvents(base.events ?? []);
+  if (clean !== base.events && !blocked) {
+    base = { ...base, events: clean };
+    dirty = true;
+  }
   queued = [];
   state = base;
   ready = true;
@@ -116,7 +123,12 @@ export function mutate(fn: (s: State) => State) {
     queued.push(fn);
     return;
   }
+  const before = state.events;
   state = fn(state);
+  if (state.events !== before) {
+    const clean = normalizeEvents(state.events);
+    if (clean !== state.events) state = { ...state, events: clean };
+  }
   dirty = true;
   if (writeTimer !== null) clearTimeout(writeTimer);
   writeTimer = setTimeout(flush, WRITE_DELAY_MS);

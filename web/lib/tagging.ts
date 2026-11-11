@@ -136,3 +136,23 @@ export function outcomePatch(e: Pick<MatchEvent, "type" | "detail">, outcome: st
 export function nextCard(detail: string | null | undefined): "yellow" | "red" | null {
   return detail === "yellow" ? "red" : detail === "red" ? null : "yellow";
 }
+
+// Fixes small errors that split a player's events or put them under the wrong team, without asking: a name with spaces
+// around it («Lelo » is another person for every table) is trimmed, and a duel is always ours (the rival has no names:
+// the event says which of ours took part and who won), so a duel marked for the rival goes back to our team. The same
+// array comes back when nothing changes, so it is safe to call on every change of the events.
+export function normalizeEvents(events: MatchEvent[]): MatchEvent[] {
+  let changed = false;
+  const out = events.map((e) => {
+    let next = e;
+    const name = typeof e.player_id === "string" ? e.player_id.trim() : e.player_id;
+    if (name !== e.player_id && name) next = { ...next, player_id: name };
+    const inn = typeof e.player_in === "string" ? e.player_in.trim() : e.player_in;
+    if (inn !== e.player_in && inn) next = { ...next, player_in: inn };
+    // A duel with the name of a player is one of ours (the rival has no names); one without a name is left as it is.
+    if (e.type === "duel" && e.team !== "own" && (name || e.player_id)) next = { ...next, team: "own" };
+    if (next !== e) changed = true;
+    return next;
+  });
+  return changed ? out : events;
+}
