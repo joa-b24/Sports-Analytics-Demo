@@ -312,13 +312,11 @@ export const METRICS: Metric[] = [
   { key: "duel_pct", label: "% duelos ganados", group: "Defensa", unit: "%", tagged: true },
   { key: "fouls", label: "Faltas", group: "Defensa", lower: true, rate: true, tagged: true },
   { key: "minutes_played", label: "Minutos jugados", group: "Físico", unit: "min" },
-  { key: "minutes", label: "Tiempo visto", group: "Físico", unit: "min" },
   { key: "distance_m", label: "Distancia", group: "Físico", unit: "m", rate: true },
   { key: "per_min_m", label: "Metros por minuto", group: "Físico", unit: "m/min" },
   { key: "top_kmh", label: "Velocidad máxima", group: "Físico", unit: "km/h" },
   { key: "hsr_m", label: "HSR (>18 km/h)", group: "Físico", unit: "m", rate: true },
   { key: "sprints", label: "Sprints", group: "Físico", rate: true },
-  { key: "fill_dist_pct", label: "Distancia de relleno", group: "Físico", unit: "%" },
 ];
 
 // The value of a metric for a player; per 10 minutes measured when asked and the metric allows it (needs minutes).

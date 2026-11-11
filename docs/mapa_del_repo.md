@@ -436,6 +436,12 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 - Datos › «Descargar el zip de un partido» (`components/data/ZipExportCard.tsx`, `lib/matchZip.ts`): guarda lo pendiente en la carpeta y arma en el navegador un zip con match.yaml, segments.csv, tracking, ediciones, informe y los eventos de ahora, sin video. Se importa en la otra app con Datos › .zip. Las jugadas, el pizarrón y la presentación viajan en el respaldo.
 - `normalizeEvents` (`lib/tagging.ts`, aplicado en `lib/store.ts` al iniciar y en cada cambio de eventos): recorta espacios en `player_id` («Lelo » era otra jugadora para las tablas) y devuelve a nuestro equipo un duelo que lleva nombre de jugadora pero estaba marcado del rival.
 
+### 5.15 Revisión de métricas (2026-11-10)
+- **Toques** (`distinctTouches` en `lib/positions.ts`): un regate con el balón marcado en cada cuadro contaba un toque por marca; ahora cuenta uno cuando cambia el que tiene el balón o pasan 0.6 s (`MIN_TOUCH_GAP_S`).
+- **Pases cortados** (`ballCourse`, `dropPassThrough`): un toque rival no cuenta si el balón sigue su rumbo (ángulo menor a 25°, velocidad entre 0.6 y 1.6 veces) con marcas medidas a los dos lados; sin marcas o con balón casi quieto no se descarta nada. Pendiente: pases «inciertos» marcables en el laboratorio y usar los eventos como apoyo.
+- **Distancia y velocidad** (`cleanRuns` en `lib/physical.ts`): se cortan los saltos imposibles, se quitan picos y excursiones a otra jugadora y vuelta, se alisa con una recta local (σ 0.25 s) y los pasos bajo 0.3 m/s no suman distancia. La velocidad máxima, HSR y sprints se miden sobre la trayectoria limpia, con ventana de 1 s.
+- Cifras individuales sin «Tiempo visto» ni «Distancia de relleno».
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |

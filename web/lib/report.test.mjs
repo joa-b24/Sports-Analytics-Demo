@@ -101,8 +101,8 @@ test("con balón y nombres: posesión que suma la cobertura, red de pases y toqu
   assert.equal(r.cover.level.level, 4);
   assert.equal(r.summary.network.passes, 4);
   assert.deepEqual(r.summary.network.edges, [{ a: "Ana Uno", b: "Bea Dos", count: 4 }]);
-  assert.deepEqual(r.key_players.rows.map((x) => [x.player, x.touches]), [["Ana Uno", 42], ["Bea Dos", 28]]);
-  assert.equal(r.key_players.rows[0].per10, 2520); // 42 touches in 10 s of ball followed
+  assert.deepEqual(r.key_players.rows.map((x) => [x.player, x.touches]), [["Ana Uno", 9], ["Bea Dos", 6]]);
+  assert.equal(r.key_players.rows[0].per10, 540); // 9 touches (one per 0.6 s at most) in 10 s of ball followed
   assert.equal(r.key_players.print, false);
   const anon = JSON.stringify(buildReport(input({ events: sample(), parts, segmentsByVideo: seg, anonymize: true })));
   assert.ok(!anon.includes("Ana Uno") && !anon.includes("Bea Dos"));

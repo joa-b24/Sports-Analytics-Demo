@@ -333,6 +333,8 @@ export interface BallState {
   contested: boolean;
   blocked: boolean;
   jump: boolean;
+  // A touch of the other team that the ball went through without changing course (see PASS_THROUGH_DEG): not a touch.
+  passThrough?: boolean;
 }
 // Same as BALL_FILL_S in parts.ts (not imported: this module stays free of the drawing code).
 const FOLLOW_S = 3;
@@ -372,6 +374,105 @@ export function ballStates(f: FixedFile, jumpMs?: number): BallState[] {
     if (dec.kind === "touch") state.touch = { frame: b.frame, id: dec.cand.id, team: dec.cand.team as "own" | "opp" };
     else if (dec.kind === "contested") state.contested = true;
     else if (dec.kind === "blocked") state.blocked = true;
+  }
+  dropPassThrough(f, out, mx, my);
+  return out;
+}
+
+// ------------------------------------------------------------------------------------- a ball that goes through
+// A rival standing next to the line of a pass is not a rival who touched the ball: if the ball keeps its direction (and
+// its speed) as it goes by, the pass arrived. A touch of the other team is dropped when the measured ball marks just before
+// and just after it make an angle smaller than PASS_THROUGH_DEG and a speed within PASS_THROUGH_SPEED. Without measured
+// marks on both sides, or with a ball moving slower than PASS_THROUGH_MIN_MS (a ball almost still can be taken), the touch
+// stays: nothing is dropped on a guess. A small change of course is tolerated (capture noise), a real deflection is not.
+export const PASS_THROUGH_DEG = 25;
+export const PASS_THROUGH_SPEED: [number, number] = [0.6, 1.6];
+export const PASS_THROUGH_MIN_MS = 2;
+export const PASS_THROUGH_WINDOW_S = 0.8;
+// Marks closer than this (s) to the touch do not say anything about the direction (the ball is still next to her).
+const PASS_THROUGH_GAP_S = 0.15;
+// Less displacement than this (m) on a side is noise, not a direction.
+const PASS_THROUGH_MIN_M = 1.5;
+
+export type BallCourse = "straight" | "deviated" | "unknown";
+
+// Did the ball keep its course through frame `frame`? `marks`: measured ball marks sorted by frame (drawing units).
+export function ballCourse(marks: { frame: number; x: number; y: number }[], frame: number, fps: number, mx: number, my: number): BallCourse {
+  let lo = 0;
+  let hi = marks.length - 1;
+  if (hi < 0) return "unknown";
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (marks[mid].frame < frame) lo = mid + 1;
+    else hi = mid;
+  }
+  const win = PASS_THROUGH_WINDOW_S * fps;
+  const gap = PASS_THROUGH_GAP_S * fps;
+  let before = -1;
+  for (let i = lo; i >= 0; i--) {
+    if (frame - marks[i].frame > win) break;
+    if (frame - marks[i].frame >= gap) {
+      before = i;
+      break;
+    }
+  }
+  let after = -1;
+  for (let i = lo; i < marks.length; i++) {
+    if (marks[i].frame - frame > win) break;
+    if (marks[i].frame - frame >= gap) {
+      after = i;
+      break;
+    }
+  }
+  if (before < 0 || after < 0) return "unknown";
+  // The position at the touch: the mark at that frame, or the nearest one.
+  const at = marks[lo];
+  if (Math.abs(at.frame - frame) > gap) return "unknown";
+  const vb = [(at.x - marks[before].x) * mx, (at.y - marks[before].y) * my];
+  const va = [(marks[after].x - at.x) * mx, (marks[after].y - at.y) * my];
+  const nb = Math.hypot(vb[0], vb[1]);
+  const na = Math.hypot(va[0], va[1]);
+  if (nb < PASS_THROUGH_MIN_M || na < PASS_THROUGH_MIN_M) return "unknown";
+  const speedB = nb / ((at.frame - marks[before].frame) / fps);
+  const speedA = na / ((marks[after].frame - at.frame) / fps);
+  if (speedB < PASS_THROUGH_MIN_MS) return "unknown";
+  const ang = (Math.acos(Math.max(-1, Math.min(1, (vb[0] * va[0] + vb[1] * va[1]) / (nb * na)))) * 180) / Math.PI;
+  const ratio = speedA / speedB;
+  return ang < PASS_THROUGH_DEG && ratio >= PASS_THROUGH_SPEED[0] && ratio <= PASS_THROUGH_SPEED[1] ? "straight" : "deviated";
+}
+
+function dropPassThrough(f: FixedFile, states: BallState[], mx: number, my: number) {
+  const marks = f.ball
+    .filter((b) => (b.source === "manual" || b.source === "auto") && !b.aerial)
+    .map((b) => ({ frame: b.frame, x: b.x, y: b.y }))
+    .sort((a, b) => a.frame - b.frame);
+  if (marks.length < 3) return;
+  let prev: Touch | null = null;
+  for (const st of states) {
+    if (!st.touch) continue;
+    if (prev && prev.team !== st.touch.team && ballCourse(marks, st.touch.frame, f.fps, mx, my) === "straight") {
+      st.touch = null;
+      st.passThrough = true;
+      continue;
+    }
+    prev = st.touch;
+  }
+}
+
+// Touches that count as touches of a player: a dribble marks the ball many times a second, and each mark next to her would
+// be a touch. One counts when she is not the previous holder, or MIN_TOUCH_GAP_S after her last counted one.
+export const MIN_TOUCH_GAP_S = 0.6;
+export function distinctTouches(ts: Touch[], fps: number): Touch[] {
+  const out: Touch[] = [];
+  const last = new Map<number, number>();
+  let prev: number | null = null;
+  for (const t of ts) {
+    const l = last.get(t.id);
+    if (prev !== t.id || l === undefined || t.frame - l >= MIN_TOUCH_GAP_S * fps) {
+      out.push(t);
+      last.set(t.id, t.frame);
+    }
+    prev = t.id;
   }
   return out;
 }
@@ -435,7 +536,7 @@ export function passesAndTurnovers(f: FixedFile, jumpMs?: number): { passes: Pas
       passes.push({ frame: b.frame, from_frame: a.frame, from: a.id, to: b.id, team: a.team, approx: !named[a.team] });
     } else turnovers.push({ frame: b.frame, from_frame: a.frame, from: a.id, lost: a.team });
   }
-  return { passes, turnovers, touches: ts };
+  return { passes, turnovers, touches: distinctTouches(ts, f.fps) };
 }
 
 // --------------------------------------------------------------------------------------------- possession and passes
@@ -743,7 +844,7 @@ export function playerTouchPoints(parts: Oriented[], team: "own" | "opp", player
     const ids = new Set(o.file.people.filter((p) => p.team === team && p.player_id === playerId).map((p) => p.id));
     if (ids.size === 0) continue;
     const play = usePlay ? (playByVideo[o.file.video_id] ?? []) : null;
-    for (const t of touches(o.file)) {
+    for (const t of passesAndTurnovers(o.file).touches) {
       if (t.team !== team || !ids.has(t.id) || !inStretches(play, t.frame / o.file.fps)) continue;
       const q = positionsNear(o.file, t.frame)?.find((x) => x.id === t.id);
       if (!q) continue;

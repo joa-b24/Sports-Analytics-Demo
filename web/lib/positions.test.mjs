@@ -302,3 +302,25 @@ test("smoothHeat keeps the total time, spreads a single cell and does not cool t
   assert.ok(s.seconds[0] > s.seconds[3 * nx + 5] * 0.9, "an edge cell is not colder than an inner one with the same time");
   assert.deepEqual(smoothHeat(h, 0).seconds, seconds);
 });
+
+import { ballCourse, distinctTouches } from "./positions.ts";
+test("toques distintos: un regate con el balón marcado en cada cuadro cuenta uno cada 0.6 s, no uno por marca", () => {
+  const fps = 30;
+  const dribble = Array.from({ length: 60 }, (_, i) => ({ frame: i, id: 1, team: "own" })); // 2 s seguidos
+  assert.equal(distinctTouches(dribble, fps).length, 4);
+  const alternate = [{ frame: 0, id: 1, team: "own" }, { frame: 5, id: 2, team: "own" }, { frame: 8, id: 1, team: "own" }];
+  assert.equal(distinctTouches(alternate, fps).length, 3);
+});
+test("rumbo del balón: sigue recto junto a una rival, o se desvía", () => {
+  const fps = 30;
+  // Una línea recta a 10 m/s hacia +x, con marcas cada 0.1 s (3 cuadros); en el cuadro 30 pasa junto a una rival.
+  const straight = Array.from({ length: 21 }, (_, i) => ({ frame: i * 3, x: i * 3 * (10 / fps), y: 10 }));
+  assert.equal(ballCourse(straight, 30, fps, 1, 1), "straight");
+  const bent = straight.map((m) => (m.frame > 30 ? { ...m, y: 10 + (m.frame - 30) * (10 / fps) } : m)); // gira 90°
+  assert.equal(ballCourse(bent, 30, fps, 1, 1), "deviated");
+  // Sin marcas a un lado: no se decide.
+  assert.equal(ballCourse(straight.slice(0, 11), 30, fps, 1, 1), "unknown");
+  // Balón casi quieto: puede haberlo tomado ella.
+  const slow = Array.from({ length: 21 }, (_, i) => ({ frame: i * 3, x: i * 3 * (1 / fps), y: 10 }));
+  assert.equal(ballCourse(slow, 30, fps, 1, 1), "unknown");
+});

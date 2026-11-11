@@ -85,3 +85,18 @@ test("filled positions count and the row says how much comes from them, long fil
   const [m] = run([P(1, "own", "Paz")], (i) => [{ id: 1, x: 5 + 0.3 * i, y: 30, source: "auto" }], 60);
   assert.equal(m.fill_time_pct, 0);
 });
+
+test("una excursión a otra jugadora y de regreso en un segundo no suma metros; el zig-zag y el temblor tampoco", () => {
+  // Camina a 1.5 m/s; en las muestras 25-34 (1 s) la caja salta 8 m al lado y vuelve.
+  const base = (i) => 10 + 0.15 * i;
+  const [clean] = run([P(1, "own", "Ana")], (i) => [{ id: 1, x: base(i), y: 30, source: "auto" }], 60);
+  const [jumpy] = run([P(2, "own", "Ana")], (i) => [{ id: 2, x: base(i), y: i >= 25 && i < 35 ? 38 : 30, source: "auto" }], 60);
+  assert.ok(Math.abs(jumpy.distance_m - clean.distance_m) <= 2, `limpio ${clean.distance_m} con salto ${jumpy.distance_m}`);
+  // Zig-zag de ±0.4 m en cada muestra sobre la misma marcha: la distancia no se dispara.
+  const [zig] = run([P(3, "own", "Ana")], (i) => [{ id: 3, x: base(i), y: 30 + (i % 2 ? 0.4 : -0.4), source: "auto" }], 60);
+  assert.ok(zig.distance_m <= clean.distance_m * 1.15, `zig-zag ${zig.distance_m} contra ${clean.distance_m}`);
+  // Parada con temblor de 0.2 m: no recorre nada.
+  const [still] = run([P(4, "own", "Ana")], (i) => [{ id: 4, x: 50 + (i % 2 ? 0.1 : -0.1), y: 30 + (i % 3 ? 0.1 : -0.1), source: "auto" }], 60);
+  assert.ok(still.distance_m <= 1, `quieta ${still.distance_m}`);
+  assert.ok(still.top_kmh < 3);
+});

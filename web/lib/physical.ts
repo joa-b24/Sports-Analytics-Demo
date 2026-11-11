@@ -32,6 +32,114 @@ export const SPRINT_MIN_S = 1;
 // is valid and below SPRINT_KMH does end it.
 export const SPRINT_GAP_S = 0.5;
 
+// ---------------------------------------------------------------------------------------------- clean the series
+// The raw tracking jumps to a neighbour for a few frames and zig-zags by a metre: a distance summed from it is too long and
+// a speed from it too high. Before anything is measured each run is cleaned in three steps:
+//   1. spikes: a position far from the median of its neighbours (within SPIKE_WINDOW_S) is replaced by that median. Two
+//      scales: a short, tight one (a box that jumps for a frame or two) and a longer, wider one (an excursion to another
+//      player and back in a second or two);
+//   2. smoothing: a Gaussian average over about SMOOTH_SIGMA_S, which removes the zig-zag but keeps a real change of
+//      direction (a player does not turn in less than a quarter of a second);
+//   3. a dead band: a step slower than STILL_MS is standing still (jitter), it adds no distance.
+// None of it crosses a gap longer than MAX_GAP_S.
+export const SPIKE_SCALES: { windowS: number; metres: number }[] = [
+  { windowS: 0.6, metres: 1.2 },
+  { windowS: 1.6, metres: 4 },
+];
+export const SMOOTH_SIGMA_S = 0.25;
+export const STILL_MS = 0.3;
+
+const median = (v: number[]) => {
+  const a = [...v].sort((x, y) => x - y);
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+};
+
+// Spikes out: positions that are far from the median of the others around them. It needs neighbours on both sides (at the
+// end of a run a moving player is far from the median of one side only), and a run with a straight line is never a spike.
+export function despike<T extends { t: number; x: number; y: number }>(s: T[], windowS: number, metres: number): T[] {
+  const out = s.map((p) => ({ ...p }));
+  for (let i = 0; i < s.length; i++) {
+    const left: number[] = [];
+    const right: number[] = [];
+    for (let k = i - 1; k >= 0 && s[i].t - s[k].t <= windowS && s[k + 1].t - s[k].t <= MAX_GAP_S; k--) left.push(k);
+    for (let k = i + 1; k < s.length && s[k].t - s[i].t <= windowS && s[k].t - s[k - 1].t <= MAX_GAP_S; k++) right.push(k);
+    // The same number of neighbours on each side: a moving player is then at the middle of what is compared.
+    const m = Math.min(left.length, right.length);
+    if (m < 2) continue;
+    const ids = [...left.slice(0, m), ...right.slice(0, m)];
+    const mx = median(ids.map((k) => s[k].x));
+    const my = median(ids.map((k) => s[k].y));
+    if (Math.hypot(s[i].x - mx, s[i].y - my) > metres) {
+      out[i].x = mx;
+      out[i].y = my;
+    }
+  }
+  return out;
+}
+
+// Local straight line (weights: a Gaussian of σ = SMOOTH_SIGMA_S) evaluated at each position, inside the same stretch
+// without gaps. A line, not an average: it does not pull the ends of a run inward nor cut the corners of a straight run.
+export function smoothSeries<T extends { t: number; x: number; y: number }>(s: T[], sigmaS = SMOOTH_SIGMA_S): T[] {
+  const out = s.map((p) => ({ ...p }));
+  const reach = 3 * sigmaS;
+  for (let i = 0; i < s.length; i++) {
+    let sw = 0;
+    let st = 0;
+    let stt = 0;
+    let sx = 0;
+    let sy = 0;
+    let stx = 0;
+    let sty = 0;
+    const add = (k: number) => {
+      const tau = s[k].t - s[i].t;
+      const w = Math.exp(-0.5 * (tau / sigmaS) ** 2);
+      sw += w;
+      st += w * tau;
+      stt += w * tau * tau;
+      sx += w * s[k].x;
+      sy += w * s[k].y;
+      stx += w * tau * s[k].x;
+      sty += w * tau * s[k].y;
+    };
+    add(i);
+    for (let k = i - 1; k >= 0 && s[i].t - s[k].t <= reach && s[k + 1].t - s[k].t <= MAX_GAP_S; k--) add(k);
+    for (let k = i + 1; k < s.length && s[k].t - s[i].t <= reach && s[k].t - s[k - 1].t <= MAX_GAP_S; k++) add(k);
+    const den = sw * stt - st * st;
+    if (den > 1e-9) {
+      out[i].x = (sx * stt - stx * st) / den;
+      out[i].y = (sy * stt - sty * st) / den;
+    } else {
+      out[i].x = sx / sw;
+      out[i].y = sy / sw;
+    }
+  }
+  return out;
+}
+
+// A step faster than MAX_KMH is a jump between two people: the run is cut there (each side is cleaned on its own, so the
+// smoothing never blurs a jump into plausible steps).
+export function splitAtJumps<T extends { t: number; x: number; y: number }>(s: T[]): T[][] {
+  const out: T[][] = [];
+  let cur: T[] = [];
+  for (let i = 0; i < s.length; i++) {
+    if (i > 0) {
+      const dt = s[i].t - s[i - 1].t;
+      if (dt > 0 && dt <= MAX_GAP_S && (Math.hypot(s[i].x - s[i - 1].x, s[i].y - s[i - 1].y) / dt) * 3.6 > MAX_KMH) {
+        out.push(cur);
+        cur = [];
+      }
+    }
+    cur.push(s[i]);
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+export const cleanSeries = <T extends { t: number; x: number; y: number }>(s: T[]): T[] => smoothSeries(SPIKE_SCALES.reduce((acc, sc) => despike(acc, sc.windowS, sc.metres), s));
+// The runs of a player ready to measure: cut at the jumps and cleaned.
+export const cleanRuns = <T extends { t: number; x: number; y: number }>(runs: T[][]): T[][] => runs.flatMap((r) => splitAtJumps(r).map(cleanSeries));
+
 export interface PhysicalRow {
   name: string;
   seconds: number; // time seen (measured or filled)
@@ -91,7 +199,7 @@ export function physical(parts: Oriented[], team: "own" | "opp"): PhysicalRow[] 
     let hsr = 0;
     let top: number | null = null;
     let sprints = 0;
-    for (const s of runs) {
+    for (const s of cleanRuns(runs)) {
       const n = s.length;
       // Speed of every step; null where the step is not valid (a gap or a jump).
       const stepKmh: (number | null)[] = [null];
@@ -117,10 +225,12 @@ export function physical(parts: Oriented[], team: "own" | "opp"): PhysicalRow[] 
         const step = Math.hypot(s[i].x - s[i - 1].x, s[i].y - s[i - 1].y);
         const filled = s[i].fill || s[i - 1].fill;
         seconds += dt;
-        distance += step;
+        // Standing still: the jitter of the track adds no metres (STILL_MS).
+        const walked = step / dt >= STILL_MS ? step : 0;
+        distance += walked;
         if (filled) {
           fillSeconds += dt;
-          fillDistance += step;
+          fillDistance += walked;
         }
         // Speed over a window centred on this step (half a window each side, without crossing a gap).
         let a = i - 1;
