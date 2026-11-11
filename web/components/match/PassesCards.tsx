@@ -144,6 +144,7 @@ export function PassesCards({
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel
         title="Red de pases"
+        className="lg:col-span-2"
         note={
           source
             ? `${PASS_SOURCE_LABEL[source].toLowerCase()} · ${source === "tracking" ? `${tracked.completed} completos${tracked.approx > 0 ? " (aprox.)" : ""}` : `${handNet.completed} de ${handNet.passes} completos`}`
@@ -160,7 +161,7 @@ export function PassesCards({
               : `No hay pases de ${name(team)} en ninguna de las dos fuentes.`}
           </p>
         ) : (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_13rem]">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(15rem,1fr)]">
             <div className="min-w-0">
             <Pitch>
                   {net.edges.map((e) => {

@@ -73,6 +73,8 @@ tablet/
 
 # locales, no se suben (recuperación, planes y registros de trabajo)
 data/
+# ...pero no el código de la app que se llama data (web/components/data/)
+!web/components/data/
 docs/informes_agentes/
 docs/plan_2026_11_05.md
 docs/plan_movil_y_analisis.md
