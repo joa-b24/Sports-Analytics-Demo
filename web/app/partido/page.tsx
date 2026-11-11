@@ -100,6 +100,8 @@ function MatchPage() {
   }, [id]);
   // The URL says the mode being shown, so the sidebar marks it.
   const shownMode = modeOf(tab);
+  // The missing-video warnings are for working on the video (Captura and Estudio); reading the analysis does not need it.
+  const needsVideo = shownMode !== "analisis";
   useEffect(() => {
     if (!id || linkVideo || linkEdit || modo === shownMode) return;
     router.replace(`/partido?id=${encodeURIComponent(id)}&modo=${shownMode}${picked ? `&paso=${tab}` : ""}`, { scroll: false });
@@ -365,7 +367,7 @@ function MatchPage() {
         onTab={setTab}
         steps={steps}
         status={<SaveStatus match={match} />}
-        badge={videoDl.items.some((i) => i.hasLink && i.state !== "ready" && i.state !== "unknown") ? <MissingTag /> : undefined}
+        badge={needsVideo && videoDl.items.some((i) => i.hasLink && i.state !== "ready" && i.state !== "unknown") ? <MissingTag /> : undefined}
       >
         {match.is_demo && <DemoBadge />}
         <Dropdown label="Datos del partido y del video" trigger={<GearSix size={16} />} panelClass="w-[min(30rem,calc(100vw-2rem))] max-h-[85vh] overflow-y-auto">
@@ -638,7 +640,7 @@ function MatchPage() {
           }}
         </Dropdown>
       </MatchHeader>
-      <VideoFilesBar match={match} dl={videoDl} />
+      {needsVideo && <VideoFilesBar match={match} dl={videoDl} />}
       {(techOpen || procOpen) && (
         <TechModal
           match={match}
