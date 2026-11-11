@@ -732,6 +732,26 @@ export function passArrows(
   return out;
 }
 
+// Where one player touched the ball (measured touches only, see touches()), with her team attacking right. For the map
+// of touches over her heat map.
+export function playerTouchPoints(parts: Oriented[], team: "own" | "opp", playerId: string, playByVideo: Record<string, Segment[]> = {}): [number, number][] {
+  const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
+  const out: [number, number][] = [];
+  for (const o of parts) {
+    const ids = new Set(o.file.people.filter((p) => p.team === team && p.player_id === playerId).map((p) => p.id));
+    if (ids.size === 0) continue;
+    const play = usePlay ? (playByVideo[o.file.video_id] ?? []) : null;
+    for (const t of touches(o.file)) {
+      if (t.team !== team || !ids.has(t.id) || !inStretches(play, t.frame / o.file.fps)) continue;
+      const q = positionsNear(o.file, t.frame)?.find((x) => x.id === t.id);
+      if (!q) continue;
+      const [x, y] = orient(o, q.x, q.y);
+      out.push(team === "opp" ? [PITCH.length - x, PITCH.width - y] : [x, y]);
+    }
+  }
+  return out;
+}
+
 // --------------------------------------------------------------------------------------------- behind the ball
 
 export interface BehindBall {

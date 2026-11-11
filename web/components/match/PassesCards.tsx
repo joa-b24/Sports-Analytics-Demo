@@ -11,7 +11,7 @@ import { networkFromPasses, passStats, type Net, type PlayerPasses } from "@/lib
 import { PASS_SOURCE_LABEL, trackedNet, trackedPasses, type PassSource } from "@/lib/passSources";
 import { passStretches } from "@/lib/positions";
 import { type Segment } from "@/lib/segments";
-import { useStore } from "@/lib/store";
+import { setPref, useStore } from "@/lib/store";
 import { EVENT_LABELS, type EventType, type Match, type MatchEvent } from "@/lib/types";
 
 // Pass network and the numbers of each player, from the two sources the app has: the passes read from the tracking
@@ -57,6 +57,11 @@ export function PassesCards({
   const byKey = new Map((net?.nodes ?? []).map((n) => [n.key, n]));
   const maxEdge = Math.max(1, ...(net?.edges ?? []).map((e) => e.count));
 
+  // Clicking a player of the table selects her in the individual sheet and goes there.
+  const openProfile = (p: string) => {
+    setPref(`profile:${match.match_id}`, `${team}|${p}`);
+    document.getElementById("ficha-jugadora")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const evCount = (player: string, t: EventType) => events.filter((e) => e.team === team && e.player_id === player && e.type === t).length;
   const trackedBy = new Map(tracked.players.map((p) => [p.player_id, p]));
   const handBy = new Map(handStats.map((p) => [p.player_id, p]));
@@ -182,7 +187,16 @@ export function PassesCards({
                   const tr = trackedBy.get(p);
                   const share = tr && tr.attempted > 0 ? Math.round((100 * tr.completed) / tr.attempted) : null;
                   return (
-                    <tr key={p} className="border-t border-line-soft transition-colors odd:bg-bg/20 hover:bg-raised/60">
+                    <tr
+                      key={p}
+                      className="cursor-pointer border-t border-line-soft transition-colors odd:bg-bg/20 hover:bg-raised/60"
+                      title="Ver su ficha"
+                      tabIndex={0}
+                      onClick={() => openProfile(p)}
+                      onKeyDown={(k) => {
+                        if (k.key === "Enter") openProfile(p);
+                      }}
+                    >
                       <td className="sticky left-0 bg-surface px-3 py-1.5 whitespace-nowrap text-ink">
                         <span className="tc mr-2 inline-block w-5 text-right text-faint">{numberOf.get(p) ?? ""}</span>
                         {p}

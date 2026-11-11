@@ -81,7 +81,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const [range, setRange] = useState<MinuteRange>(null);
   const [binMin, setBinMin] = useState<5 | 10>(5);
   const [counterTeam, setCounterTeam] = useState<Side>("own");
-  const [detailTeam, setDetailTeam] = useState<Side>("own");
+  const [detailTeam, setDetailTeam] = useState<Side | "both">("own");
   const shotsPlayer = useMomentPlayer(match);
   const headerSlot = useHeaderSlot();
   const rightSlot = useHeaderRightSlot();
@@ -367,32 +367,54 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       <Fold id="ataque-detalle" title="Más detalle del ataque" note="entradas, saques de meta, centros, córners y tiros libres, en mapas">
         <div className="flex flex-wrap items-center gap-3">
           <div className="seg" role="group" aria-label="Equipo de los mapas">
-            {SIDES.map((s) => (
+            {([...SIDES, "both"] as const).map((s) => (
               <button key={s} type="button" aria-pressed={detailTeam === s} onClick={() => setDetailTeam(s)} className="seg-opt">
-                {name(s)}
+                {s === "both" ? "Comparar" : name(s)}
               </button>
             ))}
           </div>
-          <span className="text-xs text-faint">Vistos con el equipo atacando hacia la derecha.</span>
+          <span className="text-xs text-faint">Vistos con cada equipo atacando hacia la derecha.</span>
         </div>
-        <div className="grid gap-5 xl:grid-cols-2">
-          <Panel title="Entradas al último tercio" note="por dónde llegan">
-            <EntryMap events={evs.filter((e) => e.team === detailTeam && e.type === "final_third_entry")} team={detailTeam} />
-          </Panel>
-          <Panel title="Saques de meta" note="de dónde a dónde (inferido) y si la conservan">
-            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && e.type === "goal_kick")} team={detailTeam} styles={GOAL_KICK_STYLES} inferred={goalKickLanding(evs)} />
-            <p className="mt-2 mb-0 text-[11px] text-faint">La línea punteada es el destino inferido: el siguiente evento con posición poco después del saque (5 s si es corto, 10 s si es largo). Es una estimación.</p>
-          </Panel>
-          <Panel title="Centros" note="de dónde a dónde, y cómo acaban">
-            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && isCrossLike(e))} team={detailTeam} styles={SET_PIECE_STYLES} />
-          </Panel>
-          <Panel title="Córners" note="de dónde a dónde, y cómo acaban">
-            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && e.type === "corner")} team={detailTeam} styles={SET_PIECE_STYLES} />
-          </Panel>
-          <Panel title="Tiros libres" note="desde dónde y cómo acaban">
-            <OutcomeMap events={evs.filter((e) => e.team === detailTeam && e.type === "free_kick")} team={detailTeam} styles={SET_PIECE_STYLES} />
-          </Panel>
-        </div>
+        {(() => {
+          // One map per team: both side by side when comparing, so each panel shows the two teams.
+          const sides: Side[] = detailTeam === "both" ? [...SIDES] : [detailTeam];
+          const maps = (render: (team: Side) => React.ReactNode) => (
+            <div className={sides.length > 1 ? "grid gap-4 sm:grid-cols-2" : ""}>
+              {sides.map((t) => (
+                <div key={t} className="min-w-0">
+                  {sides.length > 1 && <div className="eyebrow mb-1.5">{name(t)}</div>}
+                  {render(t)}
+                </div>
+              ))}
+            </div>
+          );
+          const of = (t: Side, f: (e: MatchEvent) => boolean) => evs.filter((e) => e.team === t && f(e));
+          return (
+            <div className={`grid gap-5 ${sides.length > 1 ? "" : "xl:grid-cols-2"}`}>
+              <Panel title="Entradas al último tercio" note="por dónde llegan">
+                {maps((t) => (
+                  <EntryMap events={of(t, (e) => e.type === "final_third_entry")} team={t} />
+                ))}
+              </Panel>
+              <Panel title="Saques de meta" note="de dónde a dónde (inferido) y si la conservan">
+                {maps((t) => (
+                  <OutcomeMap events={of(t, (e) => e.type === "goal_kick")} team={t} styles={GOAL_KICK_STYLES} inferred={goalKickLanding(evs)} />
+                ))}
+                <p className="mt-2 mb-0 text-[11px] text-faint">La línea punteada es el destino inferido: el siguiente evento con posición poco después del saque (5 s si es corto, 10 s si es largo). Es una estimación.</p>
+              </Panel>
+              <Panel title="Centros" note="de dónde a dónde, y cómo acaban">
+                {maps((t) => (
+                  <OutcomeMap events={of(t, isCrossLike)} team={t} styles={SET_PIECE_STYLES} />
+                ))}
+              </Panel>
+              <Panel title="Balón parado" note="córners y tiros libres: de dónde a dónde, y cómo acaban">
+                {maps((t) => (
+                  <OutcomeMap events={of(t, (e) => e.type === "corner" || e.type === "free_kick")} team={t} styles={SET_PIECE_STYLES} />
+                ))}
+              </Panel>
+            </div>
+          );
+        })()}
         <p className="text-xs text-pretty text-faint">
           Quién cobra el balón parado y a quién busca, y cómo defienden en contra, se anotan en el número de jugadora y en la nota de cada evento:
           se leen en la tabla de eventos, no se cuentan.
@@ -494,6 +516,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       </Section>
 
       <Section title="Ficha de jugadora" note="su partido: cifras, mapa y jugadas">
+        <div id="ficha-jugadora" className="scroll-mt-24" />
         <PlayerProfile match={match} events={evs} videoIds={videoIds} segmentsByVideo={segmentsByVideo} ownTimes={ownTimes} timeLabel={timeLabel} />
       </Section>
 

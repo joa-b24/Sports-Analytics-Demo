@@ -38,6 +38,7 @@ export function PlayerProfile({
 }) {
   const { rows, parts, label, fixed } = usePlayersData(match, events, videoIds, segmentsByVideo);
   const moment = useMomentPlayer(match);
+  const showTouches = usePref("profile:touches", "0") === "1";
   const prefKey = `profile:${match.match_id}`;
   const saved = usePref(prefKey, "");
   const row: PlayerRow | undefined = rows.find((r) => r.key === saved) ?? rows.find((r) => r.team === "own");
@@ -122,7 +123,15 @@ export function PlayerProfile({
         </Panel>
 
         <Panel title="Mapa de calor individual" note="tiempo en cada zona, atacando hacia la derecha">
-          {row.minutes ? <PlayerHeat parts={parts} row={row} color={color} name={label(row)} /> : <p className="text-sm text-faint">No hay posiciones con su nombre en el tracking corregido.</p>}
+          {row.minutes ? (
+            <>
+              <label className="mb-2 flex w-fit items-center gap-1.5 text-xs text-muted">
+                <input type="checkbox" checked={showTouches} onChange={(e) => setPref("profile:touches", e.target.checked ? "1" : "0")} />
+                Sobreponer los toques de balón
+              </label>
+              <PlayerHeat parts={parts} row={row} color={color} name={label(row)} touchLayer={showTouches} segmentsByVideo={segmentsByVideo} />
+            </>
+          ) : <p className="text-sm text-faint">No hay posiciones con su nombre en el tracking corregido.</p>}
         </Panel>
 
         <Panel title="Mapa de acciones" note="elige qué ver; atacando hacia la derecha">
@@ -138,37 +147,94 @@ export function PlayerProfile({
   );
 }
 
-// The events tagged with her name: time, type (a dot of its colour) and result, one row each, the first few and then «ver
-// todos». No inner scroll: the list grows with the panel.
-const SHOWN = 8;
+// The events tagged with her name, as a table: time, type (a dot of its colour), result and detail, with filters by type
+// and result and pages, so the panel keeps its height. A click on a row opens the moment in the video.
+const PAGE = 8;
 function EventList({ events, when, onPick }: { events: MatchEvent[]; when: (e: MatchEvent) => string; onPick: (e: MatchEvent) => void }) {
-  const [all, setAll] = useState(false);
+  const [type, setType] = useState("all");
+  const [result, setResult] = useState("all");
+  const [page, setPage] = useState(0);
   if (events.length === 0) return <p className="text-sm text-faint">Ningún evento etiquetado con su nombre.</p>;
-  const list = all ? events : events.slice(0, SHOWN);
+  const types = [...new Set(events.map((e) => e.type))];
+  const results = [...new Set(events.filter((e) => e.type === type || type === "all").map((e) => e.outcome).filter((o): o is string => !!o))];
+  const resultLabel = (e: MatchEvent) => (e.outcome ? (EVENT_OUTCOMES[e.type]?.[e.outcome] ?? e.outcome) : "");
+  const list = events.filter((e) => (type === "all" || e.type === type) && (result === "all" || e.outcome === result));
+  const pages = Math.max(1, Math.ceil(list.length / PAGE));
+  const at = Math.min(page, pages - 1);
+  const shown = list.slice(at * PAGE, at * PAGE + PAGE);
   const tone = (t: MatchEvent["type"]) => (t === "goal" || t === "recovery" ? "var(--color-ok)" : t === "loss" || t === "foul" ? "var(--color-danger)" : t === "shot" ? "var(--color-own)" : "var(--color-faint)");
   return (
     <div>
-      <ul className="m-0 list-none divide-y divide-line-soft p-0">
-        {list.map((e) => {
-          const result = e.outcome ? (EVENT_OUTCOMES[e.type]?.[e.outcome] ?? e.outcome) : "";
-          return (
-            <li key={e.event_id}>
-              <button type="button" onClick={() => onPick(e)} className="grid w-full grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-1 py-2 text-left text-sm transition-colors hover:bg-raised" title="Ver el momento en el video">
-                <span className="tc text-xs text-faint">{when(e)}</span>
-                <span className="flex min-w-0 items-center gap-2 text-ink-2">
-                  <i className="h-2 w-2 shrink-0 rounded-full" style={{ background: tone(e.type) }} aria-hidden />
-                  <span className="truncate">{EVENT_LABELS[e.type]}</span>
-                </span>
-                <span className="truncate text-xs text-faint">{result}</span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      {events.length > SHOWN && (
-        <button type="button" className="link mt-2 text-xs" onClick={() => setAll((v) => !v)}>
-          {all ? "Ver menos" : `Ver los ${events.length}`}
-        </button>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <Select
+          variant="field"
+          label="Tipo de evento"
+          value={type}
+          onChange={(v) => {
+            setType(v || "all");
+            setResult("all");
+            setPage(0);
+          }}
+          options={[{ value: "all", label: "Todos los tipos" }, ...types.map((t) => ({ value: t, label: EVENT_LABELS[t] }))]}
+        />
+        {results.length > 0 && (
+          <Select
+            variant="field"
+            label="Resultado"
+            value={result}
+            onChange={(v) => {
+              setResult(v || "all");
+              setPage(0);
+            }}
+            options={[{ value: "all", label: "Todos los resultados" }, ...results.map((o) => ({ value: o, label: EVENT_OUTCOMES[(type === "all" ? (events.find((e) => e.outcome === o)?.type ?? "shot") : type) as MatchEvent["type"]]?.[o] ?? o }))]}
+          />
+        )}
+        <span className="tc ml-auto text-xs text-faint">{list.length} de {events.length}</span>
+      </div>
+      <div className="overflow-x-auto rounded-md shadow-[0_0_0_1px_var(--color-line-soft)]">
+        <table className="w-full border-collapse text-left text-xs">
+          <thead>
+            <tr className="bg-bg/50 text-[11px] text-faint">
+              <th className="px-3 py-2 font-medium">Tiempo</th>
+              <th className="px-2 py-2 font-medium">Evento</th>
+              <th className="px-2 py-2 font-medium">Resultado</th>
+              <th className="px-3 py-2 font-medium">Nota</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((e) => (
+              <tr key={e.event_id} className="cursor-pointer border-t border-line-soft odd:bg-bg/20 hover:bg-raised/60" title="Ver el momento en el video" tabIndex={0} onClick={() => onPick(e)} onKeyDown={(k) => k.key === "Enter" && onPick(e)}>
+                <td className="tc px-3 py-1.5 text-faint">{when(e)}</td>
+                <td className="px-2 whitespace-nowrap text-ink-2">
+                  <i className="mr-2 inline-block h-2 w-2 rounded-full align-middle" style={{ background: tone(e.type) }} aria-hidden />
+                  {EVENT_LABELS[e.type]}
+                </td>
+                <td className="px-2 text-muted">{resultLabel(e)}</td>
+                <td className="max-w-[10rem] truncate px-3 text-faint">{e.note ?? ""}</td>
+              </tr>
+            ))}
+            {shown.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-3 py-4 text-center text-faint">
+                  Ningún evento con ese filtro.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {pages > 1 && (
+        <div className="mt-2 flex items-center justify-end gap-2 text-xs text-muted">
+          <button type="button" className="btn btn-ghost !px-2 !py-1" disabled={at === 0} onClick={() => setPage(at - 1)} aria-label="Página anterior">
+            ‹
+          </button>
+          <span className="tc">
+            {at + 1} / {pages}
+          </span>
+          <button type="button" className="btn btn-ghost !px-2 !py-1" disabled={at >= pages - 1} onClick={() => setPage(at + 1)} aria-label="Página siguiente">
+            ›
+          </button>
+        </div>
       )}
     </div>
   );

@@ -8,7 +8,7 @@ import { TrackingLoading } from "@/components/TrackingLoading";
 import { Card } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
 import { MAX_COMPARE, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
-import { heatmapSmooth, type Oriented } from "@/lib/positions";
+import { heatmapSmooth, playerTouchPoints, type Oriented } from "@/lib/positions";
 import type { Segment } from "@/lib/segments";
 import { setPref, usePref, useStore } from "@/lib/store";
 import { PITCH, type Match, type MatchEvent } from "@/lib/types";
@@ -227,8 +227,9 @@ function MetricRow({ m, rows, per10 }: { m: Metric; rows: PlayerRow[]; per10: bo
   );
 }
 
-export function PlayerHeat({ parts, row, color, name }: { parts: Oriented[]; row: PlayerRow; color: string; name: string }) {
+export function PlayerHeat({ parts, row, color, name, touchLayer = false, segmentsByVideo = {} }: { parts: Oriented[]; row: PlayerRow; color: string; name: string; touchLayer?: boolean; segmentsByVideo?: Record<string, Segment[]> }) {
   const h = useMemo(() => heatmapSmooth(parts, row.team, row.id), [parts, row.team, row.id]);
+  const dots = useMemo(() => (touchLayer ? playerTouchPoints(parts, row.team, row.id, segmentsByVideo) : []), [touchLayer, parts, row.team, row.id, segmentsByVideo]);
   const max = Math.max(...h.seconds, 1e-9);
   const cw = PITCH.length / h.nx;
   const ch = PITCH.width / h.ny;
@@ -252,6 +253,9 @@ export function PlayerHeat({ parts, row, color, name }: { parts: Oriented[]; row
             if (row.team === "opp") [i, j] = [h.nx - 1 - i, h.ny - 1 - j];
             return <rect key={k} x={i * cw} y={j * ch} width={cw} height={ch} fill={color} opacity={0.85 * (v / max)} />;
           })}
+          {dots.map(([x, y], n) => (
+            <circle key={`t${n}`} cx={x} cy={y} r={0.8} fill="var(--color-ink)" stroke="var(--color-bg)" strokeWidth={0.25} opacity={0.9} />
+          ))}
         </Pitch>
       )}
     </figure>

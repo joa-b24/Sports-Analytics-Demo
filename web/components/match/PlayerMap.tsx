@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Pitch } from "@/components/Pitch";
 import { finishEvents } from "@/lib/analysis";
 import { fmtT } from "@/lib/format";
@@ -69,21 +69,31 @@ export function PlayerMap({
   const counts: Record<LayerId, number> = { shot: shots.length, pass: arrows.length, loss: sets.loss.length, recovery: sets.recovery.length, duel: sets.duel.length };
   const missing = (Object.keys(sets) as Exclude<LayerId, "pass">[]).filter((k) => on.has(k)).reduce((n, k) => n + sets[k].filter((e) => at(e) === null).length, 0);
 
+  // The event whose video is open stays marked with a ring (whatever its shape) until another one is opened.
+  const [active, setActive] = useState<string | null>(null);
+  const choose = (e: MatchEvent) => {
+    setActive(e.event_id);
+    onPick?.(e);
+  };
   const pick = (e: MatchEvent) =>
     onPick
       ? {
           role: "button" as const,
           tabIndex: 0,
           cursor: "pointer",
-          onClick: () => onPick(e),
+          onClick: () => choose(e),
           onKeyDown: (k: React.KeyboardEvent) => {
             if (k.key === "Enter" || k.key === " ") {
               k.preventDefault();
-              onPick(e);
+              choose(e);
             }
           },
         }
       : {};
+  const ring = (e: MatchEvent) => {
+    const p = active === e.event_id ? at(e) : null;
+    return p && <circle key={`ring-${e.event_id}`} cx={p[0]} cy={p[1]} r={3} fill="none" stroke="var(--color-ink)" strokeWidth={0.5} strokeDasharray="1.2 1" pointerEvents="none" />;
+  };
   const tip = (e: MatchEvent) => `${EVENT_LABELS[e.type]} · ${fmtT(e.t_video)}${onPick ? " · clic para ver el video" : ""}`;
 
   return (
@@ -128,7 +138,7 @@ export function PlayerMap({
           sets.duel.map((e) => {
             const p = at(e);
             return p && (
-              <rect key={e.event_id} x={p[0] - 1.2} y={p[1] - 1.2} width={2.4} height={2.4} fill={TONE.duel} {...pick(e)}>
+              <rect key={e.event_id} x={p[0] - 1.2} y={p[1] - 1.2} width={2.4} height={2.4} fill={e.outcome === "lost" ? "var(--color-surface)" : TONE.duel} stroke={TONE.duel} strokeWidth={0.5} {...pick(e)}>
                 <title>{tip(e)}</title>
               </rect>
             );
@@ -146,12 +156,14 @@ export function PlayerMap({
           sets.shot.map((e) => {
             const p = at(e);
             return p && (
-              <circle key={e.event_id} cx={p[0]} cy={p[1]} r={1.5} fill={e.type === "goal" ? color : "var(--color-surface)"} stroke={color} strokeWidth={0.55} {...pick(e)}>
+              <circle key={e.event_id} cx={p[0]} cy={p[1]} r={e.type === "goal" ? 1.9 : 1.5} fill={e.type === "goal" ? color : "var(--color-surface)"} fillOpacity={1} stroke={color} strokeWidth={e.outcome === "on_target" || e.type === "goal" ? 0.9 : 0.4} strokeOpacity={e.type === "goal" || e.outcome === "on_target" ? 1 : 0.6} {...pick(e)}>
                 <title>{tip(e)}</title>
               </circle>
             );
           })}
+        {[...sets.shot, ...sets.duel, ...sets.loss, ...sets.recovery].map((e) => ring(e))}
       </Pitch>
+      <p className="mt-1 text-[11px] text-faint">Gol: círculo lleno · a puerta: borde grueso · fuera o bloqueado: borde fino · duelo ganado: cuadro lleno, perdido: vacío.</p>
       {missing > 0 && <p className="mt-1 text-xs text-faint">{missing} evento(s) sin posición marcada no aparecen en el mapa.</p>}
       {row.team === "opp" && <span className="sr-only">Dibujado atacando hacia la derecha</span>}
     </div>
