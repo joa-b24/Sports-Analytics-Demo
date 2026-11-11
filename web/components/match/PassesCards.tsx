@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { CaretDown, CaretUp } from "@phosphor-icons/react";
 import { Locked } from "@/components/Locked";
 import { usePlayersData } from "@/components/match/PlayersCompare";
 import { Panel } from "@/components/match/Panel";
@@ -41,6 +42,8 @@ export function PassesCards({
   const parts = useMemo(() => fixed?.parts ?? [], [fixed]);
   const { ratings } = usePlayersData(match, events, videoIds, segmentsByVideo);
   const [team, setTeam] = useState<Side>("own");
+  // Order of the table: a click on a header sorts by it (down, then up, then back to the original order).
+  const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const hand = useMemo(() => all.filter((p) => p.match_id === match.match_id && p.team === team), [all, match.match_id, team]);
   const numberOf = new Map((match.kind === "own" ? roster : []).map((p) => [p.player_id, p.number]));
   const label = (id: string) => (numberOf.get(id) != null ? String(numberOf.get(id)) : id.replace(/^#/, ""));
@@ -77,6 +80,33 @@ export function PassesCards({
   ];
   const partnersOf = (p: string): PlayerPasses["partners"] => (source === "hand" ? handBy.get(p)?.partners : trackedBy.get(p)?.partners) ?? [];
   const showTracked = has.tracking && tracked.players.length > 0;
+
+  // The columns: each one knows how to sort (a number, or text for the name). Short headers, the full name in the tooltip.
+  type Col = { id: string; label: string; title?: string; flag?: string; left?: boolean; val: (p: string) => number | string };
+  const short: Partial<Record<EventType, string>> = { shot: "Tiros", goal: "Goles", key_pass: "P. clave", loss: "Pérd.", recovery: "Recup.", foul: "Faltas" };
+  const columns: Col[] = [
+    { id: "name", label: "Jugadora", left: true, val: (p) => p },
+    { id: "rating", label: "Calif.", flag: "rev.", title: "Calificación del partido, en revisión (clic en la jugadora para ver de dónde sale)", val: (p) => ratings.get(`${team}|${p}`)?.score ?? -1 },
+    ...(showTracked
+      ? ([
+          { id: "passes", label: "Pases", title: "Pases intentados (del tracking)", val: (p) => trackedBy.get(p)?.attempted ?? -1 },
+          { id: "share", label: "Completos", title: "Porcentaje de pases completos", val: (p) => { const t = trackedBy.get(p); return t && t.attempted > 0 ? t.completed / t.attempted : -1; } },
+          { id: "received", label: "Recib.", title: "Pases recibidos", val: (p) => trackedBy.get(p)?.received ?? -1 },
+          { id: "touches", label: "Toques", val: (p) => trackedBy.get(p)?.touches ?? -1 },
+        ] as Col[])
+      : []),
+    ...PER_PLAYER.map((t): Col => ({ id: t, label: short[t] ?? EVENT_LABELS[t], title: EVENT_LABELS[t], val: (p) => evCount(p, t) })),
+    { id: "partners", label: "Con quién más", left: true, title: "Con quién más pasa", val: (p) => partnersOf(p)[0]?.count ?? 0 },
+  ];
+  const sortCol = sort ? columns.find((c) => c.id === sort.key) : undefined;
+  const sorted = sortCol && sort
+    ? [...players].sort((a, b) => {
+        const x = sortCol.val(a);
+        const y = sortCol.val(b);
+        const d = typeof x === "string" || typeof y === "string" ? String(x).localeCompare(String(y), "es") : x - y;
+        return sort.dir === -1 ? -d : d;
+      })
+    : players;
 
   const toggle = (
     <div className="seg">
@@ -160,36 +190,34 @@ export function PassesCards({
         )}
       </Panel>
 
-      <Panel title="Tabla por jugadora" note={name(team)}>
+      <Panel title="Tabla por jugadora" note={name(team)} className="lg:col-span-2">
         {players.length === 0 && !has.tracking ? (
           <p className="text-sm text-muted">Sin pases ni eventos con jugadora todavía.</p>
         ) : (
           <div className="overflow-x-auto rounded-md shadow-[0_0_0_1px_var(--color-line-soft)]">
-            <table className="w-full min-w-max border-collapse text-left text-xs">
+            <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="bg-bg/50 text-[11px] text-faint">
-                  <th className="sticky left-0 bg-bg/80 px-3 py-2 font-medium">Jugadora</th>
-                  <th className="px-2 py-2 text-right font-medium" title="Calificación del partido, en revisión (clic en la jugadora para ver de dónde sale)">
-                    Calif. <span className="text-[9px] text-warn">en revisión</span>
-                  </th>
-                  {showTracked && (
-                    <>
-                      <th className="px-2 py-2 text-right font-medium">Pases</th>
-                      <th className="px-2 py-2 font-medium">Completados</th>
-                      <th className="px-2 py-2 text-right font-medium">Recibidos</th>
-                      <th className="px-2 py-2 text-right font-medium">Toques</th>
-                    </>
-                  )}
-                  {PER_PLAYER.map((t) => (
-                    <th key={t} className="px-2 py-2 text-right font-medium">
-                      {EVENT_LABELS[t]}
-                    </th>
-                  ))}
-                  <th className="px-3 py-2 font-medium">Con quién más</th>
+                  {columns.map((c) => {
+                    const on = sort?.key === c.id;
+                    return (
+                      <th key={c.id} aria-sort={on ? (sort.dir === -1 ? "descending" : "ascending") : "none"} className={`${c.id === "name" ? "sticky left-0 bg-bg/80 px-3" : "px-1.5"} py-2 font-medium ${c.left ? "" : "text-right"}`} title={c.title}>
+                        <button
+                          type="button"
+                          className={`inline-flex items-center gap-0.5 whitespace-nowrap hover:text-ink ${on ? "text-ink" : ""}`}
+                          onClick={() => { const first = c.id === "name" ? 1 : -1; setSort(!on ? { key: c.id, dir: first } : sort.dir === first ? { key: c.id, dir: first === 1 ? -1 : 1 } : null); }}
+                        >
+                          {c.label}
+                          {c.flag && <span className="text-[9px] text-warn">{c.flag}</span>}
+                          {on && (sort.dir === -1 ? <CaretDown size={10} weight="bold" /> : <CaretUp size={10} weight="bold" />)}
+                        </button>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
-                {players.map((p) => {
+                {sorted.map((p) => {
                   const tr = trackedBy.get(p);
                   const share = tr && tr.attempted > 0 ? Math.round((100 * tr.completed) / tr.attempted) : null;
                   return (
@@ -207,34 +235,36 @@ export function PassesCards({
                         <span className="tc mr-2 inline-block w-5 text-right text-faint">{numberOf.get(p) ?? ""}</span>
                         {p}
                       </td>
-                      <td className="px-2 text-right">
+                      <td className="px-1.5 text-right">
                         <RatingBadge rating={ratings.get(`${team}|${p}`)} mark={false} />
                       </td>
                       {showTracked && (
                         <>
-                          <td className="tc px-2 text-right">{tr?.attempted ?? "–"}</td>
-                          <td className="px-2">
+                          <td className="tc px-1.5 text-right">{tr?.attempted ?? "–"}</td>
+                          <td className="px-1.5">
                             {share === null ? (
-                              <span className="tc text-faint">–</span>
+                              <span className="tc block text-right text-faint">–</span>
                             ) : (
-                              <span className="flex items-center gap-2" title={`${tr?.completed} de ${tr?.attempted} pases completos`}>
-                                <span className="h-1.5 w-14 overflow-hidden rounded-full bg-line-soft">
+                              <span className="flex items-center justify-end gap-1.5" title={`${tr?.completed} de ${tr?.attempted} pases completos`}>
+                                <span className="h-1.5 w-8 overflow-hidden rounded-full bg-line-soft">
                                   <span className="block h-full rounded-full" style={{ width: `${share}%`, background: color }} />
                                 </span>
-                                <span className="tc w-9 text-right text-ink-2">{share} %</span>
+                                <span className="tc w-8 text-right text-ink-2">{share} %</span>
                               </span>
                             )}
                           </td>
-                          <td className="tc px-2 text-right">{tr?.received ?? "–"}</td>
-                          <td className="tc px-2 text-right">{tr?.touches ?? "–"}</td>
+                          <td className="tc px-1.5 text-right">{tr?.received ?? "–"}</td>
+                          <td className="tc px-1.5 text-right">{tr?.touches ?? "–"}</td>
                         </>
                       )}
                       {PER_PLAYER.map((t) => (
-                        <td key={t} className="tc px-2 text-right text-ink-2">
+                        <td key={t} className="tc px-1.5 text-right text-ink-2">
                           {evCount(p, t) || <span className="text-line-strong">·</span>}
                         </td>
                       ))}
-                      <td className="px-3 whitespace-nowrap text-muted">{partnersOf(p).slice(0, 2).map((x) => `${label(x.player_id)} (${x.count})`).join(", ")}</td>
+                      <td className="max-w-[9rem] truncate px-1.5 text-muted" title={partnersOf(p).slice(0, 2).map((x) => `${label(x.player_id)} (${x.count})`).join(", ")}>
+                        {partnersOf(p).slice(0, 2).map((x) => `${label(x.player_id)} (${x.count})`).join(", ")}
+                      </td>
                     </tr>
                   );
                 })}

@@ -54,7 +54,7 @@ export function usePlayersData(match: Match, events: MatchEvent[], videoIds: str
   // The rating (in review) with the windows of the match's analysis settings.
   const ratings = useMemo(() => {
     const cfg = analysisParamsOf(match);
-    return rateAll(rows, events, { lossShotS: cfg.lossShotS, recoveryAttackS: cfg.recoveryAttackS });
+    return rateAll(rows, events, { lossShotS: cfg.lossShotS, recoveryAttackS: cfg.recoveryAttackS, quickRecoveryS: cfg.quickRecoveryS });
   }, [rows, events, match]);
   return { rows, parts, label, fixed, ratings };
 }

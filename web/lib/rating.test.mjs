@@ -61,3 +61,33 @@ test("la nota total queda entre 0 y 10 y los descuentos del partido tienen tope 
   assert.ok(a.adjust >= -3 && a.score >= 0);
   assert.equal(a.adjust, -3);
 });
+
+test("suman los goles, tiros a puerta, córners, faltas a favor, pase clave a tiro, falta provocada y la pérdida que ella recupera", () => {
+  const lelo = row("Lelo");
+  const events = [
+    ev("g1", 100, "goal", "own", { player_id: "Lelo" }),
+    ev("s1", 98, "shot", "own", { player_id: "Lelo", outcome: "on_target" }), // el tiro del gol: no cuenta aparte
+    ev("s2", 300, "shot", "own", { player_id: "Lelo", outcome: "on_target" }),
+    ev("c1", 400, "corner", "own", { player_id: "Lelo", outcome: "shot" }),
+    ev("f1", 500, "free_kick", "own", { player_id: "Lelo" }),
+    ev("k1", 600, "key_pass", "own", { player_id: "Lelo" }),
+    ev("s3", 604, "shot", "own", { player_id: "Ana" }),
+    ev("fp", 700, "foul", "opp", { player_id: "Lelo" }),
+    ev("l1", 800, "loss", "own", { player_id: "Lelo" }),
+    ev("r1", 804, "recovery", "own", { player_id: "Lelo" }),
+  ];
+  const adj = ratingAdjustments(lelo, events);
+  const total = (label) => adj.filter((a) => a.label === label).reduce((s, a) => s + a.delta, 0);
+  assert.equal(total("Gol"), 0.7);
+  assert.equal(total("Tiro a puerta"), 0.25); // solo el de fuera del gol
+  assert.equal(total("Córner que acaba en remate"), 0.4);
+  assert.equal(total("Falta a favor"), 0.1);
+  assert.equal(total("Pase clave que acaba en tiro"), 0.3);
+  assert.equal(total("Falta provocada"), 0.3);
+  assert.equal(total("Pérdida que ella misma recupera"), 0.3);
+});
+
+test("la media del grupo ya no es 5: una jugadora normal saca 6", () => {
+  const rows = [row("A"), row("B"), row("C"), row("D")];
+  assert.equal(rateAll(rows, []).get("own|A").score, 6);
+});

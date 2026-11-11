@@ -83,7 +83,7 @@ export function RatingDetail({ rating, onPick }: { rating: Rating | undefined; o
         </div>
       )}
       <p className="m-0 text-[11px] text-pretty text-faint">
-        {RATING_NOTE} 5 es el promedio de su equipo en este partido; cada cifra se compara por 90 minutos. Las acciones con consecuencia tienen tope de −3 y +2 por partido.
+        {RATING_NOTE} 6 es una jugadora normal de su equipo en este partido; cada cifra se compara por 90 minutos. Las acciones con consecuencia tienen tope de −3 y +2 por partido.
       </p>
     </div>
   );

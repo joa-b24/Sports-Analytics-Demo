@@ -4,7 +4,7 @@
 //
 // How it is made:
 //   1. each metric of the player is compared with the players of her team and line in this match (z score, clipped to ±2);
-//   2. the z scores are averaged with the weights of her line and taken to 0-10 (5 = the average of the group);
+//   2. the z scores are averaged with the weights of her line and taken to 0-10 (6 = the average of the group, see BASE_SCORE);
 //   3. then what her actions cost or gave is added: a loss that ended in a shot or a goal of the rival, a foul that gave a
 //      shot, a recovery that ended in an attack of hers... each one a line with its minute, never a hidden number.
 // A metric with no data does not count (its weight goes to the others); with fewer than MIN_METRICS there is no rating.
@@ -12,7 +12,7 @@ import type { PlayerRow } from "./players.ts";
 import type { MatchEvent } from "./types.ts";
 
 export type RatingLine = "def" | "mid" | "fwd";
-export type RatingKey = "pass_pct" | "progressive" | "key_passes" | "finishing" | "entries" | "recoveries" | "duel_pct" | "losses" | "hsr" | "fouls";
+export type RatingKey = "pass_pct" | "progressive" | "key_passes" | "finishing" | "entries" | "recoveries" | "duel_pct" | "losses" | "hsr" | "fouls" | "touches";
 
 export const RATING_LABELS: Record<RatingKey, string> = {
   pass_pct: "Pases completos",
@@ -25,13 +25,18 @@ export const RATING_LABELS: Record<RatingKey, string> = {
   losses: "Pérdidas",
   hsr: "Alta intensidad",
   fouls: "Faltas",
+  touches: "Toques",
 };
 // Weights by line (they add up to 100). The roster has no position yet, so every player is rated as `mid` (see lineOf).
 export const RATING_WEIGHTS: Record<RatingLine, Record<RatingKey, number>> = {
-  def: { pass_pct: 15, progressive: 12, key_passes: 3, finishing: 2, entries: 5, recoveries: 18, duel_pct: 20, losses: 15, hsr: 5, fouls: 5 },
-  mid: { pass_pct: 15, progressive: 14, key_passes: 10, finishing: 8, entries: 10, recoveries: 12, duel_pct: 10, losses: 11, hsr: 7, fouls: 3 },
-  fwd: { pass_pct: 8, progressive: 8, key_passes: 14, finishing: 28, entries: 14, recoveries: 6, duel_pct: 8, losses: 8, hsr: 5, fouls: 1 },
+  def: { pass_pct: 13, progressive: 10, key_passes: 3, finishing: 2, entries: 4, recoveries: 17, duel_pct: 18, losses: 12, hsr: 5, fouls: 5, touches: 11 },
+  mid: { pass_pct: 12, progressive: 12, key_passes: 10, finishing: 8, entries: 9, recoveries: 12, duel_pct: 9, losses: 9, hsr: 6, fouls: 3, touches: 10 },
+  fwd: { pass_pct: 7, progressive: 7, key_passes: 13, finishing: 26, entries: 13, recoveries: 6, duel_pct: 7, losses: 6, hsr: 5, fouls: 1, touches: 9 },
 };
+// The rating of an average player of the group. Football ratings are read with 6 as «normal» (5 would be a poor match), and a
+// z score of ±2 takes it to the ends: z = +2 is 10, z = -2 is 2.
+export const BASE_SCORE = 6;
+export const POINTS_PER_Z = 2;
 // Metrics where less is better.
 const LOWER: RatingKey[] = ["losses", "fouls"];
 
@@ -39,11 +44,13 @@ export const MIN_METRICS = 4;
 export const MIN_MINUTES = 20;
 export const MIN_PASSES = 5;
 export const MIN_DUELS = 3;
+// With this many touches her losses are compared per 100 touches, not per 90 minutes.
+export const MIN_TOUCHES_FOR_RATE = 15;
 export const MIN_GROUP = 3;
 export const Z_CLIP = 2;
 // What the consequences of her actions can take away or give in a match.
 export const ADJUST_MIN = -3;
-export const ADJUST_MAX = 2;
+export const ADJUST_MAX = 3;
 // A chain that ends in the same action of the rival (a loss, then a foul, then the goal) takes away at most this much.
 export const CHAIN_MIN = -1.5;
 
@@ -84,8 +91,11 @@ export interface Rating {
 export interface RatingOptions {
   lossShotS?: number;
   recoveryAttackS?: number;
+  quickRecoveryS?: number;
 }
 
+// A goal and a shot of the same player closer than this (s) are one action (lib/analysis.ts SAME_ACTION_S).
+const SAME_ACTION_S = 5;
 const vid = (e: MatchEvent) => e.video_id ?? "v1";
 const other = (t: "own" | "opp") => (t === "own" ? "opp" : "own");
 const isShot = (e: MatchEvent) => e.type === "shot" || e.type === "goal";
@@ -106,8 +116,10 @@ export function ratingValues(r: PlayerRow): Record<RatingKey, number | null> {
     entries: ev(r.box_entries),
     recoveries: ev(r.recoveries),
     duel_pct: r.tagged && duels >= MIN_DUELS ? (100 * r.duels_won) / duels : null,
-    losses: ev(r.losses),
+    // Losses count against the ball she handled: whoever touches it more loses it more.
+    losses: r.tagged ? (r.touches !== null && r.touches >= MIN_TOUCHES_FOR_RATE ? (100 * r.losses) / r.touches : per90(r.losses)) : null,
     hsr: per90(r.hsr_m),
+    touches: per90(r.touches),
     fouls: ev(r.fouls),
   };
 }
@@ -119,6 +131,7 @@ const sd = (v: number[], m: number) => Math.sqrt(mean(v.map((x) => (x - m) ** 2)
 export function ratingAdjustments(row: PlayerRow, events: MatchEvent[], opts: RatingOptions = {}): RatingAdjustment[] {
   const lossS = opts.lossShotS ?? 15;
   const recS = opts.recoveryAttackS ?? 15;
+  const quickS = opts.quickRecoveryS ?? 8;
   const sorted = [...events].sort((a, b) => a.t_video - b.t_video);
   const mine = (e: MatchEvent) => e.team === row.team && clean(e.player_id) === row.id;
   const rival = other(row.team);
@@ -127,7 +140,19 @@ export function ratingAdjustments(row: PlayerRow, events: MatchEvent[], opts: Ra
   const hits: Hit[] = [];
   for (const e of sorted) {
     if (!mine(e)) continue;
-    if (e.type === "loss") {
+    if (e.type === "goal") {
+      hits.push({ delta: 0.7, label: "Gol", e, target: null });
+    } else if (e.type === "shot") {
+      // A shot on target; the shot of a goal is that goal (a goal tagged at most SAME_ACTION_S away is not counted twice).
+      const isGoalShot = sorted.some((x) => x.type === "goal" && mine(x) && vid(x) === vid(e) && Math.abs(x.t_video - e.t_video) <= SAME_ACTION_S);
+      if (e.outcome === "on_target" && !isGoalShot) hits.push({ delta: 0.25, label: "Tiro a puerta", e, target: null });
+    } else if (e.type === "corner") {
+      hits.push(e.outcome === "shot" ? { delta: 0.4, label: "Córner que acaba en remate", e, target: null } : { delta: 0.1, label: "Córner a favor", e, target: null });
+    } else if (e.type === "free_kick") {
+      hits.push(e.outcome === "shot" ? { delta: 0.3, label: "Falta a favor que acaba en remate", e, target: null } : { delta: 0.1, label: "Falta a favor", e, target: null });
+    } else if (e.type === "loss") {
+      const again = after(e, quickS, (x) => x.type === "recovery" && mine(x));
+      if (again) hits.push({ delta: 0.3, label: "Pérdida que ella misma recupera", e, target: null });
       const goal = after(e, lossS, (x) => x.team === rival && x.type === "goal");
       const shot = goal ?? after(e, lossS, (x) => x.team === rival && isShot(x));
       const entry = shot ?? after(e, lossS, (x) => x.team === rival && x.type === "box_entry");
@@ -147,9 +172,13 @@ export function ratingAdjustments(row: PlayerRow, events: MatchEvent[], opts: Ra
       else if (shot) hits.push({ delta: 0.3, label: "Recuperación que acaba en tiro propio", e, target: null });
     } else if (e.type === "key_pass") {
       const goal = after(e, 8, (x) => x.team === row.team && x.type === "goal");
+      const shot = goal ?? after(e, 8, (x) => x.team === row.team && x.type === "shot");
       if (goal) hits.push({ delta: 0.5, label: "Pase clave que acaba en gol", e, target: null });
+      else if (shot) hits.push({ delta: 0.3, label: "Pase clave que acaba en tiro", e, target: null });
     }
   }
+  // A foul she drew: the rival's foul tagged with her name (the fouled player).
+  for (const e of sorted) if (e.type === "foul" && e.team === rival && clean(e.player_id) === row.id) hits.push({ delta: 0.3, label: "Falta provocada", e, target: null });
   // Losses and fouls that end in the same action of the rival are one chain: they add up to at most CHAIN_MIN.
   const out: RatingAdjustment[] = [];
   const byTarget = new Map<string, Hit[]>();
@@ -201,9 +230,9 @@ export function rateAll(rows: PlayerRow[], events: MatchEvent[], opts: RatingOpt
     const wsum = comps.reduce((a, c) => a + RATING_WEIGHTS[line][c.key], 0);
     const components: RatingComponent[] = comps.map((c) => {
       const weight = RATING_WEIGHTS[line][c.key] / wsum;
-      return { ...c, weight, points: (5 / Z_CLIP) * weight * c.z };
+      return { ...c, weight, points: POINTS_PER_Z * weight * c.z };
     });
-    const base = 5 + components.reduce((a, c) => a + c.points, 0);
+    const base = BASE_SCORE + components.reduce((a, c) => a + c.points, 0);
     const adjustments = ratingAdjustments(r, events, opts);
     const adjust = Math.max(ADJUST_MIN, Math.min(ADJUST_MAX, adjustments.reduce((a, x) => a + x.delta, 0)));
     const score = Math.max(0, Math.min(10, base + adjust));

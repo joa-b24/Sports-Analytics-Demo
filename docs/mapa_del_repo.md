@@ -443,7 +443,7 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 - Cifras individuales sin «Tiempo visto» ni «Distancia de relleno».
 
 ### 5.16 Calificación de jugadora, en revisión (2026-11-10)
-- `lib/rating.ts` (test: `rating.test.mjs`): z contra su equipo, pesos por línea, descuentos y bonos por consecuencia (ventanas de Configuración › Análisis). `components/match/RatingBadge.tsx` la dibuja marcada «en revisión»; sale en Ficha, Tabla por jugadora, Perfil comparativo e Informe (tabla física). Detalle y fórmula en `docs/propuesta_calificacion_jugadora.md`.
+- `lib/rating.ts` (test: `rating.test.mjs`): z contra su equipo, pesos por línea, descuentos y bonos por consecuencia (ventanas de Configuración › Análisis). `components/match/RatingBadge.tsx` la dibuja marcada «en revisión»; sale en Ficha, Tabla por jugadora, Perfil comparativo e Informe (tabla física). Detalle y fórmula en `docs/propuesta_calificacion_jugadora.md`. La «Tabla por jugadora» (`PassesCards.tsx`) ocupa el ancho completo y se ordena con clic en los encabezados.
 
 ## 6. El paquete Python (`src/sportsan/`)
 

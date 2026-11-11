@@ -49,3 +49,8 @@ Reglas de este bloque:
 4. ¿Se suman también las acciones con consecuencia positiva?
 5. ¿Se muestra la nota 0–10 o solo el desglose (más honesto con pocos partidos)? Mi recomendación: nota **y** desglose, con la nota en gris si entraron menos de 6 métricas.
 6. ¿La portera se califica aparte? (paradas, salidas, pase largo): hoy faltan eventos para eso.
+
+## Ajuste del 2026-11-10 (calificaciones muy estrictas)
+- Una jugadora normal de su equipo saca **6** (antes 5); z = +2 es 10 y z = −2 es 2.
+- Nueva métrica «Toques» (≈10 de peso) y las pérdidas se comparan **por 100 toques** (quien toca más, pierde más).
+- Bonos nuevos: gol +0.7, tiro a puerta +0.25 (el tiro de un gol no cuenta aparte), pérdida que ella misma recupera en la ventana rápida +0.3, pase clave que acaba en tiro +0.3, córner a favor +0.1 (con remate +0.4), falta a favor +0.1 (con remate +0.3), falta provocada +0.3 (falta del rival marcada con su nombre). Tope de los bonos +3.
