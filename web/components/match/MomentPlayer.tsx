@@ -21,10 +21,19 @@ export function useMomentPlayer(match: Match, opts: { bare?: boolean } = {}): { 
   const [moment, setMoment] = useState<Moment | null>(null);
   const [loop, setLoop] = useState(false);
   const [rate, setRate] = useState(1);
+  // Clicking the same moment again (or pressing R) goes back to its mark: each call counts as a new start.
+  const [replay, setReplay] = useState(0);
   const panel = moment ? (
-    <MomentPanel match={match} moment={moment} onClose={() => setMoment(null)} loop={loop} onLoop={setLoop} rate={rate} onRate={setRate} bare={opts.bare} />
+    <MomentPanel match={match} moment={moment} replay={replay} onReplay={() => setReplay((n) => n + 1)} onClose={() => setMoment(null)} loop={loop} onLoop={setLoop} rate={rate} onRate={setRate} bare={opts.bare} />
   ) : null;
-  return { show: setMoment, active: moment, panel };
+  return {
+    show: (m: Moment) => {
+      setMoment(m);
+      setReplay((n) => n + 1);
+    },
+    active: moment,
+    panel,
+  };
 }
 
 const MARGIN_KEY = "playground:loopMargin";
@@ -33,10 +42,12 @@ const MARGIN_KEY = "playground:loopMargin";
 const urlCache = new Map<string, string | null>();
 
 function MomentPanel({
-  match, moment, onClose, loop, onLoop, rate, onRate, bare,
+  match, moment, replay, onReplay, onClose, loop, onLoop, rate, onRate, bare,
 }: {
   match: Match;
   moment: Moment;
+  replay: number;
+  onReplay: () => void;
   onClose: () => void;
   loop: boolean;
   onLoop: (v: boolean) => void;
@@ -83,7 +94,21 @@ function MomentPanel({
     }, 250);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- going to a moment must not restart when the loop or the speed change
-  }, [source, url, moment.video_id, moment.t]);
+  }, [source, url, moment.video_id, moment.t, replay]);
+
+  // R: back to the mark of the moment, from anywhere in the page (not while typing).
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if (e.key !== "r" && e.key !== "R") return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault();
+      onReplay();
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, [onReplay]);
 
   // The speed chosen applies at once, whatever the backend.
   useEffect(() => {
@@ -144,6 +169,9 @@ function MomentPanel({
         <span className="text-sm text-ink">{moment.label}</span>
         <span className="tc text-xs text-faint">{where}</span>
         <span className="flex-1" />
+        <button type="button" className="btn btn-ghost text-xs" title="Volver a la marca (R)" onClick={onReplay}>
+          Repetir (R)
+        </button>
         <Link className="link text-xs" href={momentHref(match.match_id, moment)}>
           Abrir en el partido
         </Link>

@@ -256,3 +256,11 @@ test("goalKickLanding: the next positioned event soon after, within a window tha
   assert.equal(m.has("k2"), false, "a short kick does not take what happens 8 s later");
   assert.deepEqual(m.get("k3"), [80, 10]);
 });
+
+test("un tiro libre directo sin tiro propio cuenta como tiro; con tiro cercano no se duplica", () => {
+  const solo = finishEvents([ev(100, "free_kick", "own", { detail: "direct", x: 80, y: 30 })]);
+  assert.equal(solo.length, 1);
+  const par = finishEvents([ev(100, "free_kick", "own", { outcome: "shot" }), ev(102, "shot", "own", { outcome: "on_target" })]);
+  assert.equal(par.length, 1);
+  assert.equal(finishEvents([ev(100, "free_kick", "own", { detail: "short" })]).length, 0);
+});

@@ -97,9 +97,19 @@ export interface Finish {
   goal: MatchEvent | null;
 }
 export function finishes(all: MatchEvent[], team: Side): Finish[] {
-  const shots = byTime(all.filter((e) => e.team === team && e.type === "shot"));
-  const goals = byTime(all.filter((e) => e.team === team && e.type === "goal"));
   const vid = (e: MatchEvent) => e.video_id ?? "v1";
+  const real = all.filter((e) => e.team === team && e.type === "shot");
+  // A free kick tagged as a direct shot (or whose outcome is «Remate») without its own shot counts as that shot: it is the
+  // same action, and it must show in the shot maps.
+  const direct = all.filter(
+    (e) =>
+      e.team === team &&
+      e.type === "free_kick" &&
+      (e.outcome === "shot" || e.detail === "direct") &&
+      !real.some((s) => vid(s) === vid(e) && Math.abs(s.t_video - e.t_video) <= SAME_ACTION_S),
+  );
+  const shots = byTime([...real, ...direct]);
+  const goals = byTime(all.filter((e) => e.team === team && e.type === "goal"));
   const used = new Set<string>();
   const out: Finish[] = shots.map((shot) => ({ shot, goal: null }));
   for (const g of goals) {
