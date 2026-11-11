@@ -57,7 +57,7 @@ test("who has the ball, passes and changes of team", () => {
   assert.equal(net.passes, 1);
   assert.equal(net.unnamed, 0);
   // The same pass as an arrow: from Ana to Bea, 20 units forward (progressive), and mirrored when the team attacks left.
-  assert.deepEqual(passArrows([{ file: f, ownRight: true }], "own"), [{ x1: 20, y1: 30, x2: 40, y2: 30, from: "Ana", progressive: true }]);
+  assert.deepEqual(passArrows([{ file: f, ownRight: true }], "own"), [{ x1: 20, y1: 30, x2: 40, y2: 30, from: "Ana", video_id: "v1", t: 0, progressive: true }]);
   assert.deepEqual(passArrows([{ file: f, ownRight: false }], "own")[0].x2, 65);
 });
 
