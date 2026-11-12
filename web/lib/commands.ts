@@ -35,7 +35,7 @@ export interface CommandDef {
   params: CommandParam[];
 }
 
-const FILE_JSON = /^[\w.-]+\.json$/;
+const FILE_NAME = /^[\w.-]+\.(json|npz)$/;
 const TIME = /^\d{1,2}:\d{2}:\d{2}$/;
 
 export const COMMANDS: CommandDef[] = [
@@ -70,6 +70,19 @@ export const COMMANDS: CommandDef[] = [
     ],
   },
   {
+    id: "library-borrow",
+    title: "Biblioteca: usar la de otro video",
+    lead: "Copia la biblioteca de otro video del MISMO partido a éste, reescalada a su tamaño (por ejemplo de 1080p a 720p). Solo sirve si es la misma cancha y la cámara se parece; no se hizo con este video, así que PRUÉBALA antes de procesar (Biblioteca: revisar, con «Biblioteca a usar») y mira los calib_ en Calibración › Verificar. No pisa una biblioteca que ya exista, salvo con --force.",
+    module: "sportsan.tracking.library",
+    sub: "borrow",
+    match: true,
+    video: true,
+    params: [
+      { id: "fromVideo", flag: "--from-video", label: "Tomarla del video", help: "El video que tiene la biblioteca (por ejemplo v2). El de arriba es el que la recibe.", kind: "text", def: "v2", required: true },
+      { id: "force", flag: "--force", label: "Reemplazar la que ya tiene (--force)", help: "Solo si de verdad quieres cambiar su biblioteca.", kind: "bool" },
+    ],
+  },
+  {
     id: "library-locate",
     title: "Biblioteca: ubicar un tramo",
     lead: "Calibra una jugada cualquiera con la biblioteca, sin anclas a mano.",
@@ -78,6 +91,7 @@ export const COMMANDS: CommandDef[] = [
     match: true,
     video: true,
     params: [
+      { id: "library", flag: "--library", label: "Biblioteca a usar", help: "Por defecto la del video. Elige una prestada (library_<video>.npz) para probarla.", kind: "file", pattern: /^library_[\w.-]+\.npz$/ },
       { id: "start", flag: "--start", label: "Inicio", help: "Hora del video (H:MM:SS).", kind: "time", required: true },
       { id: "end", flag: "--end", label: "Fin", help: "Hora del video (H:MM:SS).", kind: "time", required: true },
       { id: "every", flag: "--every", label: "Segundos entre anclas", help: "Cada cuántos segundos se ubica una ancla automática.", kind: "number", min: 0.1, max: 30, def: "1" },
@@ -93,6 +107,7 @@ export const COMMANDS: CommandDef[] = [
     match: true,
     video: true,
     params: [
+      { id: "library", flag: "--library", label: "Biblioteca a usar", help: "Por defecto la del video. Elige una prestada (library_<video>.npz) para probarla.", kind: "file", pattern: /^library_[\w.-]+\.npz$/ },
       { id: "samples", flag: "--samples", label: "Tramos", help: "Cuántos tramos revisar.", kind: "number", min: 1, max: 60, def: "8" },
       { id: "seconds", flag: "--seconds", label: "Segundos por tramo", help: "Duración de cada tramo.", kind: "number", min: 1, max: 120, def: "10" },
       { id: "every", flag: "--every", label: "Segundos entre anclas", help: "Cada cuántos segundos se ubica una ancla automática.", kind: "number", min: 0.1, max: 30, def: "1" },
@@ -106,6 +121,7 @@ export const COMMANDS: CommandDef[] = [
     match: true,
     video: true,
     params: [
+      { id: "library", flag: "--library", label: "Biblioteca a usar", help: "Por defecto la del video. Elige una prestada (library_<video>.npz) para probarla.", kind: "file", pattern: /^library_[\w.-]+\.npz$/ },
       { id: "benchmark", flag: "--benchmark", label: "Solo medir (--benchmark)", help: "No procesa: mide la velocidad y estima el tiempo total.", kind: "bool" },
       { id: "test", flag: "--test", label: "Prueba corta (--test)", help: "Procesa solo una muestra en una carpeta aparte, sin tocar lo hecho.", kind: "bool" },
       { id: "force", flag: "--force", label: "Rehacer lo hecho (--force)", help: "Vuelve a procesar las partes que ya existen.", kind: "bool" },
@@ -194,7 +210,7 @@ export function commandArgv(
       if (!TIME.test(text)) return { ok: false, error: `«${p.label}» va como H:MM:SS (por ejemplo 0:33:20).` };
       argv.push(p.flag, text);
     } else if (p.kind === "file") {
-      if (!FILE_JSON.test(text) || (p.pattern && !p.pattern.test(text))) return { ok: false, error: `«${p.label}» no es un nombre de archivo válido.` };
+      if (!FILE_NAME.test(text) || (p.pattern && !p.pattern.test(text))) return { ok: false, error: `«${p.label}» no es un nombre de archivo válido.` };
       argv.push(p.flag, `matches/${match}/tracking/${text}`);
     } else {
       if (p.oneOf ? !p.oneOf.includes(text) : !/^[\w.,:-]{1,60}$/.test(text)) return { ok: false, error: `«${p.label}» no es válido.` };

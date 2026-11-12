@@ -53,3 +53,15 @@ test("every parameter has a distinct id and a flag in the catalog", () => {
     for (const p of c.params) assert.match(p.flag, /^--[a-z-]+$/);
   }
 });
+
+test("pedir prestada la biblioteca de otro video, y probar una biblioteca concreta", () => {
+  const r = commandArgv("library-borrow", "m1", "v1", { fromVideo: "v2" });
+  assert.ok(r.ok);
+  assert.deepEqual(r.argv, ["-m", "sportsan.tracking.library", "borrow", "--match", "m1", "--video", "v1", "--from-video", "v2"]);
+  assert.equal(commandArgv("library-borrow", "m1", "v1", {}).ok, false);
+  assert.equal(commandArgv("library-borrow", "m1", "v1", { fromVideo: "v2 --force" }).ok, false);
+  const c = commandArgv("library-check", "m1", "v1", { library: "library_v1.npz", samples: "8" });
+  assert.ok(c.ok);
+  assert.deepEqual(c.argv.slice(7), ["--library", "matches/m1/tracking/library_v1.npz", "--samples", "8"]);
+  assert.equal(commandArgv("library-check", "m1", "v1", { library: "library_v1.exe" }).ok, false);
+});

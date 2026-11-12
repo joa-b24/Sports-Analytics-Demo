@@ -10,11 +10,11 @@ venue:
 
 # Un partido puede venir en varios videos. t_video es el tiempo dentro de cada video.
 videos:
-  - video_id: v1
-    youtube_id: "V72zXIKmDG8"
-    file: video/v1.mp4
-    fps: 30
   - video_id: v2
-    youtube_id: "Jj-jMfIsOz8"
+    youtube_id: "V72zXIKmDG8"
     file: video/v2.mp4
-    fps: REEMPLAZAR          # no se pudo medir: ffprobe
+    fps: 30
+  - video_id: v1
+    youtube_id: "Jj-jMfIsOz8"
+    file: video/v1.mp4
+    fps: 30                  # 30/1 (ffprobe, medido al arreglar el match.yaml)

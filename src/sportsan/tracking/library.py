@@ -149,6 +149,27 @@ class Library:
         return Library(d["frames"], d["H"], d["offsets"], d["xy"], d["des"], meta)
 
 
+def rescale_library(lib: Library, dst_w: int, dst_h: int, from_video: str, to_video: str, match_id: str | None = None) -> Library:
+    """La biblioteca de OTRO video del mismo partido, llevada al tamaño de éste (por ejemplo de 1080p a 720p).
+
+    Solo sirve si los dos videos son de la misma cancha y la cámara se parece: las referencias son imágenes del césped del
+    video de origen y la ubicación depende de que se parezcan a lo que se ve en éste. Los puntos y las homografías se
+    reescalan al tamaño del video nuevo; nada se inventa. Hay que probarla antes de procesar (`library check --library`).
+    """
+    src_w, src_h = float(lib.meta["image_w"]), float(lib.meta["image_h"])
+    if abs(src_w / src_h - dst_w / dst_h) > 0.02:
+        raise ValueError(f"Los videos tienen proporciones distintas ({src_w:.0f}x{src_h:.0f} y {dst_w}x{dst_h}): no se puede reescalar la biblioteca.")
+    s = src_w / dst_w  # píxeles del video de origen por píxel del nuevo
+    scale = np.diag([s, s, 1.0])
+    meta = dict(lib.meta)
+    meta.update({"image_w": int(dst_w), "image_h": int(dst_h), "video_id": to_video, "borrowed_from": from_video, "borrowed_scale": s})
+    if match_id:
+        meta["match_id"] = match_id
+    if meta.get("mask"):
+        meta["mask"] = [[x0 / s, y0 / s, x1 / s, y1 / s] for x0, y0, x1, y1 in meta["mask"]]
+    return Library(lib.frames.copy(), (lib.H @ scale).astype(lib.H.dtype), lib.offsets.copy(), (lib.xy / s).astype(lib.xy.dtype), lib.des.copy(), meta)
+
+
 def mask_image(rects: list, shape: tuple, scale: float, pad: float = 8.0) -> np.ndarray | None:
     """Máscara (255 = se mira, 0 = no) del tamaño de un cuadro reducido, con los rectángulos de `mask` de match.yaml (en
     píxeles del video original) tapados y un margen. None sin rectángulos."""
@@ -448,6 +469,34 @@ def _cmd_build(args) -> None:
     print(f"  {len(lib.frames)} referencias de los cuadros {lib.meta['source_frames'][0]} a {lib.meta['source_frames'][1]}, {len(lib.xy)} puntos")
 
 
+def _cmd_borrow(args) -> None:
+    import cv2
+
+    from ..config import load_config, project_root
+
+    cfg = load_config(match=args.match, video=args.video)
+    root = project_root()
+    tdir = root / cfg["paths"]["tracking_dir"]
+    src = tdir / f"library_{args.from_video}.npz"
+    out = tdir / f"library_{args.video}.npz"
+    if not src.exists():
+        raise SystemExit(f"{args.from_video} no tiene biblioteca ({src.name}). Constrúyela primero: python -m sportsan.tracking.library build --video {args.from_video} --anchors <anclas>.json")
+    if out.exists() and not args.force:
+        raise SystemExit(f"{out.name} ya existe: no se pisa (usa --force si de verdad quieres reemplazarla).")
+    cap = cv2.VideoCapture(str(root / cfg["paths"]["raw_video"]))
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+    if not (w and h):
+        raise SystemExit(f"No se pudo leer el tamaño del video {args.video}.")
+    lib = rescale_library(Library.load(src), w, h, args.from_video, args.video, cfg["match_id"])
+    lib.save(out)
+    print(f"Biblioteca prestada: {out}")
+    print(f"  de {args.from_video} ({lib.meta['borrowed_scale']:.3f}x) a {args.video} ({w}x{h}); {len(lib.frames)} referencias")
+    print("  AVISO: no se hizo con este video. Pruébala antes de procesar:")
+    print(f"    python -m sportsan.tracking.library check --match {cfg['match_id']} --video {args.video} --library {out}")
+    print("  y abre los calib_ de tracking/revision/ en Calibración › Verificar para ver que la rejilla calce.")
+
+
 def locate_stretch(cfg: dict, lib: Library, start: int, end: int, every_s: float, max_error: float, out: Path, quiet: bool = False) -> dict:
     """Calibra un tramo con la biblioteca, escribe su calib_*.json (para revisarlo en Calibración › Verificar) y devuelve
     sus medidas: anclas ubicadas, descartadas, coherencia entre vecinas y entre referencias, cuadros sin calibración."""
@@ -584,6 +633,12 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--out")
     b.add_argument("--min-shift-px", type=float, default=150.0, help="movimiento de imagen entre referencias consecutivas")
     b.set_defaults(func=_cmd_build)
+    bw = sub.add_parser("borrow", help="usa la biblioteca de otro video del mismo partido (hay que probarla antes: `check --library`)")
+    bw.add_argument("--match")
+    bw.add_argument("--video", required=True, help="el video que la recibe (por ejemplo v1)")
+    bw.add_argument("--from-video", required=True, help="el video de donde sale (por ejemplo v2); debe tener su library_<video>.npz")
+    bw.add_argument("--force", action="store_true", help="reemplaza la biblioteca que ya tenga el video")
+    bw.set_defaults(func=_cmd_borrow)
     loc = sub.add_parser("locate", help="calibra un tramo cualquiera con la biblioteca")
     loc.add_argument("--match")
     loc.add_argument("--video")
