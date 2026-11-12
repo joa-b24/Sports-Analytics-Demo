@@ -61,6 +61,7 @@ import {
   type LabelSide,
   type Pt,
 } from "@/lib/annotations";
+import { MOBILE } from "@/lib/mobile";
 import { addToEdit, editPath, hGap, homographyAt, labelFor, migrateEdit, personAt, removeFromEdit, snapshotContext } from "@/lib/clips";
 import { LOOP_MARGINS, LOOP_MARGIN_PREF, LOOP_PREF, consumedAt, loopAction, loopWindow, parseMargin } from "@/lib/clipLoop";
 import { FALLBACK_FPS, frameLabel, stepTime } from "@/lib/frameStep";
@@ -165,6 +166,18 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
     presentingRef.current = presenting;
     loopRef.current = { on: loop, margin };
   });
+  // On this computer the clip carries the tracking of its stretch inside, so that it can be edited later where the tracking files
+  // are not (the web build): taken from the folder once per clip and range, and only when it changes.
+  const embedded = useRef("");
+  useEffect(() => {
+    if (data.source !== "folder" || !data.snapshot) return;
+    const key = `${edit.edit_id}|${edit.t_start}|${edit.t_end}|${data.fixedFile}`;
+    if (embedded.current === key) return;
+    embedded.current = key;
+    if (edit.fixed_file === data.fixedFile && JSON.stringify(edit.snapshot) === JSON.stringify(data.snapshot)) return;
+    save({ ...editRef.current, snapshot: data.snapshot, fixed_file: data.fixedFile });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.source, data.snapshot, data.fixedFile, edit.edit_id, edit.t_start, edit.t_end]);
   // A clip saved with the old box mark opens with the oval (the rest is kept).
   useEffect(() => {
     const m = migrateEdit(edit);
@@ -465,6 +478,7 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
   const [expHeight, setExpHeight] = useState(1080);
   const [expFps, setExpFps] = useState(30);
   const exportMp4 = async (profile: "charla" | "whatsapp" = "charla") => {
+    if (MOBILE) return setMsg("El MP4 se exporta desde la laptop (necesita Python y ffmpeg). Aquí puedes editar y presentar el clip.");
     if (!match.folder) return setMsg("El partido no tiene carpeta: no hay dónde escribir el MP4.");
     setExporting(true);
     try {

@@ -6,7 +6,7 @@ other_team_name: "Anahuac Norte"   # jornada 1
 analysis_stride: 3
 
 venue:
-  name: "Estadio La Cueva del Le�n"
+  name: "Estadio La Cueva del Leon"
   pitch_length_m: 102           # medido por la analista sobre imagen satelital
   pitch_width_m: 66
   notes: "Campo de fútbol americano con las líneas de fútbol pintadas encima."

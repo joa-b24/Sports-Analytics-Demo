@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  CloudArrowUp,
   PencilSimpleLine,
   Play as PlayIcon,
   Plus,
@@ -22,7 +23,10 @@ import { createPortal } from "react-dom";
 import { Pager } from "@/components/Paged";
 import type { PlayerHandle } from "@/components/VideoPlayer";
 import { boardFromPlay, type MeasuredAt } from "@/lib/boards";
-import { newEdit } from "@/lib/clips";
+import { clipSnapshotFor } from "@/lib/clipSnapshot";
+import { editPath, newEdit } from "@/lib/clips";
+import { writeLocal } from "@/lib/local";
+import { MOBILE } from "@/lib/mobile";
 import { useFixedParts } from "@/lib/fixed";
 import { fmtT } from "@/lib/format";
 import { partFor, positionsAt } from "@/lib/positions";
@@ -108,6 +112,37 @@ export function PlaysTab({
   const list = matchPlays(match, videos, allPlays, events, new Set((edits ?? []).flatMap((e) => (e.play_id ? [e.play_id] : []))));
   const router = useRouter();
   const [clipOpen, setClipOpen] = useState<string | null>(null);
+  // «Preparar clips para la web»: every play of the match gets its clip with the tracking of its stretch inside, written to the
+  // folder (edits/) and kept in the app, so that it can be edited where the tracking files are not (the web build on a laptop or a
+  // tablet): it opens over the YouTube video with its players, calibration and drawings.
+  const [prep, setPrep] = useState<{ busy: boolean; text: string | null }>({ busy: false, text: null });
+  const prepareForWeb = async () => {
+    if (!match.folder) return;
+    setPrep({ busy: true, text: "Preparando…" });
+    const mine = allPlays.filter((p) => p.match_id === match.match_id && p.t_end > p.t_start);
+    let ok = 0;
+    const without: string[] = [];
+    let failedWrite = false;
+    for (const [i, p] of mine.entries()) {
+      setPrep({ busy: true, text: `Preparando ${i + 1} de ${mine.length}…` });
+      const current = (edits ?? []).find((e) => e.play_id === p.play_id) ?? null;
+      const base = current ?? newEdit(uid("c"), p);
+      const synced = { ...base, t_start: p.t_start, t_end: p.t_end };
+      const got = await clipSnapshotFor(match, synced, roster ?? []);
+      if (!got) {
+        without.push(p.title || p.play_id);
+        continue;
+      }
+      const next = { ...synced, snapshot: got.snapshot, fixed_file: got.fixedFile };
+      mutate((s) => ({ ...s, edits: [...(s.edits ?? []).filter((e) => e.edit_id !== next.edit_id), next] }));
+      if (!(await writeLocal(editPath(match.folder as string, next.edit_id), JSON.stringify(next)))) failedWrite = true;
+      ok++;
+    }
+    setPrep({
+      busy: false,
+      text: `${ok} de ${mine.length} clips listos para la web${without.length ? `; sin calibración en ese tramo: ${without.join(", ")}` : ""}${failedWrite ? "; no se pudieron escribir en la carpeta (¿la app corre en esta computadora?)" : ""}. Ahora: Datos › Exportar respaldo y el zip ligero del partido, y se importan en la web.`,
+    });
+  };
   const editOf = (p: Play) => (edits ?? []).find((e) => e.play_id === p.play_id) ?? null;
   const openEditor = () => {
     if (!play) return;
@@ -316,7 +351,18 @@ export function PlaysTab({
             </IconButton>
           </div>
 
+          {prep.text && (
+            <p className="m-0 text-xs text-pretty text-muted" role="status">
+              {prep.text}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
+            {!MOBILE && match.folder && (
+              <button type="button" className={btn} disabled={prep.busy} onClick={() => void prepareForWeb()} title="Deja cada jugada marcada como clip con su tracking dentro, para poder editarlo desde la web (laptop o tablet) sobre el video de YouTube">
+                <CloudArrowUp size={14} />
+                Preparar clips para la web
+              </button>
+            )}
             <button
               type="button"
               className={btn}
