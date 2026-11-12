@@ -56,6 +56,7 @@ import { segmentsFromMarks, skipTarget, type Segment } from "@/lib/segments";
 import { mutate, setPref, useHydrated, usePref, useStore } from "@/lib/store";
 import { allVenues } from "@/lib/venue";
 import type { Match, MatchVideo } from "@/lib/types";
+import { RenumberVideos } from "@/components/match/RenumberVideos";
 import { matchTimeline, matchVideos, nextVideo, periodAt, videoOf } from "@/lib/videos";
 import { FullVideoMarks } from "@/components/match/FullVideoMarks";
 
@@ -524,6 +525,7 @@ function MatchPage() {
                       </button>
                     )}
                   </div>
+                  <RenumberVideos match={match} onDone={(map) => pickVideo(map[video.video_id] ?? video.video_id)} />
                   <div className="space-y-2.5">
                     {row(
                       <FilmStrip size={14} />,

@@ -1,5 +1,6 @@
 "use client";
 
+import { renumberPrefKey } from "./renumber";
 import { useSyncExternalStore } from "react";
 import type { State } from "./types";
 import { createWriter, loadInitial } from "./storeIdb.ts";
@@ -211,6 +212,20 @@ export function renamePrefs(from: string, to: string) {
   const cur = loadPrefs();
   const next: Record<string, string> = {};
   for (const [k, v] of Object.entries(cur)) next[k.replace(re, `$1${to}`)] = v === from ? to : v;
+  prefs = next;
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Blocked storage: the change lasts for this session only.
+  }
+  prefListeners.forEach((l) => l());
+}
+
+// The preferences of a match that name a video (attack:<match>:v1...) follow a renumbering of its videos.
+export function renumberPrefs(names: string[], map: Record<string, string>) {
+  const cur = loadPrefs();
+  const next: Record<string, string> = {};
+  for (const [k, v] of Object.entries(cur)) next[renumberPrefKey(k, names, map)] = v;
   prefs = next;
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));

@@ -2,14 +2,14 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // Acceso remoto temporal (túnel). Solo actúa con SPORTSAN_REMOTE=1: en la laptop de siempre no hace nada.
 // Con el túnel encendido TODO (páginas, video y /api/local) pide la contraseña de SPORTSAN_REMOTE_KEY; las rutas que
-// ejecutan programas o tocan carpetas enteras (/api/run, /api/unzip, /api/rename) se cierran por completo.
+// ejecutan programas o tocan carpetas enteras (/api/run, /api/unzip, /api/rename, /api/renumber) se cierran por completo.
 // La contraseña viaja una vez por POST a /acceso; después, una cookie HttpOnly con un sello derivado de ella.
 
 const COOKIE = "sportsan_acceso";
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;
 const SESSION_S = 12 * 3600;
-const CLOSED = [/^\/api\/run(\/|$)/, /^\/api\/unzip(\/|$)/, /^\/api\/rename(\/|$)/];
+const CLOSED = [/^\/api\/renumber(\/|$)/, /^\/api\/run(\/|$)/, /^\/api\/unzip(\/|$)/, /^\/api\/rename(\/|$)/];
 
 // Intentos fallidos por origen (en memoria del servidor; se reinicia al apagarlo).
 const fails = new Map<string, { n: number; until: number }>();
