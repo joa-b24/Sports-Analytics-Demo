@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { physical, teamBlock } from "./physical.ts";
+import { physical, playerSprints, teamBlock } from "./physical.ts";
 
 // 30 fps, one of every 3 frames (0.1 s per sample); the venue is the normalised pitch (1 unit = 1 m).
 const fixed = ({ n, people, at }) => ({
@@ -116,4 +116,19 @@ test("umbrales: HSR por encima de 18 km/h; sprint a partir de 22 km/h durante al
   assert.equal(HSR_KMH, 18);
   assert.equal(SPRINT_KMH, 22);
   assert.equal(SPRINT_MIN_S, 1);
+});
+
+test("playerSprints lists the sprint of one player with its video and speed, and no one else's", () => {
+  const f = fixed({
+    n: 31,
+    people: [P(1, "own", "Paz"), P(2, "own", "Kat")],
+    at: (i) => [{ id: 1, x: 10 + 0.7 * i, y: 30, source: "auto" }, { id: 2, x: 10 + 0.1 * i, y: 40, source: "auto" }],
+  });
+  const paz = playerSprints([{ file: f, ownRight: true }], "own", "Paz");
+  assert.equal(paz.length, 1);
+  assert.equal(paz[0].video_id, "v1");
+  assert.equal(paz[0].valid, true);
+  assert.ok(Math.abs(paz[0].peak_kmh - 25.2) < 0.3);
+  assert.ok(paz[0].t_end - paz[0].t_start >= 1);
+  assert.deepEqual(playerSprints([{ file: f, ownRight: true }], "own", "Kat"), []);
 });

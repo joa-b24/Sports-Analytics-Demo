@@ -158,6 +158,29 @@ export function accelerationCoherent(speeds: { t: number; kmh: number }[]): bool
   return true;
 }
 
+// The largest change of speed between two close measures (m/s²), to show why a sprint was refused.
+export function maxAcceleration(speeds: { t: number; kmh: number }[]): number {
+  let m = 0;
+  for (let i = 1; i < speeds.length; i++) {
+    const dt = speeds[i].t - speeds[i - 1].t;
+    if (dt <= 0 || dt > ACCEL_PAIR_S) continue;
+    m = Math.max(m, Math.abs((speeds[i].kmh - speeds[i - 1].kmh) / 3.6 / dt));
+  }
+  return m;
+}
+
+// A run above SPRINT_KMH for at least SPRINT_MIN_S, valid or not (for the check of the Laboratorio).
+export interface SprintRecord {
+  name: string;
+  video_id: string;
+  t_start: number;
+  t_end: number;
+  peak_kmh: number;
+  // Counts as a sprint (its acceleration is coherent); false = refused, with the largest change of speed it had.
+  valid: boolean;
+  max_accel_ms2: number;
+}
+
 export interface PhysicalRow {
   name: string;
   seconds: number; // time seen (measured or filled)
@@ -171,7 +194,7 @@ export interface PhysicalRow {
   fill_dist_pct: number;
 }
 
-type Sample = { t: number; x: number; y: number; fill: boolean };
+type Sample = { t: number; x: number; y: number; fill: boolean; v: string };
 
 // One series per named player and part, in real meters, with the time in seconds.
 function series(parts: Oriented[], team: "own" | "opp", play: Record<string, Segment[]> | null = null): Map<string, Sample[][]> {
@@ -196,7 +219,7 @@ function series(parts: Oriented[], team: "own" | "opp", play: Record<string, Seg
           runsOf.push(list);
           byName.set(n, runsOf);
         }
-        const s = { t: fr.frame / f.fps, x: q.x * mx, y: q.y * my, fill: q.source === "interpolated" };
+        const s = { t: fr.frame / f.fps, x: q.x * mx, y: q.y * my, fill: q.source === "interpolated", v: f.video_id };
         // Two boxes with the same name in one frame: keep the first (a measured one before a filled one).
         if (list.length && list[list.length - 1].t === s.t) {
           if (list[list.length - 1].fill && !s.fill) list[list.length - 1] = s;
@@ -210,9 +233,12 @@ function series(parts: Oriented[], team: "own" | "opp", play: Record<string, Seg
   return out;
 }
 
-export function physical(parts: Oriented[], team: "own" | "opp", play: Record<string, Segment[]> | null = null): PhysicalRow[] {
+// `collect` receives every candidate sprint (valid or refused) and `only` limits the work to one named player: both are for the
+// check of the Laboratorio; the rows are the same.
+export function physical(parts: Oriented[], team: "own" | "opp", play: Record<string, Segment[]> | null = null, collect?: (s: SprintRecord) => void, only?: string): PhysicalRow[] {
   const rows: PhysicalRow[] = [];
   for (const [name, runs] of series(parts, team, play)) {
+    if (only !== undefined && name !== only) continue;
     let seconds = 0;
     let fillSeconds = 0;
     let distance = 0;
@@ -242,7 +268,9 @@ export function physical(parts: Oriented[], team: "own" | "opp", play: Record<st
           const from = sprintStart;
           const to = lastFast;
           const inRun = speeds.filter((v) => v.t >= from - ACCEL_LEAD_S && v.t <= to);
-          if (accelerationCoherent(inRun)) {
+          const coherent = accelerationCoherent(inRun);
+          collect?.({ name, video_id: s[0].v, t_start: from, t_end: to, peak_kmh: Math.round(Math.max(...inRun.filter((v) => v.t >= from).map((v) => v.kmh), 0) * 10) / 10, valid: coherent, max_accel_ms2: Math.round(maxAcceleration(inRun) * 10) / 10 });
+          if (coherent) {
             sprints++;
             // The top speed is the fastest moment of a valid sprint, not any window of the match.
             const peak = Math.max(...inRun.filter((v) => v.t >= from).map((v) => v.kmh));
@@ -367,4 +395,11 @@ export function teamBlock(parts: Oriented[], team: "own" | "opp", play: Record<s
     width_m: Math.round((Math.max(...ys) - Math.min(...ys)) * my),
     seconds,
   };
+}
+
+// Every candidate sprint of one named player (valid and refused), in time order.
+export function playerSprints(parts: Oriented[], team: "own" | "opp", name: string, play: Record<string, Segment[]> | null = null): SprintRecord[] {
+  const out: SprintRecord[] = [];
+  physical(parts, team, play, (s) => out.push(s), name);
+  return out.sort((a, b) => a.video_id.localeCompare(b.video_id) || a.t_start - b.t_start);
 }

@@ -5,6 +5,7 @@ import { BallSection } from "./BallSection";
 import type { PlaygroundCtx } from "./context";
 import { EventsTab } from "./EventsTab";
 import { PassesTab } from "./PassesTab";
+import { PlayerTab } from "./PlayerTab";
 import { PossessionTab } from "./PossessionTab";
 
 // The sections of the Playground, in order. To add one (e.g. a new detector), add an entry: the shell draws the selector
@@ -19,5 +20,6 @@ export const PLAYGROUND_SECTIONS: PlaygroundSection[] = [
   { id: "ball", label: "Balón", render: (c, nav) => <BallSection key={c.folder} match={c.match} folder={c.folder} onOpenBall={nav.openBallStep} /> },
   { id: "possession", label: "Posesión", render: (c) => <PossessionTab ctx={c} /> },
   { id: "passes", label: "Pases", render: (c) => <PassesTab ctx={c} /> },
+  { id: "player", label: "Por jugadora", render: (c) => <PlayerTab key={c.folder} ctx={c} /> },
   { id: "events", label: "Eventos", render: (c) => <EventsTab key={c.folder} match={c.match} folder={c.folder} /> },
 ];

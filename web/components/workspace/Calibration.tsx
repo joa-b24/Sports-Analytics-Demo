@@ -1,13 +1,14 @@
 "use client";
 
-import { CircleNotch, Anchor, Selection, Table, ArrowsOutCardinal, ArrowClockwise, ArrowCounterClockwise, CaretDown, CircleHalf, CaretLeft, CaretRight, CaretUp, Check, CheckCircle, Crop, Crosshair, DownloadSimple, Eraser, Eye, FastForward, FolderOpen, GearSix, GridFour, Info, Keyboard, Pause, Play, Plus, Rewind, SkipBack, SkipForward, TerminalWindow, Trash, UsersThree, Warning, X } from "@phosphor-icons/react";
+import { CircleNotch, Anchor, Selection, Table, ArrowsOutCardinal, ArrowClockwise, ArrowCounterClockwise, CaretDown, CircleHalf, CaretLeft, CaretRight, CaretUp, Check, CheckCircle, Crop, Crosshair, DownloadSimple, Eraser, Eye, FastForward, FolderOpen, GearSix, GridFour, Info, Keyboard, Pause, Play, Plus, Rewind, SkipBack, SkipForward, Trash, UsersThree, Warning, X } from "@phosphor-icons/react";
 import { Dropdown, MenuItem } from "@/components/Dropdown";
 import { IconButton, Modal } from "@/components/Modal";
 import { Select } from "@/components/Select";
-import { Command } from "@/components/Command";
 import { KitPanel, sampleShirt, useKits } from "@/components/workspace/KitPanel";
 import type { JerseyKey } from "@/lib/tracks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useHeaderSlot } from "@/lib/stepBus";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { FilePicker, partLabel } from "@/components/LocalPick";
 import { VideoMissingNotice } from "@/components/match/VideoDownload";
@@ -894,7 +895,7 @@ export function Calibration({
     mutate((s) => ({ ...s, anchors: s.anchors.map((a) => (off(a) ? { ...a, frame: Math.round(a.t_video * fps) } : a)) }));
   }, [fpsFrom, fps, matchId, videoId, state.anchors]);
   const [savedMsg, setSavedMsg] = useState("");
-  const [showCommands, setShowCommands] = useState(false);
+  const headerSlot = useHeaderSlot();
   const [showSettings, setShowSettings] = useState(false);
   // Anchors go into the match folder, where propagate finds them; a download only if that cannot be written.
   const saveAnchorsFile = (name: string, text: string, mime: string) => {
@@ -903,7 +904,6 @@ export function Calibration({
       setSavedMsg(ok ? `Guardado en matches/${matchId}/tracking/${name}.` : `Descargado: ponlo en matches/${matchId}/tracking/.`);
     });
   };
-  const propagateCmd = `python -m sportsan.tracking.propagate --anchors matches/${matchId}/tracking/anchors_${matchId}_${videoId}.json`;
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -1143,6 +1143,49 @@ export function Calibration({
     </Dropdown>
   );
 
+  // The mode button and the choice of what is marked (points / lines / circle) go to the bar of the match when this is a
+  // tab of one (embedded); alone, they stay in the bar of the screen.
+  const modeButton = (
+    <button
+      type="button"
+      className="btn btn-primary h-9 w-9 !p-0"
+      aria-label={mode === "calibrar" ? "Calibrando: pasar a verificar" : "Verificando: volver a calibrar"}
+      title={mode === "calibrar" ? "Calibrando (marcar anclas). Clic: verificar una calibración o una parte procesada" : "Verificando. Clic: volver a calibrar"}
+      onClick={() => {
+        if (mode === "calibrar") {
+          setMode("verificar");
+          setPickSignal((n) => n + 1);
+        } else setMode("calibrar");
+      }}
+    >
+      {mode === "calibrar" ? <Crosshair size={17} /> : <CheckCircle size={17} />}
+    </button>
+  );
+  const toolSeg = (
+    <span className="seg" role="group" aria-label="Qué se marca">
+      <button type="button" className="seg-opt !py-0.5 text-xs" aria-pressed={tool === "points"} onClick={() => (setTool("points"), setLineDraft({ px: [], id: null }))} title="Clic en un punto visible y en su punto del dibujo">
+        Puntos
+      </button>
+      <button type="button" className="seg-opt !py-0.5 text-xs" aria-pressed={tool === "lines"} onClick={() => (setTool("lines"), setPendingPx(null), setPendingLm(null))} title="Cuando el punto no se ve: dos clics sobre una línea visible y la línea del dibujo; dos líneas que se cruzan dan el punto">
+        Líneas
+      </button>
+      <button
+        type="button"
+        className="seg-opt !py-0.5 text-xs"
+        aria-pressed={tool === "arcs"}
+        onClick={() => (setTool("arcs"), setPendingPx(null), setPendingLm(null), setLineDraft({ px: [], id: null }))}
+        title="Clics a lo largo del círculo central o de un arco del área (5 o más, mejor medio círculo): se ajusta junto con los puntos y las líneas"
+      >
+        Círculo
+      </button>
+    </span>
+  );
+  const topControls = (
+    <>
+      {modeButton}
+      {mode === "calibrar" && toolSeg}
+    </>
+  );
   return (
     <>
       {!embedded && (
@@ -1156,23 +1199,10 @@ export function Calibration({
         />
       )}
 
+      {embedded && headerSlot && createPortal(topControls, headerSlot)}
       {/* One bar: the mode, then what that mode opens (anchors to edit, or a computed file to look at). */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        {/* One button for the two modes: it shows the one you are in; a click goes to the other (Verificar asks for the file). */}
-        <button
-          type="button"
-          className="btn btn-primary h-9 w-9 !p-0"
-          aria-label={mode === "calibrar" ? "Calibrando: pasar a verificar" : "Verificando: volver a calibrar"}
-          title={mode === "calibrar" ? "Calibrando (marcar anclas). Clic: verificar una calibración o una parte procesada" : "Verificando. Clic: volver a calibrar"}
-          onClick={() => {
-            if (mode === "calibrar") {
-              setMode("verificar");
-              setPickSignal((n) => n + 1);
-            } else setMode("calibrar");
-          }}
-        >
-          {mode === "calibrar" ? <Crosshair size={17} /> : <CheckCircle size={17} />}
-        </button>
+        {!(embedded && headerSlot) && modeButton}
         {mode === "calibrar" ? (
           <>
             {anchorsMenu}
@@ -1238,42 +1268,9 @@ export function Calibration({
               <GearSix size={16} />
             </IconButton>
           )}
-          <IconButton label="Comandos de Python" onClick={() => setShowCommands(true)}>
-            <TerminalWindow size={16} />
-          </IconButton>
         </span>
       </div>
       {mode === "verificar" && (trackMsg || detsMsg) && <p className="mb-3 text-xs text-warn">{trackMsg || detsMsg}</p>}
-      {showCommands && (
-        <Modal title="Comandos de Python" onClose={() => setShowCommands(false)} wide>
-          <div className="space-y-5 text-xs text-pretty text-muted">
-            <p>Desde la carpeta <code>demo</code>, con .venv activado.</p>
-            <section>
-              <h3 className="mb-1 text-sm text-ink">1. Propagar las anclas del barrido</h3>
-              <p>Con dos o más anclas guardadas y exportadas. Escribe <code>calib_…json</code> en <code>tracking/</code>: ábrelo en Verificar › Previsualizar; la rejilla punteada es la propagada.</p>
-              <Command className="mt-2">{propagateCmd}</Command>
-            </section>
-            <section>
-              <h3 className="mb-1 text-sm text-ink">2. Biblioteca del video</h3>
-              <p>Con la calibración del barrido. Sirve de referencia para el resto del video mientras la cámara no cambie de sitio; <code>locate</code> calibra una jugada sin anclas a mano.</p>
-              <Command className="mt-2">{`python -m sportsan.tracking.library build --track matches/${matchId}/tracking/calib_${videoId}_<inicio>_<fin>.json
-python -m sportsan.tracking.library locate --match ${matchId} --video ${videoId} --start 0:33:20 --end 0:33:35`}</Command>
-            </section>
-            <section>
-              <h3 className="mb-1 text-sm text-ink">3. Detección y posiciones</h3>
-              <p>Une la detección con la biblioteca y da la posición en la cancha; reanudable por partes. Cada parte que termina se revisa en Verificar › Previsualizar.</p>
-              <Command className="mt-2">{`python -m sportsan.tracking.process --match ${matchId} --video ${videoId} --benchmark
-python -m sportsan.tracking.process --match ${matchId} --video ${videoId}`}</Command>
-            </section>
-            <section>
-              <h3 className="mb-1 text-sm text-ink">Todo de una vez, de noche</h3>
-              <p>Los tres pasos para todos los videos del partido a los que les falten.</p>
-              <Command className="mt-2">{`python -m sportsan.tracking.overnight --plan --match ${matchId}
-python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
-            </section>
-          </div>
-        </Modal>
-      )}
       {showSettings && !embedded && (
         <Modal title="Video y sede" onClose={() => setShowSettings(false)}>
           <div className="flex flex-col gap-4 text-sm">
@@ -1816,23 +1813,7 @@ python -m sportsan.tracking.overnight --match ${matchId}`}</Command>
                 <div className={fitH ? "flex min-h-0 flex-col" : ""} style={fitH ? { flex: `${split} 1 0` } : undefined}>
                 <Card delay={100} className={fitH ? "flex min-h-0 flex-1 flex-col overflow-y-auto" : ""}>
                   <div className="mb-3 flex items-center gap-2">
-                    <span className="seg" role="group" aria-label="Qué se marca">
-                      <button type="button" className="seg-opt !py-0.5 text-xs" aria-pressed={tool === "points"} onClick={() => (setTool("points"), setLineDraft({ px: [], id: null }))} title="Clic en un punto visible y en su punto del dibujo">
-                        Puntos
-                      </button>
-                      <button type="button" className="seg-opt !py-0.5 text-xs" aria-pressed={tool === "lines"} onClick={() => (setTool("lines"), setPendingPx(null), setPendingLm(null))} title="Cuando el punto no se ve: dos clics sobre una línea visible y la línea del dibujo; dos líneas que se cruzan dan el punto">
-                        Líneas
-                      </button>
-                      <button
-                        type="button"
-                        className="seg-opt !py-0.5 text-xs"
-                        aria-pressed={tool === "arcs"}
-                        onClick={() => (setTool("arcs"), setPendingPx(null), setPendingLm(null), setLineDraft({ px: [], id: null }))}
-                        title="Clics a lo largo del círculo central o de un arco del área (5 o más, mejor medio círculo): se ajusta junto con los puntos y las líneas"
-                      >
-                        Círculo
-                      </button>
-                    </span>
+                    {!(embedded && headerSlot) && toolSeg}
                     <span className={`tag tc ${fit.pairs.length >= 4 ? "tag-accent" : ""}`} title={derived.length ? `${derived.length} calculado(s) con líneas` : undefined}>
                       {fit.pairs.length} / 4
                     </span>

@@ -92,7 +92,7 @@ export function TechModal({ match, section, onSection, onClose }: { match: Match
           </nav>
           <div className="min-h-0 overflow-y-auto p-6">
             <h3 className="font-display mb-1 text-2xl text-ink">{procesos ? "Procesos" : current.label}</h3>
-            <p className="mb-4 text-sm text-faint">{procesos ? "Tracking, relleno, balón automático y detección de eventos" : current.hint}</p>
+            <p className="mb-4 text-sm text-faint">{procesos ? "Tracking, relleno, balón automático, detección de eventos y comandos sueltos de Python" : current.hint}</p>
             {procesos ? <ProcessesPanel match={match} /> : <TechPanel match={match} page={current.id} />}
           </div>
         </div>

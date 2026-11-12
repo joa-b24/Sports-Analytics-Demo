@@ -2,6 +2,7 @@
 
 import { ArrowClockwise, ArrowCounterClockwise, CheckCircle, Circle, ListChecks, Play, Stop, Timer, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CommandsCard } from "@/components/match/CommandsCard";
 import { detectEvents, DETECTED_TYPES, type DetectedEvent } from "@/lib/eventDetect";
 import { TYPE_LABEL } from "@/lib/eventReview";
 import { fmtT } from "@/lib/format";
@@ -33,7 +34,7 @@ export function ProcessesPanel({ match }: { match: Match }) {
   return (
     <div className="space-y-4">
       <p className="max-w-3xl text-sm text-pretty text-muted">
-        Tres comandos que llevan el partido de video a eventos. Se pueden dejar corriendo: si recargas la página o se reinicia la app, esto vuelve a leer en qué van.
+        Tres comandos que llevan el partido de video a eventos y, al final, los comandos sueltos de Python con sus parámetros. Los tres primeros se pueden dejar corriendo: si recargas la página o se reinicia la app, esto vuelve a leer en qué van.
       </p>
       {videos.length > 1 && (
         <label className="flex items-center gap-2 text-xs text-muted">
@@ -51,6 +52,7 @@ export function ProcessesPanel({ match }: { match: Match }) {
       <TrackingCard match={match} folder={folder} video={video} />
       <FillBallCard match={match} folder={folder} video={video} />
       <EventsCard match={match} folder={folder} />
+      <CommandsCard match={match} folder={folder} video={video} />
     </div>
   );
 }

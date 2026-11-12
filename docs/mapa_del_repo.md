@@ -458,6 +458,11 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 - **Velocidad máxima y sprints** (`lib/physical.ts`): un sprint (22 km/h o más durante 1 s o más) vale solo con aceleración posible (≤ 8 m/s², `accelerationCoherent`); la velocidad máxima es la del mejor sprint válido. HSR: 18 km/h.
 - **Presentación** (`DeckView.tsx`, `SlideEditor.tsx`): un solo espacio de trabajo: diapositivas en columna (arrastrar para ordenar, duplicar, quitar), herramientas en columna (V, T, R, O, A), la diapositiva grande y un inspector con título, nota, color y medidas. Formas: texto, cuadro, círculo y flecha.
 
+### 5.19 Comandos sueltos, Laboratorio por jugadora y barra de Calibración (2026-11-11)
+- **Comandos sueltos** (`lib/commands.ts`, `components/match/CommandsCard.tsx`, `app/api/run/command/route.ts`): el antiguo modal «Comandos de Python» de Calibración ahora es la tarjeta 4 de Configuración del partido › Procesos. Cada comando (propagar, biblioteca construir/ubicar/revisar, process, detect, overnight) lista sus parámetros con una casilla «usar»: lo desmarcado no se manda y Python usa su valor por defecto (por ejemplo `--benchmark`). Se ve la línea final, se copia, se ejecuta y se detiene; lo elegido se recuerda por partido (preferencia `cmd:<carpeta>:<comando>`). El catálogo es la única lista de módulos, banderas y validaciones: la ruta solo ejecuta lo que pasa por `commandArgv` (test: `lib/commands.test.mjs`). Solo en la computadora donde corre la app.
+- **Laboratorio › Por jugadora** (`components/playground/PlayerTab.tsx`, en Herramientas de evaluación): todos los pases (hechos y recibidos, completados o cortados) y todos los sprints candidatos de una jugadora con nombre; cada fila reproduce su momento. Los sprints rechazados por aceleración se muestran con su aceleración máxima (`playerSprints`, `SprintRecord` en `lib/physical.ts`). Solo lectura.
+- **Calibración**: el botón calibrando/verificando y el selector Puntos/Líneas/Círculo suben a la barra del partido (`useHeaderSlot`, como la mesa de corrección); fuera de un partido siguen en la barra de la pantalla.
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |
