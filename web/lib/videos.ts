@@ -9,8 +9,16 @@ export const DEFAULT_VIDEO = "v1";
 // Rows saved before matches could have several videos carry no video_id: they belong to the first one.
 export const videoOf = (row: { video_id?: string }): string => row.video_id ?? DEFAULT_VIDEO;
 
+// The videos of a match in the order of the match: by the half each one holds (v1 may be the second half and v2 the first),
+// keeping the order they were added in within a half. A video with no half written takes the usual one (the first video the
+// first half, the rest the second).
 export function matchVideos(match: Pick<Match, "youtube_id" | "videos">): MatchVideo[] {
-  if (match.videos && match.videos.length > 0) return match.videos;
+  if (match.videos && match.videos.length > 0) {
+    const vs = match.videos;
+    const keyed = vs.map((v, i) => ({ v, i, p: v.period ?? (i === 0 ? 1 : 2) }));
+    if (keyed.every((k, j) => j === 0 || keyed[j - 1].p <= k.p)) return vs;
+    return keyed.sort((a, b) => a.p - b.p || a.i - b.i).map((k) => k.v);
+  }
   return [{ video_id: DEFAULT_VIDEO, youtube_id: match.youtube_id, label: "1.er tiempo" }];
 }
 

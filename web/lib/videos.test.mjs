@@ -42,3 +42,17 @@ test("two videos: the second starts after the first, with a gap, and nothing is 
   assert.equal(second.t_video, 30);
   assert.deepEqual(tl.segments.map((s) => [s.segment_id, s.start, s.end]), [["v1·s01", 180, 2880], ["v2·s01", 20 + off, null]]);
 });
+
+test("los videos se ordenan por el tiempo que traen: v1 puede ser el segundo tiempo y v2 el primero", () => {
+  const a = { video_id: "v1", youtube_id: "", label: "segundo", period: 2 };
+  const b = { video_id: "v2", youtube_id: "", label: "primero", period: 1 };
+  assert.deepEqual(matchVideos({ youtube_id: "", videos: [a, b] }).map((v) => v.video_id), ["v2", "v1"]);
+  // Without halves written, or already in order, the list is the same one (nothing is reordered by guessing).
+  const same = [{ ...a, period: 1 }, { ...b, period: 2 }];
+  assert.equal(matchVideos({ youtube_id: "", videos: same }), same);
+  const none = [{ video_id: "v1", youtube_id: "", label: "x" }, { video_id: "v2", youtube_id: "", label: "y" }];
+  assert.equal(matchVideos({ youtube_id: "", videos: none }), none);
+  // Two videos of one half keep the order they were added in.
+  const three = [{ ...a, period: 2 }, { ...b, period: 1 }, { video_id: "v3", youtube_id: "", label: "z", period: 2 }];
+  assert.deepEqual(matchVideos({ youtube_id: "", videos: three }).map((v) => v.video_id), ["v2", "v1", "v3"]);
+});

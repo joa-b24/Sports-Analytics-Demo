@@ -21,7 +21,7 @@ export interface ClipData {
 
 export function useClipData(match: Match, edit: ClipEdit, roster: RosterPlayer[]): ClipData {
   const folder = match.folder;
-  const fixed = useFixedParts(folder, [edit.video_id]);
+  const fixed = useFixedParts(folder, [edit.video_id], true, { t0: edit.t_start, t1: edit.t_end });
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [calib, setCalib] = useState<Calib | null>(null);
   const [loading, setLoading] = useState(!!folder);

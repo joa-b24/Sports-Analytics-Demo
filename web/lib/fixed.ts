@@ -6,6 +6,7 @@ import { autoFixed, fixedName, inferOwnAttacksRight, parseFixed, type FixedFile,
 import { getPref } from "./store";
 import type { TracksFile } from "./tracks";
 import { range, withoutCovered } from "./fixedCover.ts";
+import { readVideoFps } from "./matchYaml";
 
 // Positions of a match, oriented with the analysed team attacking right. Corrected parts (tracks_fixed_*.json) where
 // there are; elsewhere, the processed parts nobody corrected (tracks_*.json) as positions by team (`file.auto`), which
@@ -23,7 +24,14 @@ const rawName = (videoId: string) => new RegExp(`^tracks_${videoId}_(\\d+)_(\\d+
 const rawCache = new Map<string, FixedFile>();
 
 // The parts of the given videos, read from the folder of the match (what useFixedParts shows; also used by useTracking).
-export async function loadFixedParts(folder: string, videoIds: string[], withAuto = true): Promise<FixedParts> {
+// `clip`: only the files that overlap this stretch (seconds of the video, with a margin) are read: a clip needs a few seconds,
+// not the whole video. The frame rate comes from match.yaml; without it everything is read.
+export interface ClipWindow {
+  t0: number;
+  t1: number;
+}
+const CLIP_MARGIN_S = 4;
+export async function loadFixedParts(folder: string, videoIds: string[], withAuto = true, clip?: ClipWindow): Promise<FixedParts> {
   const key = videoIds.join(",");
   const dir = `matches/${folder}/tracking`;
   const files = (await listLocal(dir)) ?? [];
@@ -33,7 +41,15 @@ export async function loadFixedParts(folder: string, videoIds: string[], withAut
   const venue = len > 0 && wid > 0 ? { length_m: len, width_m: wid } : null;
   const read: FixedFile[] = [];
   for (const v of key.split(",")) {
-    const fixedNames = withoutCovered(files.filter((f) => !f.dir && fixedName(v).test(f.name))).map((f) => f.name);
+    const fps = clip ? readVideoFps(yaml ?? "", v) : null;
+    const overlaps = (name: string) => {
+      if (!clip || !fps) return true;
+      const [a, b] = range(name);
+      return a <= (clip.t1 + CLIP_MARGIN_S) * fps && b >= (clip.t0 - CLIP_MARGIN_S) * fps;
+    };
+    const fixedNames = withoutCovered(files.filter((f) => !f.dir && fixedName(v).test(f.name)))
+      .map((f) => f.name)
+      .filter(overlaps);
     for (const n of fixedNames) {
       const f = parseFixed((await readLocal(`${dir}/${n}`)) ?? "");
       // Files saved before the venue went into them: the size of the match venue.
@@ -41,7 +57,7 @@ export async function loadFixedParts(folder: string, videoIds: string[], withAut
     }
     if (!withAuto) continue;
     const covered = fixedNames.map(range);
-    const raws = files.filter((f) => !f.dir && rawName(v).test(f.name)).map((f) => f.name);
+    const raws = files.filter((f) => !f.dir && rawName(v).test(f.name)).map((f) => f.name).filter(overlaps);
     for (const n of raws) {
       const [a, b] = range(n);
       if (covered.some(([c, d]) => c < b && a < d)) continue;
@@ -93,16 +109,18 @@ export async function trackingFileList(folder: string, videoIds: string[]): Prom
   return out;
 }
 
-export function useFixedParts(folder: string | undefined, videoIds: string[], withAuto = true): FixedParts | null {
+export function useFixedParts(folder: string | undefined, videoIds: string[], withAuto = true, clip?: ClipWindow): FixedParts | null {
   const [out, setOut] = useState<FixedParts | null>(null);
   const key = videoIds.join(",");
+  const t0 = clip?.t0;
+  const t1 = clip?.t1;
   useEffect(() => {
     if (!folder) return;
     let live = true;
-    void loadFixedParts(folder, key.split(","), withAuto).then((r) => live && setOut(r));
+    void loadFixedParts(folder, key.split(","), withAuto, t0 === undefined || t1 === undefined ? undefined : { t0, t1 }).then((r) => live && setOut(r));
     return () => {
       live = false;
     };
-  }, [folder, key, withAuto]);
+  }, [folder, key, withAuto, t0, t1]);
   return folder ? out : null;
 }

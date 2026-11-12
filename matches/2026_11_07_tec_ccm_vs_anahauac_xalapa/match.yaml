@@ -14,3 +14,7 @@ videos:
     youtube_id: "V72zXIKmDG8"
     file: video/v1.mp4
     fps: 30
+  - video_id: v2
+    youtube_id: "Jj-jMfIsOz8"
+    file: video/v2.mp4
+    fps: REEMPLAZAR          # no se pudo medir: ffprobe

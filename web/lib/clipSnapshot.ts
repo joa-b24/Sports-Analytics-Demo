@@ -5,6 +5,7 @@
 import type { ClipEdit, ClipSnapshot } from "./annotations.ts";
 import { buildSnapshot, fixedFileName } from "./clips.ts";
 import { loadFixedParts } from "./fixed.ts";
+import { readVideoFps } from "./matchYaml.ts";
 import { listLocal, readLocal, tracksParts } from "./local.ts";
 import type { FixedFile } from "./positions.ts";
 import type { TracksFile } from "./tracks.ts";
@@ -20,8 +21,8 @@ export async function loadClipCalib(folder: string, videoId: string, t0: number,
   const dir = `matches/${folder}/tracking`;
   const names = tracksParts(await listLocal(dir), videoId);
   const parts: Calib[] = [];
-  // The frame rate is known after the first part read; from then on, parts outside the clip are not read.
-  let fps: number | null = null;
+  // The frame rate from match.yaml, so parts outside the clip are not read at all; else known after the first part read.
+  let fps: number | null = readVideoFps((await readLocal(`matches/${folder}/match.yaml`)) ?? "", videoId);
   for (const n of names) {
     const m = n.match(/_(\d+)_(\d+)\.json$/);
     if (!m) continue;
@@ -69,7 +70,7 @@ export function snapshotOf(file: FixedFile | null, calib: Calib | null, edit: Pi
 // The snapshot of one clip read from the folder, without a screen: null when the folder has no calibration for that stretch.
 export async function clipSnapshotFor(match: Match, edit: ClipEdit, roster: RosterPlayer[]): Promise<{ snapshot: ClipSnapshot; fixedFile: string | null } | null> {
   if (!match.folder) return null;
-  const fixed = await loadFixedParts(match.folder, [edit.video_id]);
+  const fixed = await loadFixedParts(match.folder, [edit.video_id], true, { t0: edit.t_start, t1: edit.t_end });
   const file = pickClipFile([...fixed.parts.map((p) => p.file), ...fixed.unoriented], edit);
   const calib = await loadClipCalib(match.folder, edit.video_id, edit.t_start, edit.t_end);
   const snapshot = snapshotOf(file, calib, edit, roster);
