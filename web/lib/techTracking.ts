@@ -31,6 +31,9 @@ export interface TrackingParams {
   // Sample pass of the anchors mode (lib/samples.ts): minimum gap between samples (s) and own boxes in view.
   sampleGapS: number;
   sampleMinPlayers: number;
+  // Pases (lib/positions.ts): between two boxes of a team without names, a pass that moves the ball less than this (m) is dropped
+  // only when the passer's box disappears (it is the same player whose track changed fragment).
+  minPassSeparationM: number;
 }
 // Same as the Python ones (tracking/segments.py DEFAULT_POLICY, anchors_cli UNNAMED_COST_REAL, process BAND_MARGIN_M).
 export const TRACKING_DEFAULTS: TrackingParams = {
@@ -52,11 +55,12 @@ export const TRACKING_DEFAULTS: TrackingParams = {
   autoAcceptOn: false,
   sampleGapS: 45,
   sampleMinPlayers: 8,
+  minPassSeparationM: 5,
 };
 
 export interface TrackingField {
   key: Exclude<keyof TrackingParams, "fillRejectClose" | "autoAcceptOn">;
-  group: "fill" | "gaps" | "ball" | "search" | "keys" | "assist";
+  group: "fill" | "gaps" | "ball" | "search" | "keys" | "assist" | "passes";
   label: string;
   unit: string;
   min: number;
@@ -70,6 +74,7 @@ export const TRACKING_GROUPS: { id: TrackingField["group"]; title: string; help:
   { id: "ball", title: "Balón", help: "Qué tan seguro debe estar el detector para marcar un balón, y cuánto salto se le permite." },
   { id: "search", title: "Franja de búsqueda del tracking", help: "Zona de la imagen donde el detector busca personas." },
   { id: "keys", title: "Mesa de corrección", help: "Atajos de la mesa." },
+  { id: "passes", title: "Pases de un equipo sin nombres", help: "Cómo se descartan los pases dobles del rival, que no tiene jugadoras con nombre." },
   { id: "assist", title: "Anclas: aceptar seguras y muestras", help: "Cuánta seguridad pide «Aceptar las seguras» y cómo se eligen los cuadros de la pasada por muestras." },
 ];
 export const TRACKING_FIELDS: TrackingField[] = [
@@ -87,6 +92,7 @@ export const TRACKING_FIELDS: TrackingField[] = [
   { key: "searchMarginM", group: "search", label: "Margen alrededor de la cancha", unit: "m", min: 0, max: 15, step: 0.5, help: "Con la franja «auto», metros fuera de la cancha donde aún se busca (process --band-margin). Más margen, más cuadro que detectar." },
   { key: "gStepS", group: "keys", label: "Salto de la tecla g", unit: "s", min: 0.2, max: 10, step: 0.1, help: "Segundos que avanza g dentro de un hueco." },
   { key: "autoAcceptP", group: "assist", label: "Seguras: probabilidad mínima", unit: "", min: 0.9, max: 0.999, step: 0.001, help: "Una unión sugerida solo es «segura» con al menos esta probabilidad (y sin choques ni costo alto). Por defecto 0.98: sin confirmar, los trozos nuevos aciertan ~76 % (83–84 % con p ≥ 0.8–0.9)." },
+  { key: "minPassSeparationM", group: "passes", label: "Separación mínima del balón", unit: "m", min: 0, max: 15, step: 0.5, help: "Entre dos cajas de un equipo sin nombres, un pase que mueve el balón menos que esto se descarta SOLO si la caja de quien pasa desaparece (es la misma jugadora que cambió de fragmento). Si quien pasa sigue a la vista, el pase se conserva aunque sea corto. 0 lo apaga." },
   { key: "sampleGapS", group: "assist", label: "Muestras: separación mínima", unit: "s", min: 10, max: 300, step: 5, help: "Tiempo mínimo entre dos cuadros de la pasada por muestras." },
   { key: "sampleMinPlayers", group: "assist", label: "Muestras: jugadoras propias a la vista", unit: "", min: 3, max: 11, step: 1, help: "Un cuadro solo es muestra si se ven al menos tantas cajas de nuestro equipo (por color de uniforme)." },
 ];

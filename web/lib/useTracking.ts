@@ -9,6 +9,7 @@ import { MOBILE } from "./mobile.ts";
 import { hashText, stableJson } from "./saveAll.ts";
 import type { Segment } from "./segments.ts";
 import { getPref, useStore } from "./store.ts";
+import { trackingParamsOf } from "./techTracking.ts";
 import { segmentsFromMarks } from "./segments.ts";
 import { makeTrackingView, NO_TRACKING, type TrackingView } from "./trackingView.ts";
 import { TrackingWindow } from "./trackingWindow.ts";
@@ -63,7 +64,7 @@ async function resolve(ctx: {
 }): Promise<Resolution> {
   const files = await trackingFileList(ctx.folder, ctx.videoIds);
   const attack = Object.fromEntries(ctx.videoIds.map((v) => [v, getPref(`attack:${ctx.matchId}:${v}`) ?? null]));
-  const fingerprint = aggregatesFingerprint({ files, segmentsByVideo: ctx.segmentsByVideo, videoPeriods: ctx.videoPeriods, videoHalves: ctx.videoHalves, attack, events: ctx.events });
+  const fingerprint = aggregatesFingerprint({ files, segmentsByVideo: ctx.segmentsByVideo, videoPeriods: ctx.videoPeriods, videoHalves: ctx.videoHalves, attack, events: ctx.events, passRule: trackingParamsOf(ctx.match).minPassSeparationM });
   const key = `${ctx.folder}|${fingerprint}`;
   const open = resolving.get(key);
   if (open) return open;
@@ -75,7 +76,10 @@ async function resolve(ctx: {
     if (files.length === 0) return { agg: null, parts: null, key };
     const parts = await loadFixedParts(ctx.folder, ctx.videoIds);
     // The tagged shots, crosses and set pieces of each video: the touch after them is not a pass cut (lib/positions.ts).
-    for (const o of [...parts.parts, ...parts.unoriented.map((file) => ({ file }))]) o.file.attempts_t = attemptTimes(ctx.events, o.file.video_id);
+    for (const o of [...parts.parts, ...parts.unoriented.map((file) => ({ file }))]) {
+      o.file.attempts_t = attemptTimes(ctx.events, o.file.video_id);
+      o.file.min_pass_separation_m = trackingParamsOf(ctx.match).minPassSeparationM;
+    }
     if (!MOBILE && parts.parts.length > 0 && !building.has(key)) {
       building.add(key);
       const job = (async () => {

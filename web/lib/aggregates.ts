@@ -68,11 +68,13 @@ export function aggregatesFingerprint(input: {
   videoHalves?: unknown;
   attack: Record<string, string | null>;
   events: MatchEvent[];
+  // The rule of the passes of a team without names (m): a different value gives different passes.
+  passRule?: number;
 }): string {
   const play = Object.fromEntries(Object.entries(input.segmentsByVideo).map(([v, segs]) => [v, segs.filter((g) => g.tipo === "juego").map((g) => [g.start, g.end])]));
   // Substitutions and red cards (who is on the pitch) and losses and recoveries (the possession is held to them).
   const subs = input.events.filter((e) => e.type === "substitution" || e.type === "loss" || e.type === "recovery" || ["shot", "goal", "cross", "corner", "free_kick", "goal_kick", "penalty"].includes(e.type) || (e.type === "foul" && e.detail === "red")).map((e) => [e.type, e.team, e.player_id, e.player_in, e.t_video, e.video_id ?? "v1"]);
-  return hashText(stableJson({ v: AGG_VERSION, files: [...input.files].sort((a, b) => a.name.localeCompare(b.name)).map((f) => [f.name, f.size]), play, periods: input.videoPeriods ?? [], halves: input.videoHalves ?? {}, attack: input.attack, subs }));
+  return hashText(stableJson({ v: AGG_VERSION, files: [...input.files].sort((a, b) => a.name.localeCompare(b.name)).map((f) => [f.name, f.size]), play, periods: input.videoPeriods ?? [], halves: input.videoHalves ?? {}, attack: input.attack, subs, passRule: input.passRule ?? null }));
 }
 
 // Numbers in the saved file keep two decimals: more is noise for a heat map or an arrow.

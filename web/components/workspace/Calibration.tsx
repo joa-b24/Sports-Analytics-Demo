@@ -1143,8 +1143,8 @@ export function Calibration({
     </Dropdown>
   );
 
-  // The mode button and the choice of what is marked (points / lines / circle) go to the bar of the match when this is a
-  // tab of one (embedded); alone, they stay in the bar of the screen.
+  // The mode button and the anchors menu go to the bar of the match when this is a tab of one (embedded); alone, they stay
+  // in the bar of the screen. The choice of what is marked (points / lines / circle) stays in its card.
   const modeButton = (
     <button
       type="button"
@@ -1183,7 +1183,7 @@ export function Calibration({
   const topControls = (
     <>
       {modeButton}
-      {mode === "calibrar" && toolSeg}
+      {mode === "calibrar" && anchorsMenu}
     </>
   );
   return (
@@ -1205,7 +1205,7 @@ export function Calibration({
         {!(embedded && headerSlot) && modeButton}
         {mode === "calibrar" ? (
           <>
-            {anchorsMenu}
+            {!(embedded && headerSlot) && anchorsMenu}
             {fpsFrom !== "yaml" && (
               <button
                 type="button"
@@ -1813,7 +1813,7 @@ export function Calibration({
                 <div className={fitH ? "flex min-h-0 flex-col" : ""} style={fitH ? { flex: `${split} 1 0` } : undefined}>
                 <Card delay={100} className={fitH ? "flex min-h-0 flex-1 flex-col overflow-y-auto" : ""}>
                   <div className="mb-3 flex items-center gap-2">
-                    {!(embedded && headerSlot) && toolSeg}
+                    {toolSeg}
                     <span className={`tag tc ${fit.pairs.length >= 4 ? "tag-accent" : ""}`} title={derived.length ? `${derived.length} calculado(s) con líneas` : undefined}>
                       {fit.pairs.length} / 4
                     </span>

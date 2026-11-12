@@ -38,6 +38,8 @@ export interface FixedFile {
   // Seconds of this video where a shot, cross, corner, free kick, goal kick or penalty was tagged: the ball leaves a player on
   // purpose and the touch that follows is not a pass cut. Set when the part is read, from the events (lib/useTracking.ts).
   attempts_t?: number[];
+  // The separation (m) of the rule of the passes of a team without names (techTracking minPassSeparationM); MIN_APPROX_PASS_M when absent.
+  min_pass_separation_m?: number;
   // `view`: what the camera saw in that frame, as a polygon of the normalised pitch (parts.ts viewPolygon). Absent in
   // files saved before 2026-10-20.
   frames: { frame: number; positions: FixedPosition[]; view?: [number, number][] }[];
@@ -528,9 +530,11 @@ export function namedTeams(f: FixedFile): { own: boolean; opp: boolean } {
 // Passes and changes of team from the sequence of holders. Only when the ball is followed: with no ball, nothing.
 // A pass needs at least MIN_PASS_GAP_S between its two touches. In a team with names both ends must have one (and be
 // two different players); in a team without names (the rival, usually) it is counted at team level and flagged `approx`.
-// A pass between two boxes of a team without names (the rival) must move the ball at least this far (m): closer, it is the
-// same player whose track changed fragment, or two boxes on one player, not a pass.
-export const MIN_APPROX_PASS_M = 3;
+// A pass between two boxes of a team without names (the rival) that moves the ball less than this (m) is dropped, but only when
+// the box of the passer disappears (it never shows again by the time of the second touch): then it is the same player whose
+// track changed fragment, not a pass. If the passer stays in view the pass is kept, however short it is. Set per match in
+// Detalles técnicos (`file.min_pass_separation_m`).
+export const MIN_APPROX_PASS_M = 5;
 // A touch this close in time to a tagged shot, cross or set-piece kick (s, before and after) is not a pass attempt.
 export const ATTEMPT_BEFORE_S = 2;
 export const ATTEMPT_AFTER_S = 1;
@@ -545,6 +549,16 @@ export function passesAndTurnovers(f: FixedFile, jumpMs?: number): { passes: Pas
   const [mx, my] = metersPerUnit(f);
   const ballAt = new Map(f.ball.map((x) => [x.frame, x]));
   const attempts = f.attempts_t ?? [];
+  const minSep = f.min_pass_separation_m ?? MIN_APPROX_PASS_M;
+  // The last frame each box was seen measured (held positions do not count), read once and only if a short pass asks for it.
+  let lastSeen: Map<number, number> | null = null;
+  const vanishesBefore = (id: number, frame: number) => {
+    if (!lastSeen) {
+      lastSeen = new Map();
+      for (const fr of f.frames) for (const q of fr.positions) if (!isExtrapolated(q.source)) lastSeen.set(q.id, Math.max(lastSeen.get(q.id) ?? -Infinity, fr.frame));
+    }
+    return (lastSeen.get(id) ?? -Infinity) < frame;
+  };
   const isAttempt = (frame: number) => {
     const t = frame / f.fps;
     return attempts.some((a) => a >= t - ATTEMPT_AFTER_S && a <= t + ATTEMPT_BEFORE_S);
@@ -564,7 +578,7 @@ export function passesAndTurnovers(f: FixedFile, jumpMs?: number): { passes: Pas
       } else {
         const pa = ballAt.get(a.frame);
         const pb = ballAt.get(b.frame);
-        if (pa && pb && Math.hypot((pa.x - pb.x) * mx, (pa.y - pb.y) * my) < MIN_APPROX_PASS_M) continue;
+        if (pa && pb && Math.hypot((pa.x - pb.x) * mx, (pa.y - pb.y) * my) < minSep && vanishesBefore(a.id, b.frame)) continue;
       }
       passes.push({ frame: b.frame, from_frame: a.frame, from: a.id, to: b.id, team: a.team, approx: !named[a.team] });
     } else turnovers.push({ frame: b.frame, from_frame: a.frame, from: a.id, lost: a.team });

@@ -324,3 +324,19 @@ test("rumbo del balón: sigue recto junto a una rival, o se desvía", () => {
   const slow = Array.from({ length: 21 }, (_, i) => ({ frame: i * 3, x: i * 3 * (1 / fps), y: 10 }));
   assert.equal(ballCourse(slow, 30, fps, 1, 1), "unknown");
 });
+
+test("un pase corto del rival sin nombres se descarta solo si la caja de quien pasa desaparece", () => {
+  const people = [P(1, "opp"), P(2, "opp")];
+  const ball = [M(0, 20.5, 30), M(30, 22.5, 30)]; // the ball moves 2 m: less than the 5 m of the rule
+  // The passer stays in view: a real short pass, kept.
+  const stays = fixed({ n: 40, people, at: () => [q(1, 20, 30), q(2, 22, 30)], ball });
+  assert.equal(passesAndTurnovers(stays).passes.length, 1);
+  // The passer's box vanishes before the second touch: the same player in two fragments, dropped.
+  const vanishes = fixed({ n: 40, people, at: (i) => (i < 4 ? [q(1, 20, 30), q(2, 22, 30)] : [q(2, 22, 30)]), ball });
+  assert.equal(passesAndTurnovers(vanishes).passes.length, 0);
+  // The same vanishing passer with a longer pass (6 m) is kept; and the rule can be turned off (0) or widened per match.
+  const far = fixed({ n: 40, people, at: (i) => (i < 4 ? [q(1, 20, 30), q(2, 26, 30)] : [q(2, 26, 30)]), ball: [M(0, 20.5, 30), M(30, 26.5, 30)] });
+  assert.equal(passesAndTurnovers(far).passes.length, 1);
+  assert.equal(passesAndTurnovers({ ...vanishes, min_pass_separation_m: 0 }).passes.length, 1);
+  assert.equal(passesAndTurnovers({ ...far, min_pass_separation_m: 8 }).passes.length, 0);
+});
