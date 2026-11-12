@@ -25,8 +25,12 @@ const STATE_TEXT: Record<JobView["state"], string> = { running: "Corriendo…", 
 // detect, overnight), each with its parameters as a checkbox («use this one»): an unchecked parameter is not sent, so
 // Python keeps its own default. The line that will run is always shown (and can be copied). The catalog is lib/commands.ts.
 export function CommandsCard({ match, folder, video: pickedVideo }: { match: Match; folder: string; video: string }) {
-  const videos = useMemo(() => matchVideos(match).map((v) => v.video_id), [match]);
-  const video = pickedVideo || videos[0] || "v1";
+  const videoList = useMemo(() => matchVideos(match), [match]);
+  const videos = useMemo(() => videoList.map((v) => v.video_id), [videoList]);
+  // The video the commands run with: chosen HERE (it used to follow the selector of the panel and the first video was taken
+  // without saying so, so a command could run on the wrong one).
+  const chosen = usePref(`cmdVideo:${folder}`, "");
+  const video = videos.includes(chosen) ? chosen : videos.includes(pickedVideo) ? pickedVideo : (videos[0] ?? "v1");
   const [jobs, setJobs] = useState<Record<string, JobView>>({});
   const [available, setAvailable] = useState<boolean | null>(null);
   const [files, setFiles] = useState<string[]>([]);
@@ -71,10 +75,19 @@ export function CommandsCard({ match, folder, video: pickedVideo }: { match: Mat
         </h3>
       </div>
       <p className="mt-1 max-w-3xl text-xs text-pretty text-muted">
-        Los comandos de Python de la calibración y el tracking, uno por uno. Marca los parámetros que quieras mandar (por ejemplo <code>--benchmark</code>); los que dejes sin marcar usan el valor por defecto de Python. Corren con el video{" "}
-        <span className="tc text-ink">{video}</span>
-        {videos.length > 1 ? " (cámbialo arriba, en «Video»)" : ""}.
+        Los comandos de Python de la calibración y el tracking, uno por uno. Marca los parámetros que quieras mandar (por ejemplo <code>--benchmark</code>); los que dejes sin marcar usan el valor por defecto de Python.
       </p>
+      <label className="mt-3 flex items-center gap-2 text-xs text-ink">
+        Video con el que corren
+        <select className="input !py-1" value={video} onChange={(e) => setPref(`cmdVideo:${folder}`, e.target.value)} aria-label="Video con el que corren los comandos">
+          {videoList.map((v) => (
+            <option key={v.video_id} value={v.video_id}>
+              {v.video_id} · {v.label || "sin nombre"}
+            </option>
+          ))}
+        </select>
+        <span className="text-faint">Los archivos de anclas y de barrido tienen que ser de este video.</span>
+      </label>
       {available === false && <p className="mt-3 text-xs text-muted">Solo se lanzan desde la computadora donde corre la app. Aquí puedes armar la línea y copiarla en una terminal (con .venv activo, en la raíz del repositorio).</p>}
       <div className="mt-3 divide-y divide-line-soft rounded-lg bg-bg/40">
         {COMMANDS.map((c) => (

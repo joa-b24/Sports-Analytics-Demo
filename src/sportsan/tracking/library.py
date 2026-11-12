@@ -420,12 +420,27 @@ def track_from_anchors(data: dict, fps: float, min_points: int = 6) -> tuple[dic
     return track, notes
 
 
+def _same_video(args) -> None:
+    """La biblioteca se arma con los cuadros del video MISMO de las anclas o del barrido: con otro video las referencias
+    saldrían de imágenes que no son las de esas anclas y la ubicación fallaría sin avisar."""
+    found = []
+    if args.anchors:
+        found.append(("anclas", json.loads(Path(args.anchors).read_text(encoding="utf-8")).get("video_id")))
+    if args.track:
+        found.append(("barrido", json.loads(Path(args.track).read_text(encoding="utf-8")).get("video_id")))
+    for what, vid in found:
+        if vid and args.video and vid != args.video:
+            raise SystemExit(f"Las {what} son del video {vid} y pides construir la biblioteca de {args.video}: se armaría con imágenes que no son las de esas anclas. "
+                             f"Usa --video {vid}, o para usar la de otro video: library borrow --video {args.video} --from-video {vid}.")
+
+
 def _cmd_build(args) -> None:
     from ..config import load_config, project_root
 
     if not args.track and not args.anchors:
         raise SystemExit("Da --track (calib_*.json de propagate), --anchors (anchors_*.json de la app) o las dos: con las dos, el tramo propagado "
                          "más las anclas de otros momentos como referencias sueltas.")
+    _same_video(args)
     extra = None
     if args.anchors and args.track:
         from .propagate import read_anchors

@@ -54,6 +54,15 @@ test("every parameter has a distinct id and a flag in the catalog", () => {
   }
 });
 
+test("los archivos de anclas y de barrido deben ser del video con el que corre el comando", () => {
+  assert.equal(commandArgv("propagate", "m1", "v1", { anchors: "anchors_m1_v2.json" }).ok, false);
+  assert.ok(commandArgv("propagate", "m1", "v2", { anchors: "anchors_m1_v2.json" }).ok);
+  assert.equal(commandArgv("library-build", "m1", "v1", { track: "calib_v2_7198_7800.json" }).ok, false);
+  assert.ok(commandArgv("library-build", "m1", "v2", { track: "calib_v2_7198_7800.json" }).ok);
+  // A library can be tried on another video: that is what lending is.
+  assert.ok(commandArgv("library-check", "m1", "v1", { library: "library_v2.npz" }).ok);
+});
+
 test("pedir prestada la biblioteca de otro video, y probar una biblioteca concreta", () => {
   const r = commandArgv("library-borrow", "m1", "v1", { fromVideo: "v2" });
   assert.ok(r.ok);

@@ -27,3 +27,17 @@ def test_rescaled_points_and_homographies_describe_the_same_world():
 def test_different_aspect_is_refused():
     with pytest.raises(ValueError):
         rescale_library(tiny(), 1000, 1000, "v2", "v1")
+
+
+def test_build_refuses_anchors_of_another_video(tmp_path):
+    import argparse
+    import json
+
+    from sportsan.tracking.library import _same_video
+
+    f = tmp_path / "anchors.json"
+    f.write_text(json.dumps({"video_id": "v2"}), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        _same_video(argparse.Namespace(anchors=str(f), track=None, video="v1"))
+    _same_video(argparse.Namespace(anchors=str(f), track=None, video="v2"))
+    _same_video(argparse.Namespace(anchors=str(f), track=None, video=None))

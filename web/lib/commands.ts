@@ -17,6 +17,9 @@ export interface CommandParam {
   def?: string;
   // file: nombre de un archivo de tracking/ del partido (sin carpetas); `pattern` dice cuáles valen.
   pattern?: RegExp;
+  // file: el nombre debe llevar el id del video elegido (anchors_<partido>_v2.json con v2): con otro video la biblioteca saldría de
+  // imágenes que no son las de esas anclas.
+  sameVideo?: boolean;
   // La línea no corre sin este parámetro.
   required?: boolean;
   // text: valores permitidos (si no, patrón libre y corto).
@@ -47,7 +50,7 @@ export const COMMANDS: CommandDef[] = [
     match: true,
     video: true,
     params: [
-      { id: "anchors", flag: "--anchors", label: "Archivo de anclas", help: "El anchors_….json exportado desde Calibración (en tracking/).", kind: "file", pattern: /^anchors_[\w.-]+\.json$/, required: true },
+      { id: "anchors", flag: "--anchors", label: "Archivo de anclas", help: "El anchors_….json exportado desde Calibración (en tracking/).", kind: "file", pattern: /^anchors_[\w.-]+\.json$/, required: true, sameVideo: true },
       { id: "start", flag: "--start", label: "Inicio", help: "Hora del video (H:MM:SS). Sin él, desde la primera ancla.", kind: "time" },
       { id: "end", flag: "--end", label: "Fin", help: "Hora del video (H:MM:SS). Sin él, hasta la última ancla.", kind: "time" },
       { id: "workWidth", flag: "--work-width", label: "Ancho de trabajo (px)", help: "Ancho al que se reduce el video para estimar el movimiento.", kind: "number", min: 320, max: 1920, def: "960" },
@@ -63,8 +66,8 @@ export const COMMANDS: CommandDef[] = [
     match: true,
     video: true,
     params: [
-      { id: "anchors", flag: "--anchors", label: "Desde anclas", help: "anchors_….json: cada ancla buena es una referencia, sin propagar.", kind: "file", pattern: /^anchors_[\w.-]+\.json$/ },
-      { id: "track", flag: "--track", label: "Desde un barrido", help: "calib_….json escrito por «Propagar las anclas». Usa este o el de anclas.", kind: "file", pattern: /^calib_[\w.-]+\.json$/ },
+      { id: "anchors", flag: "--anchors", label: "Desde anclas", help: "anchors_….json: cada ancla buena es una referencia, sin propagar.", kind: "file", pattern: /^anchors_[\w.-]+\.json$/, sameVideo: true },
+      { id: "track", flag: "--track", label: "Desde un barrido", help: "calib_….json escrito por «Propagar las anclas». Usa este o el de anclas.", kind: "file", pattern: /^calib_[\w.-]+\.json$/, sameVideo: true },
       { id: "minPoints", flag: "--min-points", label: "Puntos mínimos por ancla", help: "Con «Desde anclas»: puntos que debe tener un ancla para ser referencia.", kind: "number", min: 4, max: 40, def: "6" },
       { id: "minShift", flag: "--min-shift-px", label: "Movimiento entre referencias (px)", help: "Movimiento de imagen entre referencias consecutivas.", kind: "number", min: 10, max: 1000, def: "150" },
     ],
@@ -211,6 +214,10 @@ export function commandArgv(
       argv.push(p.flag, text);
     } else if (p.kind === "file") {
       if (!FILE_NAME.test(text) || (p.pattern && !p.pattern.test(text))) return { ok: false, error: `«${p.label}» no es un nombre de archivo válido.` };
+      if (p.sameVideo) {
+        const of = text.match(/(?<![A-Za-z0-9])v\d+(?![A-Za-z0-9])/)?.[0];
+        if (of && of !== video) return { ok: false, error: `«${p.label}» es del video ${of} y el comando corre con ${video}: cambia el video o el archivo.` };
+      }
       argv.push(p.flag, `matches/${match}/tracking/${text}`);
     } else {
       if (p.oneOf ? !p.oneOf.includes(text) : !/^[\w.,:-]{1,60}$/.test(text)) return { ok: false, error: `«${p.label}» no es válido.` };
