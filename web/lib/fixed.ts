@@ -5,6 +5,7 @@ import { listLocal, readLocal } from "./local";
 import { autoFixed, fixedName, inferOwnAttacksRight, parseFixed, type FixedFile, type Oriented } from "./positions";
 import { getPref } from "./store";
 import type { TracksFile } from "./tracks";
+import { range, withoutCovered } from "./fixedCover.ts";
 
 // Positions of a match, oriented with the analysed team attacking right. Corrected parts (tracks_fixed_*.json) where
 // there are; elsewhere, the processed parts nobody corrected (tracks_*.json) as positions by team (`file.auto`), which
@@ -17,10 +18,6 @@ export interface FixedParts {
 }
 
 const rawName = (videoId: string) => new RegExp(`^tracks_${videoId}_(\\d+)_(\\d+)\\.json$`);
-const range = (name: string): [number, number] => {
-  const m = name.match(/_(\d+)_(\d+)\.json$/);
-  return m ? [Number(m[1]), Number(m[2])] : [0, 0];
-};
 
 // Files already read in this session, by path (a processed part does not change; a corrected one is read again).
 const rawCache = new Map<string, FixedFile>();
@@ -36,7 +33,7 @@ export async function loadFixedParts(folder: string, videoIds: string[], withAut
   const venue = len > 0 && wid > 0 ? { length_m: len, width_m: wid } : null;
   const read: FixedFile[] = [];
   for (const v of key.split(",")) {
-    const fixedNames = files.filter((f) => !f.dir && fixedName(v).test(f.name)).map((f) => f.name);
+    const fixedNames = withoutCovered(files.filter((f) => !f.dir && fixedName(v).test(f.name))).map((f) => f.name);
     for (const n of fixedNames) {
       const f = parseFixed((await readLocal(`${dir}/${n}`)) ?? "");
       // Files saved before the venue went into them: the size of the match venue.
@@ -85,7 +82,7 @@ export async function trackingFileList(folder: string, videoIds: string[]): Prom
   const files = (await listLocal(`matches/${folder}/tracking`)) ?? [];
   const out: { name: string; size: number }[] = [];
   for (const v of videoIds) {
-    const fixed = files.filter((f) => !f.dir && fixedName(v).test(f.name));
+    const fixed = withoutCovered(files.filter((f) => !f.dir && fixedName(v).test(f.name)));
     out.push(...fixed.map((f) => ({ name: f.name, size: f.size })));
     const covered = fixed.map((f) => range(f.name));
     for (const f of files.filter((x) => !x.dir && rawName(v).test(x.name))) {

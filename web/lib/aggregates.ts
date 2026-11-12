@@ -14,7 +14,7 @@ import type { Segment } from "./segments.ts";
 import { reportEvents, reportTracking, type ReportTracking } from "./report.ts";
 import type { Match, MatchEvent } from "./types.ts";
 
-export const AGG_VERSION = 1;
+export const AGG_VERSION = 2;
 type Side = "own" | "opp";
 const SIDES: Side[] = ["own", "opp"];
 export const aggregatesPath = (folder: string) => `matches/${folder}/tracking/aggregates_${folder}.json`;
