@@ -337,7 +337,7 @@ export const METRICS: Metric[] = [
   { key: "minutes_played", label: "Minutos jugados", group: "Físico", unit: "min" },
   { key: "distance_m", label: "Distancia", group: "Físico", unit: "m", rate: true },
   { key: "per_min_m", label: "Metros por minuto", group: "Físico", unit: "m/min" },
-  { key: "top_kmh", label: "Velocidad máxima", group: "Físico", unit: "km/h" },
+  { key: "top_kmh", label: "Velocidad máxima (en sprint)", group: "Físico", unit: "km/h" },
   { key: "hsr_m", label: "HSR (>18 km/h)", group: "Físico", unit: "m", rate: true },
   { key: "sprints", label: "Sprints", group: "Físico", rate: true },
 ];

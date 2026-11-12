@@ -163,7 +163,7 @@ export function SlideEditor({ matchId, slide, editable = true, preview }: { matc
           <textarea
             className={`${input} mt-2 min-h-20 w-full`}
             aria-label="Nota de la diapositiva"
-            placeholder="Nota para decir en voz alta (se muestra bajo la diapositiva al presentar)"
+            placeholder="Nota bajo la diapositiva: lo que se lee en pantalla al presentar (una indicación, un dato o qué observar)"
             value={slide.note}
             onChange={(e) => patchSlide({ note: e.target.value })}
           />
