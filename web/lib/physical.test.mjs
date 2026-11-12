@@ -100,3 +100,20 @@ test("una excursión a otra jugadora y de regreso en un segundo no suma metros; 
   assert.ok(still.distance_m <= 1, `quieta ${still.distance_m}`);
   assert.ok(still.top_kmh < 3);
 });
+
+import { accelerationCoherent, HSR_KMH, SPRINT_KMH, SPRINT_MIN_S, ACCEL_MAX_MS2 } from "./physical.ts";
+test("aceleración coherente: un sprint que llega por una rampa humana vale; un salto de velocidad no", () => {
+  // De 10 a 24 km/h en 1 s con muestras cada 0.1 s: ~1.2 m/s², normal.
+  const ramp = Array.from({ length: 11 }, (_, i) => ({ t: i * 0.1, kmh: 10 + 1.4 * i }));
+  assert.equal(accelerationCoherent(ramp), true);
+  // De 8 a 26 km/h en 0.1 s: 50 m/s², nadie acelera así: error del track.
+  assert.equal(accelerationCoherent([{ t: 0, kmh: 8 }, { t: 0.1, kmh: 26 }, { t: 0.2, kmh: 26 }]), false);
+  // Dos velocidades separadas por un hueco no se comparan.
+  assert.equal(accelerationCoherent([{ t: 0, kmh: 8 }, { t: 2, kmh: 26 }]), true);
+  assert.equal(ACCEL_MAX_MS2, 8);
+});
+test("umbrales: HSR por encima de 18 km/h; sprint a partir de 22 km/h durante al menos 1 s", () => {
+  assert.equal(HSR_KMH, 18);
+  assert.equal(SPRINT_KMH, 22);
+  assert.equal(SPRINT_MIN_S, 1);
+});

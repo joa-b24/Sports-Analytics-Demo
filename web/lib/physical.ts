@@ -1,7 +1,8 @@
 import { crossesCut } from "./cameraCuts.ts";
 import { isExtrapolated, isMeasuredSource } from "./smooth.ts";
 import { PITCH } from "./types.ts";
-import { metersPerUnit, orient, type Oriented } from "./positions.ts";
+import { metersPerUnit, orient, playFilter, type Oriented } from "./positions.ts";
+import type { Segment } from "./segments.ts";
 
 // Physical load and team shape read from the corrected tracking (tracks_fixed), by named player. Pure functions.
 //
@@ -140,6 +141,23 @@ export const cleanSeries = <T extends { t: number; x: number; y: number }>(s: T[
 // The runs of a player ready to measure: cut at the jumps and cleaned.
 export const cleanRuns = <T extends { t: number; x: number; y: number }>(runs: T[][]): T[][] => runs.flatMap((r) => splitAtJumps(r).map(cleanSeries));
 
+// A sprint is real only if the speed gets there the way a body does: between two measured speeds (close in time) the change
+// cannot be faster than ACCEL_MAX_MS2 (m/s²; elite sprinters peak around 6-8 m/s² from a standing start, a university player
+// less). A jump in the track shows up as an acceleration no player has: that run is not a sprint and its speed is not the top.
+// The speeds from ACCEL_LEAD_S before the sprint count too (the way in).
+export const ACCEL_MAX_MS2 = 8;
+export const ACCEL_LEAD_S = 0.5;
+// Two speeds further apart in time than this are not compared (there was a gap between them).
+export const ACCEL_PAIR_S = 0.35;
+export function accelerationCoherent(speeds: { t: number; kmh: number }[]): boolean {
+  for (let i = 1; i < speeds.length; i++) {
+    const dt = speeds[i].t - speeds[i - 1].t;
+    if (dt <= 0 || dt > ACCEL_PAIR_S) continue;
+    if (Math.abs((speeds[i].kmh - speeds[i - 1].kmh) / 3.6 / dt) > ACCEL_MAX_MS2) return false;
+  }
+  return true;
+}
+
 export interface PhysicalRow {
   name: string;
   seconds: number; // time seen (measured or filled)
@@ -156,14 +174,16 @@ export interface PhysicalRow {
 type Sample = { t: number; x: number; y: number; fill: boolean };
 
 // One series per named player and part, in real meters, with the time in seconds.
-function series(parts: Oriented[], team: "own" | "opp"): Map<string, Sample[][]> {
+function series(parts: Oriented[], team: "own" | "opp", play: Record<string, Segment[]> | null = null): Map<string, Sample[][]> {
   const out = new Map<string, Sample[][]>();
+  const only = playFilter(play);
   for (const o of parts) {
     const f = o.file;
     const [mx, my] = metersPerUnit(f);
     const name = new Map(f.people.filter((p) => p.team === team && p.player_id).map((p) => [p.id, p.player_id as string]));
     const byName = new Map<string, Sample[][]>();
-    for (const fr of f.frames)
+    for (const fr of f.frames) {
+      if (!only(f.video_id, fr.frame / f.fps)) continue;
       for (const q of fr.positions) {
         const n = name.get(q.id);
         if (!n) continue;
@@ -184,14 +204,15 @@ function series(parts: Oriented[], team: "own" | "opp"): Map<string, Sample[][]>
         }
         list.push(s);
       }
+    }
     for (const [n, lists] of byName) out.set(n, [...(out.get(n) ?? []), ...lists]);
   }
   return out;
 }
 
-export function physical(parts: Oriented[], team: "own" | "opp"): PhysicalRow[] {
+export function physical(parts: Oriented[], team: "own" | "opp", play: Record<string, Segment[]> | null = null): PhysicalRow[] {
   const rows: PhysicalRow[] = [];
-  for (const [name, runs] of series(parts, team)) {
+  for (const [name, runs] of series(parts, team, play)) {
     let seconds = 0;
     let fillSeconds = 0;
     let distance = 0;
@@ -214,8 +235,20 @@ export function physical(parts: Oriented[], team: "own" | "opp"): PhysicalRow[] 
       // A sprint run: from its first fast step to its last; `lastFast` is the end time of the last fast step.
       let sprintStart: number | null = null;
       let lastFast = 0;
+      // The speeds measured in this run (time, km/h), to check that a sprint is physically coherent.
+      const speeds: { t: number; kmh: number }[] = [];
       const closeSprint = () => {
-        if (sprintStart !== null && lastFast - sprintStart >= SPRINT_MIN_S) sprints++;
+        if (sprintStart !== null && lastFast - sprintStart >= SPRINT_MIN_S) {
+          const from = sprintStart;
+          const to = lastFast;
+          const inRun = speeds.filter((v) => v.t >= from - ACCEL_LEAD_S && v.t <= to);
+          if (accelerationCoherent(inRun)) {
+            sprints++;
+            // The top speed is the fastest moment of a valid sprint, not any window of the match.
+            const peak = Math.max(...inRun.filter((v) => v.t >= from).map((v) => v.kmh));
+            top = top === null ? peak : Math.max(top, peak);
+          }
+        }
         sprintStart = null;
       };
       for (let i = 1; i < n; i++) {
@@ -245,7 +278,7 @@ export function physical(parts: Oriented[], team: "own" | "opp"): PhysicalRow[] 
           if (clean) kmh = (Math.hypot(s[b].x - s[a].x, s[b].y - s[a].y) / span) * 3.6;
         }
         if (kmh === null || kmh > PLAUSIBLE_KMH) continue;
-        top = top === null ? kmh : Math.max(top, kmh);
+        speeds.push({ t: s[i].t, kmh });
         if (kmh >= HSR_KMH) hsr += step;
         if (kmh >= SPRINT_KMH) {
           if (sprintStart === null) sprintStart = s[i - 1].t;
@@ -290,7 +323,8 @@ export interface TeamBlock {
 const BOX_DEPTH = 16.5;
 export const MIN_SHAPE_S = 60;
 
-export function teamBlock(parts: Oriented[], team: "own" | "opp"): TeamBlock {
+export function teamBlock(parts: Oriented[], team: "own" | "opp", play: Record<string, Segment[]> | null = null): TeamBlock {
+  const only = playFilter(play);
   const acc = new Map<string, { x: number; y: number; s: number }>();
   let mx = 1;
   let my = 1;
@@ -299,7 +333,8 @@ export function teamBlock(parts: Oriented[], team: "own" | "opp"): TeamBlock {
     [mx, my] = metersPerUnit(f);
     const dt = f.stride / f.fps;
     const name = new Map(f.people.filter((p) => p.team === team && p.player_id).map((p) => [p.id, p.player_id as string]));
-    for (const fr of f.frames)
+    for (const fr of f.frames) {
+      if (!only(f.video_id, fr.frame / f.fps)) continue;
       for (const q of fr.positions) {
         const n = name.get(q.id);
         if (!n || !isMeasuredSource(q.source)) continue;
@@ -311,6 +346,7 @@ export function teamBlock(parts: Oriented[], team: "own" | "opp"): TeamBlock {
         a.s += dt;
         acc.set(n, a);
       }
+    }
   }
   const players = [...acc]
     .filter(([, a]) => a.s >= MIN_SHAPE_S)

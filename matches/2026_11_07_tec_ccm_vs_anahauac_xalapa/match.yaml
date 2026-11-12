@@ -1,0 +1,16 @@
+match_id: 2026_11_07_tec_ccm_vs_anahauac_xalapa
+kind: own
+date: "2026-11-07"
+own_team_name: "tec ccm"
+other_team_name: "anahauac xalapa"
+analysis_stride: 3
+
+venue:
+  name: "Estadio ITESM CCM"
+
+# Un partido puede venir en varios videos. t_video es el tiempo dentro de cada video.
+videos:
+  - video_id: v1
+    youtube_id: "V72zXIKmDG8"
+    file: video/v1.mp4
+    fps: 30

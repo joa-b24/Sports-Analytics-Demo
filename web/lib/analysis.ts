@@ -425,7 +425,9 @@ export interface MomentumCurve {
   skipped: number;
 }
 
-export function momentumCurve(events: MatchEvent[], segments: Segment[]): MomentumCurve {
+// `window`: the minutes the filter of the analysis shows (the curve covers just those, not from minute 0 with a flat line); without it
+// the curve starts at the first event.
+export function momentumCurve(events: MatchEvent[], segments: Segment[], window: { from: number; to: number } | null = null): MomentumCurve {
   const hasPlay = segments.some((s) => s.tipo === "juego");
   const t0 = events.length ? Math.min(...events.map((e) => e.t_video)) : 0;
   const hits: { min: number; team: "own" | "opp"; w: number; half: number }[] = [];
@@ -444,13 +446,14 @@ export function momentumCurve(events: MatchEvent[], segments: Segment[]): Moment
   }
   const basis = hasPlay ? "juego" : "video";
   if (hits.length === 0) return { points: [], goals, halfTime: null, basis, skipped };
-  const last = Math.ceil(Math.max(...hits.map((h) => h.min))) + 1;
-  const n = Math.round(last / MOMENTUM_STEP_MIN);
+  const start = window ? window.from : Math.max(0, Math.floor(Math.min(...hits.map((h) => h.min))));
+  const last = window ? Math.max(window.to, start + 1) : Math.ceil(Math.max(...hits.map((h) => h.min))) + 1;
+  const n = Math.round((last - start) / MOMENTUM_STEP_MIN);
   const k = Math.LN2 / MOMENTUM_HALF_LIFE_MIN;
   const own = new Array<number>(n + 1).fill(0);
   const opp = new Array<number>(n + 1).fill(0);
   for (let i = 0; i <= n; i++) {
-    const t = i * MOMENTUM_STEP_MIN;
+    const t = start + i * MOMENTUM_STEP_MIN;
     for (const h of hits) {
       if (h.min > t) continue;
       const v = h.w * Math.exp(-k * (t - h.min));
@@ -474,7 +477,7 @@ export function momentumCurve(events: MatchEvent[], segments: Segment[]): Moment
     return s / wsum;
   });
   const peak = Math.max(...smooth.map(Math.abs));
-  const points = smooth.map((v, i) => ({ min: i * MOMENTUM_STEP_MIN, value: peak > 0 ? (100 * v) / peak : 0, own: own[i], opp: opp[i] }));
+  const points = smooth.map((v, i) => ({ min: start + i * MOMENTUM_STEP_MIN, value: peak > 0 ? (100 * v) / peak : 0, own: own[i], opp: opp[i] }));
   const firstHalf = hits.filter((h) => h.half === 1);
   const halfTime = firstHalf.length && firstHalf.length < hits.length ? Math.max(...firstHalf.map((h) => h.min)) : null;
   return { points, goals, halfTime, basis, skipped };

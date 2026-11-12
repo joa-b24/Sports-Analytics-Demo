@@ -8,6 +8,7 @@ import { Locked } from "@/components/Locked";
 import { Card } from "@/components/Shell";
 import { MIN_VISIBLE, type ShapeMeasure } from "@/lib/blockShape";
 import { useTracking } from "@/lib/useTracking";
+import { WindowNote } from "@/components/match/WindowNote";
 import { readLocal } from "@/lib/local";
 import type { Segment } from "@/lib/segments";
 import type { Match } from "@/lib/types";
@@ -80,6 +81,7 @@ export function TeamShapeCard({ match, videoIds, segmentsByVideo = {} }: { match
 
   const header = (
     <div className="mb-4 flex flex-wrap items-center gap-3">
+      <WindowNote view={trk.view} />
       <div className="seg">
         {([5, 10] as const).map((m) => (
           <button key={m} type="button" aria-pressed={binMin === m} onClick={() => setBinMin(m)} className="seg-opt">

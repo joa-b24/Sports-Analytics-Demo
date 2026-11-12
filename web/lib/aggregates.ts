@@ -60,7 +60,7 @@ export interface TrackingAggregates {
 
 // What decides whether the aggregates are still good: the tracking files (name and size), the play stretches, the halves and
 // the direction of play, and the events the figures lean on: substitutions and red cards (minutes played) and losses and
-// recoveries (the possession).
+// recoveries (the possession), and shots, crosses and set pieces (a touch after them is not a pass cut).
 export function aggregatesFingerprint(input: {
   files: { name: string; size: number }[];
   segmentsByVideo: Record<string, Segment[]>;
@@ -71,7 +71,7 @@ export function aggregatesFingerprint(input: {
 }): string {
   const play = Object.fromEntries(Object.entries(input.segmentsByVideo).map(([v, segs]) => [v, segs.filter((g) => g.tipo === "juego").map((g) => [g.start, g.end])]));
   // Substitutions and red cards (who is on the pitch) and losses and recoveries (the possession is held to them).
-  const subs = input.events.filter((e) => e.type === "substitution" || e.type === "loss" || e.type === "recovery" || (e.type === "foul" && e.detail === "red")).map((e) => [e.type, e.team, e.player_id, e.player_in, e.t_video, e.video_id ?? "v1"]);
+  const subs = input.events.filter((e) => e.type === "substitution" || e.type === "loss" || e.type === "recovery" || ["shot", "goal", "cross", "corner", "free_kick", "goal_kick", "penalty"].includes(e.type) || (e.type === "foul" && e.detail === "red")).map((e) => [e.type, e.team, e.player_id, e.player_in, e.t_video, e.video_id ?? "v1"]);
   return hashText(stableJson({ v: AGG_VERSION, files: [...input.files].sort((a, b) => a.name.localeCompare(b.name)).map((f) => [f.name, f.size]), play, periods: input.videoPeriods ?? [], halves: input.videoHalves ?? {}, attack: input.attack, subs }));
 }
 

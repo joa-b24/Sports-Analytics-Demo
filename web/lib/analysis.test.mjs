@@ -264,3 +264,12 @@ test("un tiro libre directo sin tiro propio cuenta como tiro; con tiro cercano n
   assert.equal(par.length, 1);
   assert.equal(finishEvents([ev(100, "free_kick", "own", { detail: "short" })]).length, 0);
 });
+
+test("momentumCurve con ventana: cubre solo esos minutos, no una línea plana desde el 0", () => {
+  const events = [ev(32 * 60, "shot", "own"), ev(38 * 60, "goal", "opp"), ev(41 * 60, "box_entry", "own")];
+  const m = momentumCurve(events, [], { from: 30, to: 45 });
+  assert.equal(m.points[0].min, 30);
+  assert.equal(m.points[m.points.length - 1].min, 45);
+  // Sin ventana, arranca en el primer evento (minuto 32 de video desde t0 = el mismo evento: 0).
+  assert.ok(momentumCurve(events, []).points.length > 0);
+});

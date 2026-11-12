@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { CaretDown, CaretUp } from "@phosphor-icons/react";
 import { Locked } from "@/components/Locked";
 import { StatList } from "@/components/match/ReportExtra";
+import { WindowNote } from "@/components/match/WindowNote";
 import { usePlayersData } from "@/components/match/PlayersCompare";
 import { Panel } from "@/components/match/Panel";
 import { RatingBadge } from "@/components/match/RatingBadge";
@@ -142,6 +143,9 @@ export function PassesCards({
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
+      <div className="lg:col-span-2 empty:hidden">
+        <WindowNote view={view} />
+      </div>
       <Panel
         title="Red de pases"
         className="lg:col-span-2"

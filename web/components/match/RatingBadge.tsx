@@ -5,7 +5,7 @@ import type { Rating } from "@/lib/rating";
 
 // The rating of a player (0-10) is IN REVIEW: weights and discounts are a proposal (docs/propuesta_calificacion_jugadora.md).
 // Wherever it shows it carries that mark, and without a score it says why (never a made-up number).
-export const RATING_NOTE = "En revisión: los pesos y descuentos son una propuesta que el cuerpo técnico aún no aprueba.";
+export const RATING_NOTE = "En revisión: los pesos y descuentos son una propuesta que el cuerpo técnico aún no aprueba. Siempre es del partido completo: no sigue el filtro de tiempo.";
 
 const tone = (v: number) => (v >= 7 ? "var(--color-ok)" : v >= 5 ? "var(--color-ink)" : "var(--color-danger)");
 

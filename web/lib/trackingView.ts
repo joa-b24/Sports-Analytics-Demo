@@ -20,6 +20,12 @@ export interface TrackingView {
   source: "parts" | "agg" | "none";
   // The parts, when there are (empty with the aggregates: whatever needs the positions frame by frame is not available).
   parts: Oriented[];
+  // The play stretches the figures follow: the time window of the filter when there is one, else those of the match.
+  play: Record<string, Segment[]>;
+  // A time window is on and the figures follow it. With the saved aggregates they cannot (they are for the whole match):
+  // `windowIgnored` says so and the figures are those of the whole match.
+  windowed: boolean;
+  windowIgnored: boolean;
   // The ids of the match in the tracking files (the rivals named in the quick review are filed under them).
   matchIds: string[];
   has: { tracking: boolean; ball: boolean; names: boolean };
@@ -41,21 +47,27 @@ export interface TrackingView {
   report(): ReportTracking | null;
   // What playerRows needs from the tracking; null with no tracking.
   facts(input: Omit<PlayersInput, "parts">): TrackingFacts | null;
+  // The same for the whole match, whatever the window (the rating does not follow the filter).
+  fullFacts(input: Omit<PlayersInput, "parts">): TrackingFacts | null;
 }
 
 export const NO_TRACKING: TrackingView = makeTrackingView({ parts: [], agg: null, segmentsByVideo: {}, videoIds: [] });
 
-export function makeTrackingView({ parts, agg, segmentsByVideo, videoIds }: { parts: Oriented[]; agg: TrackingAggregates | null; segmentsByVideo: Record<string, Segment[]>; videoIds: string[] }): TrackingView {
+export function makeTrackingView({ parts, agg, segmentsByVideo: full, videoIds, window = null }: { parts: Oriented[]; agg: TrackingAggregates | null; segmentsByVideo: Record<string, Segment[]>; videoIds: string[]; window?: Record<string, Segment[]> | null }): TrackingView {
+  const segmentsByVideo = window ?? full;
   if (parts.length > 0) {
     return {
+      play: segmentsByVideo,
+      windowed: window !== null,
+      windowIgnored: false,
       source: "parts",
       parts,
       matchIds: [...new Set(parts.map((o) => o.file.match_id))],
       venueLength: parts[0]?.file.venue?.length_m ?? null,
       has: { tracking: true, ball: parts.some((o) => o.file.ball.length > 0), names: parts.some((o) => o.file.people.some((p) => p.player_id)) },
-      physical: (t) => physical(parts, t),
-      block: (t) => teamBlock(parts, t),
-      heat: (t, p = null) => heatmapSmooth(parts, t, p),
+      physical: (t) => physical(parts, t, window),
+      block: (t) => teamBlock(parts, t, window),
+      heat: (t, p = null) => heatmapSmooth(parts, t, p, window),
       passes: (t) => trackedPasses(parts, t, segmentsByVideo),
       net: (t) => trackedNet(parts, t, segmentsByVideo),
       arrows: (t, k = []) => passArrows(parts, t, segmentsByVideo, k),
@@ -64,11 +76,15 @@ export function makeTrackingView({ parts, agg, segmentsByVideo, videoIds }: { pa
       stretches: () => passStretches(parts, segmentsByVideo),
       shape: (m) => blockShape(parts, segmentsByVideo, videoIds, m),
       report: () => null,
-      facts: (input) => trackingFacts({ ...input, parts }),
+      facts: (input) => trackingFacts({ ...input, parts, playByVideo: segmentsByVideo, physicalPlay: window }),
+      fullFacts: (input) => trackingFacts({ ...input, parts, playByVideo: full, physicalPlay: null }),
     };
   }
   if (agg) {
     return {
+      play: full,
+      windowed: false,
+      windowIgnored: window !== null,
       source: "agg",
       parts: [],
       matchIds: [...new Set(agg.parts.map((x) => x.match_id))],
@@ -86,9 +102,13 @@ export function makeTrackingView({ parts, agg, segmentsByVideo, videoIds }: { pa
       shape: (m) => agg.shape?.[String(m) as "5" | "10"] ?? null,
       report: () => agg.report ?? null,
       facts: () => agg.facts,
+      fullFacts: () => agg.facts,
     };
   }
   return {
+    play: full,
+    windowed: false,
+    windowIgnored: false,
     source: "none",
     parts: [],
     matchIds: [],
@@ -106,5 +126,6 @@ export function makeTrackingView({ parts, agg, segmentsByVideo, videoIds }: { pa
     shape: () => null,
     report: () => null,
     facts: () => null,
+    fullFacts: () => null,
   };
 }

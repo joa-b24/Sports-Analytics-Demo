@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { aggregatesFingerprint, aggregatesPath, buildAggregates, parseAggregates, type TrackingAggregates } from "./aggregates.ts";
 import { loadFixedParts, trackingFileList, type FixedParts } from "./fixed.ts";
 import type { FixedFile } from "./positions.ts";
@@ -11,6 +11,7 @@ import type { Segment } from "./segments.ts";
 import { getPref, useStore } from "./store.ts";
 import { segmentsFromMarks } from "./segments.ts";
 import { makeTrackingView, NO_TRACKING, type TrackingView } from "./trackingView.ts";
+import { TrackingWindow } from "./trackingWindow.ts";
 import type { Match, MatchEvent, State } from "./types.ts";
 import { fullWindows, matchVideos, videoOf, type HalfWindows } from "./videos.ts";
 
@@ -37,6 +38,9 @@ interface Resolution {
   parts: FixedParts | null;
   key: string;
 }
+
+export const ATTEMPT_TYPES: string[] = ["shot", "goal", "cross", "corner", "free_kick", "goal_kick", "penalty"];
+const attemptTimes = (events: MatchEvent[], video: string) => events.filter((e) => ATTEMPT_TYPES.includes(e.type) && (e.video_id ?? "v1") === video).map((e) => e.t_video).sort((x, y) => x - y);
 
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
@@ -70,6 +74,8 @@ async function resolve(ctx: {
     if (saved && (files.length === 0 || MOBILE || saved.fingerprint === fingerprint)) return { agg: saved, parts: null, key };
     if (files.length === 0) return { agg: null, parts: null, key };
     const parts = await loadFixedParts(ctx.folder, ctx.videoIds);
+    // The tagged shots, crosses and set pieces of each video: the touch after them is not a pass cut (lib/positions.ts).
+    for (const o of [...parts.parts, ...parts.unoriented.map((file) => ({ file }))]) o.file.attempts_t = attemptTimes(ctx.events, o.file.video_id);
     if (!MOBILE && parts.parts.length > 0 && !building.has(key)) {
       building.add(key);
       const job = (async () => {
@@ -95,6 +101,8 @@ async function resolve(ctx: {
 
 export function useTracking(match: Match, videoIds: string[], segmentsByVideo: Record<string, Segment[]>): TrackingState {
   const state = useStore();
+  // The time filter of the analysis, when this screen is inside one (see lib/trackingWindow.ts).
+  const win = useContext(TrackingWindow).segments;
   const folder = match.folder;
   const videoKey = videoIds.join(",");
   const events = useMemo(() => state.events.filter((e) => e.match_id === match.match_id), [state.events, match.match_id]);
@@ -129,7 +137,7 @@ export function useTracking(match: Match, videoIds: string[], segmentsByVideo: R
     // eslint-disable-next-line react-hooks/exhaustive-deps -- events and segments enter through their keys
   }, [folder, videoKey, segKey, subsKey, videoPeriods, videoHalves, match.match_id, bump]);
 
-  const view = useMemo(() => (res ? makeTrackingView({ parts: res.parts?.parts ?? [], agg: res.agg, segmentsByVideo, videoIds: videoKey.split(",") }) : NO_TRACKING), [res, segmentsByVideo, videoKey]);
+  const view = useMemo(() => (res ? makeTrackingView({ parts: res.parts?.parts ?? [], agg: res.agg, segmentsByVideo, videoIds: videoKey.split(","), window: win }) : NO_TRACKING), [res, segmentsByVideo, videoKey, win]);
   const isBuilding = !!res && !res.agg && !!res.parts && building.has(res.key);
   return { view, loading: !!folder && res === null, building: isBuilding, light: view.source === "agg", unoriented: res?.parts?.unoriented ?? [] };
 }

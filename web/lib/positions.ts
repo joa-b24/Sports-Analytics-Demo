@@ -35,6 +35,9 @@ export interface FixedFile {
   ball_states?: BallStateRange[];
   // Cuts of the broadcast / frozen pictures marked by hand (cameraCuts.ts). Absent in older files: none.
   camera_cuts?: { from: number; to: number; kind: "cut" | "freeze" }[];
+  // Seconds of this video where a shot, cross, corner, free kick, goal kick or penalty was tagged: the ball leaves a player on
+  // purpose and the touch that follows is not a pass cut. Set when the part is read, from the events (lib/useTracking.ts).
+  attempts_t?: number[];
   // `view`: what the camera saw in that frame, as a polygon of the normalised pitch (parts.ts viewPolygon). Absent in
   // files saved before 2026-10-20.
   frames: { frame: number; positions: FixedPosition[]; view?: [number, number][] }[];
@@ -138,14 +141,23 @@ export interface Heat {
   total: number; // seconds of player presence counted
 }
 
+// The filter of a time window: true when the instant (video seconds) is inside a closed play stretch of its video. With no
+// stretches given (or none closed) everything is inside.
+export function playFilter(play: Record<string, Segment[]> | null | undefined): (video: string, t: number) => boolean {
+  if (!play || !Object.values(play).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null))) return () => true;
+  return (video, t) => (play[video] ?? []).some((g) => g.tipo === "juego" && g.end !== null && t >= g.start && t < g.end);
+}
+
 // Time spent in each cell of the pitch by a team (or by one player of it, by name), with the team attacking right.
-export function heatmap(parts: Oriented[], team: "own" | "opp", playerId: string | null = null, nx = 21, ny = 14): Heat {
+export function heatmap(parts: Oriented[], team: "own" | "opp", playerId: string | null = null, nx = 21, ny = 14, play: Record<string, Segment[]> | null = null): Heat {
   const seconds = new Array(nx * ny).fill(0);
   let total = 0;
+  const only = playFilter(play);
   for (const o of parts) {
     const dt = o.file.stride / o.file.fps;
     const keep = new Set(o.file.people.filter((p) => p.team === team && (playerId === null || p.player_id === playerId)).map((p) => p.id));
-    for (const fr of o.file.frames)
+    for (const fr of o.file.frames) {
+      if (!only(o.file.video_id, fr.frame / o.file.fps)) continue;
       for (const q of fr.positions) {
         if (!keep.has(q.id) || !isMeasuredSource(q.source)) continue;
         const [x, y] = orient(o, q.x, q.y);
@@ -154,6 +166,7 @@ export function heatmap(parts: Oriented[], team: "own" | "opp", playerId: string
         seconds[j * nx + i] += dt;
         total += dt;
       }
+    }
   }
   return { nx, ny, seconds, total };
 }
@@ -191,8 +204,8 @@ export function smoothHeat(h: Heat, sigma = 1.3): Heat {
 }
 
 // The heat map as the screens draw it: a 42 x 28 grid (2.5 m cells) smoothed.
-export function heatmapSmooth(parts: Oriented[], team: "own" | "opp", playerId: string | null = null): Heat {
-  return smoothHeat(heatmap(parts, team, playerId, 42, 28));
+export function heatmapSmooth(parts: Oriented[], team: "own" | "opp", playerId: string | null = null, play: Record<string, Segment[]> | null = null): Heat {
+  return smoothHeat(heatmap(parts, team, playerId, 42, 28, play));
 }
 
 // Named players of a team across the parts (names come from the correction table), by time seen.
@@ -515,6 +528,13 @@ export function namedTeams(f: FixedFile): { own: boolean; opp: boolean } {
 // Passes and changes of team from the sequence of holders. Only when the ball is followed: with no ball, nothing.
 // A pass needs at least MIN_PASS_GAP_S between its two touches. In a team with names both ends must have one (and be
 // two different players); in a team without names (the rival, usually) it is counted at team level and flagged `approx`.
+// A pass between two boxes of a team without names (the rival) must move the ball at least this far (m): closer, it is the
+// same player whose track changed fragment, or two boxes on one player, not a pass.
+export const MIN_APPROX_PASS_M = 3;
+// A touch this close in time to a tagged shot, cross or set-piece kick (s, before and after) is not a pass attempt.
+export const ATTEMPT_BEFORE_S = 2;
+export const ATTEMPT_AFTER_S = 1;
+
 export function passesAndTurnovers(f: FixedFile, jumpMs?: number): { passes: Pass[]; turnovers: Turnover[]; touches: Touch[] } {
   const ts = touches(f, jumpMs);
   const passes: Pass[] = [];
@@ -522,16 +542,29 @@ export function passesAndTurnovers(f: FixedFile, jumpMs?: number): { passes: Pas
   const maxGap = PASS_MAX_S * f.fps;
   const person = new Map(f.people.map((p) => [p.id, p]));
   const named = namedTeams(f);
+  const [mx, my] = metersPerUnit(f);
+  const ballAt = new Map(f.ball.map((x) => [x.frame, x]));
+  const attempts = f.attempts_t ?? [];
+  const isAttempt = (frame: number) => {
+    const t = frame / f.fps;
+    return attempts.some((a) => a >= t - ATTEMPT_AFTER_S && a <= t + ATTEMPT_BEFORE_S);
+  };
   for (let i = 1; i < ts.length; i++) {
     const a = ts[i - 1];
     const b = ts[i];
     if (a.id === b.id || b.frame - a.frame > maxGap) continue;
+    // A shot, a cross or a set piece is not a pass: it neither completes nor is cut.
+    if (isAttempt(a.frame)) continue;
     if (a.team === b.team) {
       if (b.frame - a.frame < MIN_PASS_GAP_S * f.fps) continue;
       if (named[a.team]) {
         const na = person.get(a.id)?.player_id;
         const nb = person.get(b.id)?.player_id;
         if (!na || !nb || na === nb) continue;
+      } else {
+        const pa = ballAt.get(a.frame);
+        const pb = ballAt.get(b.frame);
+        if (pa && pb && Math.hypot((pa.x - pb.x) * mx, (pa.y - pb.y) * my) < MIN_APPROX_PASS_M) continue;
       }
       passes.push({ frame: b.frame, from_frame: a.frame, from: a.id, to: b.id, team: a.team, approx: !named[a.team] });
     } else turnovers.push({ frame: b.frame, from_frame: a.frame, from: a.id, lost: a.team });

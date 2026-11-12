@@ -57,6 +57,9 @@ export interface PlayersInput {
   videoHalves?: Record<string, { h1: [number, number]; h2: [number, number] }>;
   // Play stretches by video; with none, all the followed ball counts (as in ballReport).
   playByVideo?: Record<string, Segment[]>;
+  // A time window for the physical load, the only part that does not already follow `playByVideo`: given, only what happens
+  // inside its stretches counts. Without it, all the time seen.
+  physicalPlay?: Record<string, Segment[]> | null;
 }
 
 const clean = (s: string | null | undefined) => (s ?? "").trim();
@@ -70,8 +73,8 @@ export interface TrackingFacts {
   ball: Record<string, { touches: number; passes: number; passes_cut: number; progressive: number }> | null;
 }
 
-export function trackingFacts({ events, parts, playByVideo = {}, videoPeriods, videoHalves }: PlayersInput): TrackingFacts {
-  const out: TrackingFacts = { physical: { own: physical(parts, "own"), opp: physical(parts, "opp") }, minutes: [...playedMinutes({ events, parts, playByVideo, videoPeriods, videoHalves })], ball: null };
+export function trackingFacts({ events, parts, playByVideo = {}, videoPeriods, videoHalves, physicalPlay = null }: PlayersInput): TrackingFacts {
+  const out: TrackingFacts = { physical: { own: physical(parts, "own", physicalPlay), opp: physical(parts, "opp", physicalPlay) }, minutes: [...playedMinutes({ events, parts, playByVideo, videoPeriods, videoHalves })], ball: null };
   const usePlay = Object.values(playByVideo).some((segs) => segs.some((g) => g.tipo === "juego" && g.end !== null));
   if (!parts.some((o) => o.file.ball.length > 0)) return out;
   const ball: NonNullable<TrackingFacts["ball"]> = {};
@@ -107,7 +110,7 @@ export function trackingFacts({ events, parts, playByVideo = {}, videoPeriods, v
   return out;
 }
 
-export function playerRows({ events, parts, playByVideo = {}, videoPeriods, videoHalves, facts }: PlayersInput & { facts?: TrackingFacts | null }): PlayerRow[] {
+export function playerRows({ events, parts, playByVideo = {}, videoPeriods, videoHalves, facts, physicalPlay = null }: PlayersInput & { facts?: TrackingFacts | null }): PlayerRow[] {
   const rows = new Map<string, PlayerRow>();
   const row = (team: Side, id: string): PlayerRow => {
     const key = `${team}|${id}`;
@@ -154,7 +157,7 @@ export function playerRows({ events, parts, playByVideo = {}, videoPeriods, vide
 
   // What the tracking says (physical load, minutes played, touches and passes): computed from the parts, or taken from the
   // facts saved in the aggregates (lib/aggregates.ts) when the parts are not loaded (the lightweight copy of the match).
-  const tf = facts ?? (parts.length > 0 ? trackingFacts({ events, parts, playByVideo, videoPeriods, videoHalves }) : null);
+  const tf = facts ?? (parts.length > 0 ? trackingFacts({ events, parts, playByVideo, videoPeriods, videoHalves, physicalPlay }) : null);
   if (tf) {
     // Physical: everyone with a name and positions.
     for (const team of ["own", "opp"] as const)

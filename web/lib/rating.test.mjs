@@ -78,8 +78,8 @@ test("suman los goles, tiros a puerta, córners, faltas a favor, pase clave a ti
   ];
   const adj = ratingAdjustments(lelo, events);
   const total = (label) => adj.filter((a) => a.label === label).reduce((s, a) => s + a.delta, 0);
-  assert.equal(total("Gol"), 0.7);
-  assert.equal(total("Tiro a puerta"), 0.25); // solo el de fuera del gol
+  assert.equal(total("Gol"), 0.5);
+  assert.equal(total("Tiro a puerta"), 0.2); // solo el de fuera del gol
   assert.equal(total("Córner que acaba en remate"), 0.4);
   assert.equal(total("Falta a favor"), 0.1);
   assert.equal(total("Pase clave que acaba en tiro"), 0.3);
@@ -114,5 +114,5 @@ test("la secuencia de Kere: pérdida, falta con amarilla, tiro libre del rival 4
 test("un gol sin nombre con el tiro de Zoe es de Zoe: suma el gol, no el tiro a puerta", () => {
   const events = [ev("s", 1443.4, "shot", "own", { player_id: "Zoe", outcome: "on_target" }), ev("g", 1446.5, "goal", "own")];
   const adj = ratingAdjustments(row("Zoe"), events);
-  assert.deepEqual(adj.map((a) => [a.label, a.delta]), [["Gol", 0.7]]);
+  assert.deepEqual(adj.map((a) => [a.label, a.delta]), [["Gol", 0.5]]);
 });

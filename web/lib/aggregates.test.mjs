@@ -42,7 +42,7 @@ test("la huella cambia con los archivos de tracking, los tramos de juego y los c
   assert.equal(aggregatesFingerprint({ ...base }), fp);
   assert.notEqual(aggregatesFingerprint({ ...base, files: [{ name: "a.json", size: 2 }] }), fp);
   assert.notEqual(aggregatesFingerprint({ ...base, attack: { v1: "left" } }), fp);
-  const goal = { event_id: "g", type: "goal", team: "own", t_video: 5, video_id: "v1" };
+  const goal = { event_id: "g", type: "duel", team: "own", t_video: 5, video_id: "v1" };
   assert.equal(aggregatesFingerprint({ ...base, events: [goal] }), fp);
   const sub = { event_id: "s", type: "substitution", team: "own", player_id: "Ana", player_in: "Bea", t_video: 500, video_id: "v1" };
   assert.notEqual(aggregatesFingerprint({ ...base, events: [sub] }), fp);

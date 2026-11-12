@@ -203,14 +203,15 @@ export function MomentumChart({ curve, aLabel, bLabel }: { curve: MomentumCurve;
   const bottom = 24;
   const mid = top + (H - top - bottom) / 2;
   const half = (H - top - bottom) / 2;
+  const first = pts[0].min;
   const last = pts[pts.length - 1].min;
-  const x = (m: number) => padL + (m / last) * (W - padL - padR);
+  const x = (m: number) => padL + ((m - first) / Math.max(1e-9, last - first)) * (W - padL - padR);
   const y = (v: number) => mid - (v / 100) * (half - 4);
   const line = pts.map((p, i) => `${i ? "L" : "M"}${x(p.min).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
-  const area = `${line} L${x(last).toFixed(1)},${mid} L${x(0)},${mid} Z`;
+  const area = `${line} L${x(last).toFixed(1)},${mid} L${x(first)},${mid} Z`;
   const step = last > 60 ? 15 : 10;
   const ticks: number[] = [];
-  for (let m = 0; m <= last; m += step) ticks.push(m);
+  for (let m = Math.ceil(first / step) * step; m <= last; m += step) ticks.push(m);
   const near = hover === null ? null : pts.reduce((best, p) => (Math.abs(p.min - hover) < Math.abs(best.min - hover) ? p : best), pts[0]);
   return (
     <div>
@@ -228,7 +229,7 @@ export function MomentumChart({ curve, aLabel, bLabel }: { curve: MomentumCurve;
         onPointerMove={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           const px = ((e.clientX - r.left) / r.width) * W;
-          setHover(Math.min(last, Math.max(0, ((px - padL) / (W - padL - padR)) * last)));
+          setHover(Math.min(last, Math.max(first, first + ((px - padL) / (W - padL - padR)) * (last - first))));
         }}
         onPointerLeave={() => setHover(null)}
       >

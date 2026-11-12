@@ -7,6 +7,7 @@ import { PlayerMap } from "@/components/match/PlayerMap";
 import { PlayerHeat, fmt, usePlayersData } from "@/components/match/PlayersCompare";
 import { useMomentPlayer } from "@/components/match/MomentPlayer";
 import { Panel } from "@/components/match/Panel";
+import { WindowNote } from "@/components/match/WindowNote";
 import { RatingBadge } from "@/components/match/RatingBadge";
 import { COLORS } from "@/components/Pitch";
 import { Card } from "@/components/Shell";
@@ -69,6 +70,7 @@ export function PlayerProfile({
 
   return (
     <div className="space-y-5">
+      <WindowNote view={view} />
       <div className="flex flex-wrap items-center gap-4 rounded-2xl bg-surface/60 px-5 py-4">
         <span className="h-10 w-1.5 rounded-full" style={{ background: color }} />
         <div className="min-w-0">

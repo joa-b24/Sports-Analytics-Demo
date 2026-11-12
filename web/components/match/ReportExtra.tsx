@@ -210,7 +210,7 @@ export function PhysicalSection({ view, side, team, ratings }: { view: TrackingV
             <th className="py-1 text-right font-normal" title="Tiempo en cuadro (medido o rellenado)">Tiempo visto</th>
             <th className="py-1 text-right font-normal">Distancia</th>
             <th className="py-1 text-right font-normal">m/min</th>
-            <th className="py-1 text-right font-normal">Vel. máx. km/h</th>
+            <th className="py-1 text-right font-normal" title="El momento más rápido de un sprint válido (22 km/h o más durante al menos 1 s, con aceleración posible). Sin sprint, no hay velocidad máxima.">Vel. máx. km/h</th>
             <th className="py-1 text-right font-normal" title="Carrera de alta velocidad: distancia a más de 18 km/h">HSR</th>
             <th className="py-1 text-right font-normal">Sprints</th>
           </tr>
@@ -241,7 +241,7 @@ export function PhysicalSection({ view, side, team, ratings }: { view: TrackingV
       </table>
       {ratings && <p className="mt-1 text-xs text-faint">Calificación (0-10, 6 = jugadora normal de su equipo en el partido): {RATING_NOTE}</p>}
       <p className="mt-1 text-xs text-faint">
-        Solo el tiempo en cuadro: lo que la cámara no ve no se mide. Velocidad sobre ventanas de 1 s; HSR: distancia a más de 18 km/h; sprint: más de 22 km/h durante 1 s o más.
+        Solo el tiempo en cuadro: lo que la cámara no ve no se mide. Velocidad sobre ventanas de 1 s; HSR: distancia a más de 18 km/h; sprint: 22 km/h o más durante 1 s o más y con una aceleración posible (hasta 8 m/s²); la velocidad máxima es la del mejor sprint válido.
       </p>
     </div>
   );

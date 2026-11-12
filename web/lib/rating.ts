@@ -146,8 +146,8 @@ export function ratingAdjustments(row: PlayerRow, events: MatchEvent[], opts: Ra
   for (const f of finishes(events, row.team)) {
     const scorer = clean(f.goal?.player_id) || clean(f.shot?.player_id);
     const shooter = clean(f.shot?.player_id) || clean(f.goal?.player_id);
-    if (f.goal && scorer === row.id) hits.push({ delta: 0.7, label: "Gol", e: f.goal, target: null });
-    else if (!f.goal && f.shot && shooter === row.id && f.shot.outcome === "on_target") hits.push({ delta: 0.25, label: "Tiro a puerta", e: f.shot, target: null });
+    if (f.goal && scorer === row.id) hits.push({ delta: 0.5, label: "Gol", e: f.goal, target: null });
+    else if (!f.goal && f.shot && shooter === row.id && f.shot.outcome === "on_target") hits.push({ delta: 0.2, label: "Tiro a puerta", e: f.shot, target: null });
   }
 
   // What the rival got from a moment: a goal or a shot within `within` s, or, after a foul, from the free kick (or penalty) the

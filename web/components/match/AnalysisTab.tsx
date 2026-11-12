@@ -39,7 +39,9 @@ import {
   type Tally,
 } from "@/lib/analysis";
 import { momentOfEvent } from "@/lib/moments";
-import { type Segment } from "@/lib/segments";
+import { clipPlayWindow, type Segment } from "@/lib/segments";
+import { TrackingWindow } from "@/lib/trackingWindow";
+import { matchVideos } from "@/lib/videos";
 import { countByType, shotsOf, zoneCounts } from "@/lib/stats";
 import { EVENT_DETAILS, EVENT_LABELS, EVENT_TYPES, type EventType, type Match, type MatchEvent } from "@/lib/types";
 
@@ -105,6 +107,13 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   };
   const lastMin = Math.max(0, ...events.map((e) => minuteOf(e) ?? 0));
   const byPeriod = period === 0 ? events : events.filter((e) => e.period === period);
+  // The tracking follows the filter too: the play stretches cut to the window (null without a filter).
+  const windowSegs = useMemo(() => {
+    if (!hasPlay || (period === 0 && !range)) return null;
+    const inPeriod = period === 0 ? null : matchVideos(match).filter((v, i) => (v.period ?? (i === 0 ? 1 : 2)) === period).map((v) => v.video_id);
+    return clipPlayWindow(videoIds, segmentsByVideo, range ? { from: range[0], to: range[1] } : null, inPeriod);
+  }, [hasPlay, period, range, match, videoIds, segmentsByVideo]);
+  const trackingWindow = useMemo(() => ({ segments: windowSegs, allEvents: events }), [windowSegs, events]);
   const evs = range ? byPeriod.filter((e) => { const m = minuteOf(e); return m !== null && m >= range[0] && m < range[1]; }) : byPeriod;
   const a = countByType(evs, "own");
   const b = countByType(evs, "opp");
@@ -139,7 +148,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const cfg = analysisParamsOf(match);
   const tr = { own: transitions(evs, "own", cfg), opp: transitions(evs, "opp", cfg) };
   const bins = timeBins(evs, segments, binMin);
-  const mom = momentumCurve(evs, segments);
+  const mom = momentumCurve(evs, segments, range ? { from: range[0], to: range[1] } : null);
   const counterZones = zoneCounts(tr[counterTeam].recoveriesToShot);
 
   // Rows for the split charts: one per team, with the labels of the contract values.
@@ -175,18 +184,6 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   const box = { own: boxEntries(evs, "own"), opp: boxEntries(evs, "opp") };
   const recH = { own: recoveryHeight(evs, "own"), opp: recoveryHeight(evs, "opp") };
   const highPct = (s: Side) => pct(recH[s].rival, recH[s].rival + recH[s].middle + recH[s].own);
-  // Possession in the usual sense (time with the ball) beside the territorial one, with a short reading of both.
-  const heldAll = match.possession ? match.possession.own + match.possession.opp : 0;
-  const possOwn = heldAll > 0 && match.possession ? Math.round((100 * match.possession.own) / heldAll) : null;
-  const territoryRead = (() => {
-    const t = tilt("own");
-    if (possOwn === null || t === null) return null;
-    const d = possOwn - t;
-    if (Math.abs(d) <= 5) return `Posesión y dominio parejos: ${A} usó el balón donde lo tuvo.`;
-    return d > 0
-      ? `Más posesión que dominio: ${A} tuvo el balón, pero lejos del área rival.`
-      : `Más dominio que posesión: ${A} ocupó el campo rival sin tener tanto el balón.`;
-  })();
   const recZones = zoneCounts(evs.filter((e) => e.type === "recovery" && e.team === counterTeam));
 
   const tabs = (
@@ -213,6 +210,7 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
   );
 
   return (
+    <TrackingWindow.Provider value={trackingWindow}>
     <PanelMatch.Provider value={match.match_id}>
     {(() => {
       const filter = <AnalysisFilter period={period} onPeriod={setPeriod} range={range} onRange={setRange} lastMin={lastMin} />;
@@ -262,9 +260,6 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
         <div className="grid gap-5 md:grid-cols-[minmax(0,3fr)_minmax(15rem,2fr)]">
           <Panel title="Momentum" note="quién crea más peligro, y cuánto dura">
             <MomentumChart curve={mom} aLabel={A} bLabel={B} />
-            <p className="mt-2 mb-0 text-[11px] text-pretty text-faint">
-              <b className="font-medium text-muted">Nota metodológica.</b> Cada evento etiquetado suma peligro a su equipo (gol 5, tiro 3, entrada al área 2; entrada al último tercio, córner y centro 1) y ese peligro se apaga con una vida media de 1.5 min. La curva es el peligro propio menos el rival, suavizado, y su mayor oscilación del partido vale ±100: es relativa a este partido, no se compara entre partidos. Solo cuenta lo etiquetado y solo el pasado de cada instante. Los pesos son una convención del proyecto, no una medición.
-            </p>
           </Panel>
           <Panel title="Dominio territorial" note="quién ocupó cada zona" delay={80}>
             <TerritoryMap events={evs} aLabel={A} bLabel={B} cols={cfg.zones * 2} rows={cfg.lanes} />
@@ -280,13 +275,6 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
                 {tilt("opp") !== null && <span className="text-sm"> %</span>}
               </span>
             </div>
-            <p className="mt-2 mb-0 text-xs text-pretty text-faint">
-              {possOwn !== null ? `Posesión: ${possOwn} % – ${100 - possOwn} %. ` : "Sin posesión calculada (se calcula con el balón seguido en el Informe). "}
-              {territoryRead}
-            </p>
-            <p className="mt-2 mb-0 text-[11px] text-pretty text-faint">
-              <b className="font-medium text-muted">Nota metodológica.</b> Field tilt = entradas al último tercio y al área de un equipo ÷ las de los dos, tal como se etiquetaron: mide quién jugó más cerca de la portería rival, no quién tuvo el balón. En el mapa, cada cuadro es de quien tiene más acciones marcadas ahí (tiros, entradas, pérdidas, recuperaciones y otras) y el número es su parte. Sin entradas etiquetadas no se calcula.
-            </p>
           </Panel>
         </div>
       </Section>
@@ -528,5 +516,6 @@ export function AnalysisTab({ match, events, segments, timeLabel, videoIds = ["v
       )}
     </div>
     </PanelMatch.Provider>
+    </TrackingWindow.Provider>
   );
 }

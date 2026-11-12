@@ -97,3 +97,32 @@ export function skipTarget(segments: Segment[], t: number): number | null {
 export function totalSeconds(segments: Segment[], tipo: SegmentKind): number {
   return segments.reduce((acc, s) => (s.tipo === tipo && s.end !== null ? acc + (s.end - s.start) : acc), 0);
 }
+
+// The play stretches of each video cut to a window of the filter of the analysis. The window is in minutes of play counted over
+// the videos in order (the same clock as the analysis: play time of video 1, then video 2...). Only closed play stretches
+// are kept; of each, the part that falls inside the window. `videos` limits it to some videos (a half).
+export function clipPlayWindow(
+  videoIds: string[],
+  segmentsByVideo: Record<string, Segment[]>,
+  window: { from: number; to: number } | null,
+  videos: string[] | null = null,
+): Record<string, Segment[]> {
+  const out: Record<string, Segment[]> = {};
+  let clock = 0; // seconds of play so far
+  const lo = window ? window.from * 60 : 0;
+  const hi = window ? window.to * 60 : Infinity;
+  for (const v of videoIds) {
+    out[v] = [];
+    const stretches = (segmentsByVideo[v] ?? []).filter((g) => g.tipo === "juego" && g.end !== null).sort((a, b) => a.start - b.start);
+    for (const g of stretches) {
+      const len = (g.end as number) - g.start;
+      if (videos === null || videos.includes(v)) {
+        const a = Math.max(clock, lo);
+        const z = Math.min(clock + len, hi);
+        if (z > a) out[v].push({ ...g, start: g.start + (a - clock), end: g.start + (z - clock) });
+      }
+      clock += len;
+    }
+  }
+  return out;
+}

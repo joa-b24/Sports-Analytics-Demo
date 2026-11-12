@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useContext, useMemo } from "react";
 import { Plus, X } from "@phosphor-icons/react";
 import { COLORS, Pitch } from "@/components/Pitch";
 import { Select } from "@/components/Select";
 import { TrackingLoading } from "@/components/TrackingLoading";
 import { Card } from "@/components/Shell";
 import { useTracking } from "@/lib/useTracking";
+import { TrackingWindow } from "@/lib/trackingWindow";
 import type { TrackingView } from "@/lib/trackingView";
 import { MAX_COMPARE, metricValue, playerRows, shownMetrics, type Metric, type PlayerRow } from "@/lib/players";
 
@@ -43,10 +44,21 @@ export function usePlayersData(match: Match, events: MatchEvent[], videoIds: str
     }
     return out;
   }, [match]);
-  const rows = useMemo(
-    () => playerRows({ events, parts, playByVideo: segmentsByVideo, videoPeriods, videoHalves, facts: view.source === "agg" ? view.facts({ events, playByVideo: segmentsByVideo, videoPeriods, videoHalves }) : null }),
-    [events, parts, view, segmentsByVideo, videoPeriods, videoHalves],
-  );
+  const rowsOf = (evs: MatchEvent[], windowed: boolean) =>
+    playerRows({
+      events: evs,
+      parts,
+      playByVideo: windowed ? view.play : segmentsByVideo,
+      videoPeriods,
+      videoHalves,
+      physicalPlay: windowed ? view.play : null,
+      facts: view.source === "agg" ? view.facts({ events: evs, playByVideo: segmentsByVideo, videoPeriods, videoHalves }) : null,
+    });
+  // The figures follow the time filter (events and, with the positions, the tracking); the rating does not: it is always the
+  // whole match (see below).
+  const rows = useMemo(() => rowsOf(events, view.windowed), [events, parts, view, segmentsByVideo, videoPeriods, videoHalves]); // eslint-disable-line react-hooks/exhaustive-deps
+  const whole = useContext(TrackingWindow).allEvents;
+  const fullRows = useMemo(() => (whole || view.windowed ? rowsOf(whole ?? events, false) : rows), [whole, events, rows, view, segmentsByVideo, videoPeriods, videoHalves]); // eslint-disable-line react-hooks/exhaustive-deps
   // Names to show: dorsal from our squad; a rival "R7" with the name given in the quick review, if any.
   const label = useMemo(() => {
     const number = new Map((state.roster ?? []).map((r) => [r.player_id, r.number]));
@@ -62,8 +74,8 @@ export function usePlayersData(match: Match, events: MatchEvent[], videoIds: str
   // The rating (in review) with the windows of the match's analysis settings.
   const ratings = useMemo(() => {
     const cfg = analysisParamsOf(match);
-    return rateAll(rows, events, { lossShotS: cfg.lossShotS, recoveryAttackS: cfg.recoveryAttackS, quickRecoveryS: cfg.quickRecoveryS });
-  }, [rows, events, match]);
+    return rateAll(fullRows, whole ?? events, { lossShotS: cfg.lossShotS, recoveryAttackS: cfg.recoveryAttackS, quickRecoveryS: cfg.quickRecoveryS });
+  }, [fullRows, whole, events, match]);
   return { rows, parts, view, label, fixed, ratings };
 }
 

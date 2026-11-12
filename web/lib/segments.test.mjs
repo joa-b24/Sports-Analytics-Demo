@@ -77,3 +77,19 @@ test("while tagging, pauses and unmarked stretches are skipped to the next play"
   assert.equal(skipTarget(segs, 540), null); // last pause: nothing playable ahead
   assert.equal(skipTarget([], 10), null); // nothing marked: nothing is skipped
 });
+
+import { clipPlayWindow } from "./segments.ts";
+test("clipPlayWindow: los minutos de juego del filtro se vuelven tramos de cada video; un tiempo deja solo sus videos", () => {
+  const seg = { v1: [{ segment_id: "s1", start: 100, end: 1900, tipo: "juego" }, { segment_id: "s2", start: 1900, end: 2000, tipo: "pausa" }], v2: [{ segment_id: "s1", start: 50, end: 950, tipo: "juego" }] };
+  // Minutos 10 a 20 de juego: del video 1, de 100+600 a 100+1200.
+  const w = clipPlayWindow(["v1", "v2"], seg, { from: 10, to: 20 });
+  assert.deepEqual(w.v1.map((g) => [g.start, g.end]), [[700, 1300]]);
+  assert.deepEqual(w.v2, []);
+  // Minutos 25 a 40: 30 min de juego en el video 1 (1800 s), luego el video 2 hasta el minuto 40 (600 s de 900).
+  const w2 = clipPlayWindow(["v1", "v2"], seg, { from: 25, to: 40 });
+  assert.deepEqual(w2.v1.map((g) => [g.start, g.end]), [[1600, 1900]]);
+  assert.deepEqual(w2.v2.map((g) => [g.start, g.end]), [[50, 650]]);
+  // Sin ventana, solo el segundo tiempo (video 2): el video 1 queda vacío.
+  assert.deepEqual(clipPlayWindow(["v1", "v2"], seg, null, ["v2"]).v1, []);
+  assert.equal(clipPlayWindow(["v1", "v2"], seg, null, ["v2"]).v2.length, 1);
+});
