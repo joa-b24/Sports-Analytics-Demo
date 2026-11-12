@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, PageHeader, btn } from "@/components/Shell";
 import {
@@ -19,6 +20,7 @@ import {
   type LabLine,
 } from "@/lib/lab";
 import { listLocal, readLocal } from "@/lib/local";
+import { useStore } from "@/lib/store";
 
 // Laboratorio: experiments of the models (uniones, balón, eventos, mediciones) read from the repository through
 // app/api/local: reports (matches/*/tracking/revision/*.md), logs with % and ETA, and metrics JSON. Read-only: it does not
@@ -165,6 +167,30 @@ function Compare({ a, b, ta, tb }: { a: Experiment; b: Experiment; ta: string; t
   );
 }
 
+// The evaluation tools live per match (ball, possession, passes, by player, events): one link for each match with a folder.
+function EvaluationTools() {
+  const { matches } = useStore();
+  const withFolder = matches.filter((m) => m.folder);
+  return (
+    <Card title="Herramientas de evaluación" note="por partido">
+      <p className="mb-3 text-sm text-muted">Balón, posesión, pases, pases y sprints por jugadora y eventos detectados, para comprobarlos contra el video. Elige el partido:</p>
+      {withFolder.length === 0 ? (
+        <p className="text-sm text-faint">Ningún partido tiene carpeta todavía.</p>
+      ) : (
+        <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+          {withFolder.map((m) => (
+            <li key={m.match_id}>
+              <Link className="btn" href={`/partido/playground?id=${encodeURIComponent(m.match_id)}`}>
+                {m.name}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 export function Lab() {
   const [state, setState] = useState<{ list: Experiment[]; local: boolean | null; missing: string[] }>({ list: [], local: null, missing: [] });
   const [line, setLine] = useState<LabLine | "todas">("todas");
@@ -215,6 +241,10 @@ export function Lab() {
       <PageHeader eyebrow="Modelos" title="Laboratorio" subtitle="Experimentos de uniones, balón, eventos y mediciones: sus informes, el avance de los procesos largos y la comparación entre corridas. Solo lectura.">
         <button className={btn} onClick={refresh}>Actualizar</button>
       </PageHeader>
+
+      <div className="mb-4">
+        <EvaluationTools />
+      </div>
 
       {state.local === false && (
         <p className="mb-4 rounded border border-line bg-surface p-3 text-sm text-muted">
