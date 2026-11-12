@@ -61,3 +61,16 @@ test("una diapositiva de animación apunta a un pizarrón o a una jugada", () =>
   assert.equal(b.play, "p1");
   assert.equal(b.board, undefined);
 });
+
+import { duplicateSlide, moveSlideTo } from "./deck.ts";
+test("duplicar pone la copia justo después y mover lleva una diapositiva a una posición", () => {
+  let d = [];
+  for (const id of ["a", "b", "c"]) d = addSlide(d, "m", blankSlide(id, id));
+  d = duplicateSlide(d, "m", "b", "b2");
+  assert.deepEqual(slidesOf(d, "m").map((s) => s.id), ["a", "b", "b2", "c"]);
+  assert.match(slidesOf(d, "m")[2].title, /copia/);
+  d = moveSlideTo(d, "m", "c", 0);
+  assert.deepEqual(slidesOf(d, "m").map((s) => s.id), ["c", "a", "b", "b2"]);
+  d = moveSlideTo(d, "m", "c", 99);
+  assert.deepEqual(slidesOf(d, "m").map((s) => s.id), ["a", "b", "b2", "c"]);
+});

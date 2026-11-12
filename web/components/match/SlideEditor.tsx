@@ -1,22 +1,25 @@
 "use client";
 
-import { ArrowUpRight, CursorClick, Square, TextT, Trash, X } from "@phosphor-icons/react";
+import { ArrowUpRight, CursorClick, Circle, Square, TextT, Trash } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { ItemShape, SLIDE_H, SLIDE_W, SlideCanvas } from "@/components/match/SlideCanvas";
+import { input } from "@/components/Shell";
 import { SLIDE_COLORS, SLIDE_COLOR_VAR, dropItem, editSlide, upsertItem, type Slide, type SlideItem } from "@/lib/deck";
 import { mutate, uid } from "@/lib/store";
 
-type Tool = "select" | "text" | "rect" | "arrow";
+type Tool = "select" | "text" | "rect" | "ellipse" | "arrow";
 const TOOLS: { id: Tool; label: string; icon: typeof TextT; hint: string }[] = [
   { id: "select", label: "Mover", icon: CursorClick, hint: "Elige una pieza y arrástrala" },
   { id: "text", label: "Texto", icon: TextT, hint: "Clic en la diapositiva" },
   { id: "rect", label: "Cuadro", icon: Square, hint: "Arrastra para dibujarlo" },
+  { id: "ellipse", label: "Círculo", icon: Circle, hint: "Arrastra para dibujarlo" },
   { id: "arrow", label: "Flecha", icon: ArrowUpRight, hint: "Arrastra de dónde sale a dónde llega" },
 ];
 
-// Edits the text, boxes and arrows of one slide over its chart: pick a tool, draw, move, change colour or size. Every
-// change is saved at once in the deck of the match.
-export function SlideEditor({ matchId, slide, onClose }: { matchId: string; slide: Slide; onClose: () => void }) {
+// The workbench of one slide, inline (as in a design tool): the tools in a column on the left, the slide big on a grey table in
+// the middle, and the inspector on the right with the title, the note and what is chosen. Every change is saved at once in the
+// deck of the match. `editable` false (a clip or an animation): the slide is shown but its pieces cannot be drawn on it.
+export function SlideEditor({ matchId, slide, editable = true, preview }: { matchId: string; slide: Slide; editable?: boolean; preview?: React.ReactNode }) {
   const [tool, setTool] = useState<Tool>("select");
   const [colorName, setColorName] = useState<string>("warn");
   const [sel, setSel] = useState<string | null>(null);
@@ -36,22 +39,28 @@ export function SlideEditor({ matchId, slide, onClose }: { matchId: string; slid
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const typing = (e.target as HTMLElement | null)?.tagName === "INPUT" || (e.target as HTMLElement | null)?.tagName === "TEXTAREA";
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      } else if (!typing && sel && (e.key === "Delete" || e.key === "Backspace")) {
+      const t = e.target as HTMLElement | null;
+      const typing = t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.isContentEditable;
+      if (typing) return;
+      if (sel && (e.key === "Delete" || e.key === "Backspace")) {
         e.preventDefault();
         save(dropItem(items, sel));
         setSel(null);
+      } else if (e.key === "Escape") {
+        setSel(null);
+        setTool("select");
+      } else if (editable && !e.ctrlKey && !e.metaKey) {
+        const k = { v: "select", t: "text", r: "rect", o: "ellipse", a: "arrow" }[e.key.toLowerCase()] as Tool | undefined;
+        if (k) setTool(k);
       }
     };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel, items, onClose]);
+  }, [sel, items, editable]);
 
   const down = (e: React.PointerEvent) => {
+    if (!editable) return;
     if (tool === "select") return setSel(null);
     const [x, y] = point(e);
     if (tool === "text") {
@@ -63,13 +72,13 @@ export function SlideEditor({ matchId, slide, onClose }: { matchId: string; slid
     }
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     start.current = [x, y];
-    setDraft(tool === "rect" ? { id: uid("it"), kind: "rect", x, y, w: 0, h: 0, color: colorName } : { id: uid("it"), kind: "arrow", x, y, x2: x, y2: y, color: colorName });
+    setDraft(tool === "arrow" ? { id: uid("it"), kind: "arrow", x, y, x2: x, y2: y, color: colorName } : { id: uid("it"), kind: tool === "ellipse" ? "ellipse" : "rect", x, y, w: 0, h: 0, color: colorName });
   };
   const move = (e: React.PointerEvent) => {
     const [x, y] = point(e);
     if (draft) {
       const [sx, sy] = start.current;
-      setDraft(draft.kind === "rect" ? { ...draft, x: Math.min(sx, x), y: Math.min(sy, y), w: Math.abs(x - sx), h: Math.abs(y - sy) } : { ...draft, x2: x, y2: y });
+      setDraft(draft.kind === "arrow" ? { ...draft, x2: x, y2: y } : { ...draft, x: Math.min(sx, x), y: Math.min(sy, y), w: Math.abs(x - sx), h: Math.abs(y - sy) });
       return;
     }
     const d = drag.current;
@@ -82,8 +91,8 @@ export function SlideEditor({ matchId, slide, onClose }: { matchId: string; slid
   };
   const up = () => {
     if (draft) {
-      // A rectangle is drawn from its corner while the pointer moves: keep the one that was dragged, not a click.
-      const tiny = draft.kind === "rect" ? (draft.w ?? 0) < 0.01 || (draft.h ?? 0) < 0.01 : Math.hypot(((draft.x2 ?? draft.x) - draft.x) * SLIDE_W, ((draft.y2 ?? draft.y) - draft.y) * SLIDE_H) < 20;
+      // A shape is drawn from its corner while the pointer moves: keep the one that was dragged, not a click.
+      const tiny = draft.kind === "arrow" ? Math.hypot(((draft.x2 ?? draft.x) - draft.x) * SLIDE_W, ((draft.y2 ?? draft.y) - draft.y) * SLIDE_H) < 20 : (draft.w ?? 0) < 0.01 || (draft.h ?? 0) < 0.01;
       if (!tiny) {
         save(upsertItem(items, draft));
         setSel(draft.id);
@@ -95,7 +104,7 @@ export function SlideEditor({ matchId, slide, onClose }: { matchId: string; slid
   };
   const grab = (it: SlideItem) => ({
     onPointerDown: (e: React.PointerEvent<SVGGElement>) => {
-      if (tool !== "select") return;
+      if (tool !== "select" || !editable) return;
       e.stopPropagation();
       (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
       setSel(it.id);
@@ -104,39 +113,63 @@ export function SlideEditor({ matchId, slide, onClose }: { matchId: string; slid
     },
   });
   const patchSel = (p: Partial<SlideItem>) => selected && save(upsertItem(items, { ...selected, ...p }));
+  const patchSlide = (p: Partial<Pick<Slide, "title" | "note">>) => mutate((st) => ({ ...st, decks: editSlide(st.decks, matchId, slide.id, p) }));
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-bg/80 p-4 backdrop-blur-sm" role="presentation" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label="Editar la diapositiva" onClick={(e) => e.stopPropagation()} className="enter flex max-h-[94vh] w-[min(78rem,96vw)] flex-col overflow-hidden rounded-lg bg-raised shadow-[0_0_0_1px_var(--color-line-strong),0_30px_60px_-20px_rgba(0,0,0,.8)]">
-        <header className="flex items-center gap-3 border-b border-line px-4 py-2.5">
-          <h2 className="m-0 min-w-0 flex-1 truncate text-base text-ink">{slide.title}</h2>
-          <button type="button" className="btn h-8 w-8 !p-0" aria-label="Cerrar" onClick={onClose}>
-            <X size={14} />
+    <div className="grid min-h-0 gap-3 lg:grid-cols-[3.25rem_minmax(0,1fr)_16.5rem]">
+      {/* Tools, in a column. */}
+      <div className="flex gap-1.5 lg:flex-col" role="toolbar" aria-label="Herramientas" aria-orientation="vertical">
+        {TOOLS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            aria-pressed={tool === t.id}
+            disabled={!editable}
+            title={`${t.label} (${{ select: "V", text: "T", rect: "R", ellipse: "O", arrow: "A" }[t.id]}): ${t.hint}`}
+            onClick={() => setTool(t.id)}
+            className={`grid h-11 w-11 place-items-center rounded-lg transition-colors disabled:opacity-35 ${tool === t.id ? "bg-own text-white shadow-[0_6px_14px_-6px_var(--color-own)]" : "text-muted hover:bg-raised hover:text-ink"}`}
+          >
+            <t.icon size={20} weight={tool === t.id ? "fill" : "regular"} />
           </button>
-        </header>
-        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[minmax(0,1fr)_15rem]">
-          <div ref={box} className="relative self-start overflow-hidden rounded-md shadow-[0_0_0_1px_var(--color-line)]" onPointerDown={down} onPointerMove={move} onPointerUp={up} style={{ touchAction: "none", cursor: tool === "select" ? "default" : "crosshair" }}>
-            <SlideCanvas slide={{ ...slide, items: [] }} />
-            <svg viewBox={`0 0 ${SLIDE_W} ${SLIDE_H}`} className="absolute inset-0 h-full w-full">
-              {items.map((it) => (
-                <ItemShape key={it.id} it={it} selected={it.id === sel} handlers={grab(it)} />
-              ))}
-              {draft && <ItemShape it={draft} />}
-            </svg>
-          </div>
-          <aside className="space-y-4 text-xs">
-            <div>
-              <div className="eyebrow mb-1.5">Herramienta</div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {TOOLS.map((t) => (
-                  <button key={t.id} type="button" aria-pressed={tool === t.id} title={t.hint} onClick={() => setTool(t.id)} className={`btn justify-start ${tool === t.id ? "btn-primary" : ""}`}>
-                    <t.icon size={15} />
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-1.5 text-faint">{TOOLS.find((t) => t.id === tool)?.hint}</p>
-            </div>
+        ))}
+      </div>
+
+      {/* The slide, big, on the table. */}
+      <div className="min-w-0 rounded-xl bg-bg/60 p-4 shadow-[inset_0_0_0_1px_var(--color-line-soft)] sm:p-6">
+        <div
+          ref={box}
+          className="relative mx-auto w-full max-w-[64rem] overflow-hidden rounded-md shadow-[0_18px_40px_-18px_rgba(0,0,0,.7),0_0_0_1px_var(--color-line)]"
+          onPointerDown={down}
+          onPointerMove={move}
+          onPointerUp={up}
+          style={{ touchAction: "none", cursor: !editable ? "default" : tool === "select" ? "default" : "crosshair" }}
+        >
+          <SlideCanvas slide={{ ...slide, items: [] }}>{preview}</SlideCanvas>
+          <svg viewBox={`0 0 ${SLIDE_W} ${SLIDE_H}`} className="absolute inset-0 h-full w-full">
+            {items.map((it) => (
+              <ItemShape key={it.id} it={it} selected={it.id === sel} handlers={grab(it)} />
+            ))}
+            {draft && <ItemShape it={draft} />}
+          </svg>
+        </div>
+        {!editable && <p className="mt-3 mb-0 text-center text-xs text-faint">Esta diapositiva se reproduce al presentar; aquí se le ponen el título y la nota.</p>}
+      </div>
+
+      {/* Inspector. */}
+      <aside className="min-w-0 space-y-4 text-xs">
+        <div>
+          <div className="eyebrow mb-1.5">Diapositiva</div>
+          <input className={`${input} w-full`} aria-label="Título de la diapositiva" value={slide.title} onChange={(e) => patchSlide({ title: e.target.value })} />
+          <textarea
+            className={`${input} mt-2 min-h-20 w-full`}
+            aria-label="Nota de la diapositiva"
+            placeholder="Nota para decir en voz alta (se muestra bajo la diapositiva al presentar)"
+            value={slide.note}
+            onChange={(e) => patchSlide({ note: e.target.value })}
+          />
+        </div>
+        {editable && (
+          <>
             <div>
               <div className="eyebrow mb-1.5">Color</div>
               <div className="flex gap-1.5">
@@ -149,8 +182,8 @@ export function SlideEditor({ matchId, slide, onClose }: { matchId: string; slid
                       aria-label={`Color ${c}`}
                       aria-pressed={current === c}
                       onClick={() => (selected ? patchSel({ color: c }) : setColorName(c))}
-                      className="h-6 w-6 rounded-full transition-transform"
-                      style={{ background: SLIDE_COLOR_VAR[c], boxShadow: current === c ? "0 0 0 2px var(--color-raised), 0 0 0 4px var(--color-ink)" : "inset 0 0 0 1px var(--color-line-strong)" }}
+                      className="h-6 w-6 rounded-full transition-transform hover:scale-110"
+                      style={{ background: SLIDE_COLOR_VAR[c], boxShadow: current === c ? "0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ink)" : "inset 0 0 0 1px var(--color-line-strong)" }}
                     />
                   );
                 })}
@@ -161,10 +194,22 @@ export function SlideEditor({ matchId, slide, onClose }: { matchId: string; slid
                 <div className="eyebrow">Pieza elegida</div>
                 {selected.kind === "text" && (
                   <>
-                    <textarea className="input min-h-16 w-full" aria-label="Texto" value={selected.text ?? ""} onChange={(e) => patchSel({ text: e.target.value })} />
+                    <textarea className={`${input} min-h-16 w-full`} aria-label="Texto" value={selected.text ?? ""} onChange={(e) => patchSel({ text: e.target.value })} />
                     <label className="flex items-center gap-2 text-muted">
                       Tamaño
                       <input type="range" min={0.03} max={0.2} step={0.005} value={selected.size ?? 0.07} onChange={(e) => patchSel({ size: Number(e.target.value) })} className="min-w-0 flex-1" />
+                    </label>
+                  </>
+                )}
+                {(selected.kind === "rect" || selected.kind === "ellipse") && (
+                  <>
+                    <label className="flex items-center gap-2 text-muted">
+                      Ancho
+                      <input type="range" min={0.03} max={1} step={0.005} value={selected.w ?? 0.1} onChange={(e) => patchSel({ w: Number(e.target.value) })} className="min-w-0 flex-1" />
+                    </label>
+                    <label className="flex items-center gap-2 text-muted">
+                      Alto
+                      <input type="range" min={0.03} max={1} step={0.005} value={selected.h ?? 0.1} onChange={(e) => patchSel({ h: Number(e.target.value) })} className="min-w-0 flex-1" />
                     </label>
                   </>
                 )}
@@ -181,11 +226,11 @@ export function SlideEditor({ matchId, slide, onClose }: { matchId: string; slid
                 </button>
               </div>
             ) : (
-              <p className="text-faint">Elige una pieza para cambiar su color o texto. {items.length} pieza(s) en la diapositiva.</p>
+              <p className="m-0 text-pretty text-faint">Elige una herramienta (V, T, R, O, A) o una pieza para cambiar su color o texto. {items.length} pieza(s) en la diapositiva.</p>
             )}
-          </aside>
-        </div>
-      </div>
+          </>
+        )}
+      </aside>
     </div>
   );
 }

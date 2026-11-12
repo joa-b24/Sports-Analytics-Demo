@@ -32,6 +32,15 @@ export function ItemShape({ it, selected = false, handlers }: { it: SlideItem; s
       </g>
     );
   }
+  if (it.kind === "ellipse") {
+    const w = (it.w ?? 0.1) * SLIDE_W;
+    const h = (it.h ?? 0.1) * SLIDE_H;
+    return (
+      <g {...handlers} style={{ ...halo, cursor: handlers ? "move" : undefined }}>
+        <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} fill={c} fillOpacity={0.12} stroke={c} strokeWidth={5} />
+      </g>
+    );
+  }
   const x2 = (it.x2 ?? it.x) * SLIDE_W;
   const y2 = (it.y2 ?? it.y) * SLIDE_H;
   const ang = Math.atan2(y2 - y, x2 - x);

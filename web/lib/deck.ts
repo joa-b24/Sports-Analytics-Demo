@@ -2,8 +2,8 @@
 // Pure: no storage, no React. The state keeps one deck per match (State.decks).
 
 // A simple piece drawn over a slide. Positions are fractions of the slide (x of its width, y of its height, from the top
-// left). text: at x, y, `size` is a fraction of the height. rect: x, y, w, h. arrow: from x, y to x2, y2.
-export type SlideItemKind = "text" | "rect" | "arrow";
+// left). text: at x, y, `size` is a fraction of the height. rect and ellipse: x, y, w, h. arrow: from x, y to x2, y2.
+export type SlideItemKind = "text" | "rect" | "ellipse" | "arrow";
 export interface SlideItem {
   id: string;
   kind: SlideItemKind;
@@ -99,3 +99,23 @@ export function upsertChartSlide(decks: Deck[] | undefined, match_id: string, sl
     return same ? list.map((x) => (x === same ? { ...x, image: slide.image, at: slide.at } : x)) : [...list, slide];
   });
 }
+
+// A copy of a slide right after it (new id; its pieces keep theirs: ids only need to be unique inside a slide).
+export const duplicateSlide = (decks: Deck[] | undefined, match_id: string, id: string, newId: string) =>
+  withSlides(decks, match_id, (s) => {
+    const i = s.findIndex((x) => x.id === id);
+    if (i < 0) return s;
+    const copy: Slide = { ...s[i], id: newId, title: `${s[i].title} (copia)`, items: (s[i].items ?? []).map((it) => ({ ...it })), source: undefined, at: Date.now() };
+    return [...s.slice(0, i + 1), copy, ...s.slice(i + 1)];
+  });
+
+// A slide moved to a position of the list (0 = first); out of range goes to the nearest end.
+export const moveSlideTo = (decks: Deck[] | undefined, match_id: string, id: string, to: number) =>
+  withSlides(decks, match_id, (s) => {
+    const i = s.findIndex((x) => x.id === id);
+    if (i < 0) return s;
+    const out = [...s];
+    const [one] = out.splice(i, 1);
+    out.splice(Math.max(0, Math.min(out.length, to)), 0, one);
+    return out;
+  });

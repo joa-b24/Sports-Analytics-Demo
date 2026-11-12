@@ -452,6 +452,12 @@ partido. Se instala desde el navegador (Chrome en Android: «Instalar app») y f
 - Sin posiciones solo se ve lo que está en los agregados (la mesa de corrección y los clips no). Un panel que pide algo que no se guardó (la ficha de una jugadora sin nombre en el tracking) lo dice y queda vacío.
 - Pruebas: `aggregates.test.mjs` (los datos guardados dan lo mismo que calcular de las posiciones) y la del Informe en `report.test.mjs`.
 
+### 5.18 Filtro de tiempo en el tracking, pases y presentación (2026-11-11)
+- **Filtro de tiempo** (`lib/trackingWindow.ts`, `clipPlayWindow` en `lib/segments.ts`): el Dashboard recorta los tramos de juego a la ventana elegida (minutos o tiempo) y los paneles de tracking la siguen: pases, toques, mapas de calor, bloque y carga física (`play` en `heatmap`, `physical`, `teamBlock`). Con la copia ligera (solo agregados) no se puede: se avisa (`WindowNote`) y se muestra el partido completo. La calificación es siempre del partido completo. El momentum cubre solo la ventana.
+- **Pases** (`lib/positions.ts`): el toque tras un tiro, centro o balón parado etiquetado no es un pase cortado (`attempts_t`, puesto al leer cada parte con los eventos), y un pase entre cajas de un equipo sin nombres debe mover el balón 3 m o más (`MIN_APPROX_PASS_M`).
+- **Velocidad máxima y sprints** (`lib/physical.ts`): un sprint (22 km/h o más durante 1 s o más) vale solo con aceleración posible (≤ 8 m/s², `accelerationCoherent`); la velocidad máxima es la del mejor sprint válido. HSR: 18 km/h.
+- **Presentación** (`DeckView.tsx`, `SlideEditor.tsx`): un solo espacio de trabajo: diapositivas en columna (arrastrar para ordenar, duplicar, quitar), herramientas en columna (V, T, R, O, A), la diapositiva grande y un inspector con título, nota, color y medidas. Formas: texto, cuadro, círculo y flecha.
+
 ## 6. El paquete Python (`src/sportsan/`)
 
 | Archivo | Qué hace | ¿Se corre como comando? |

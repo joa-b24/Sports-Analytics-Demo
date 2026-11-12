@@ -1,14 +1,14 @@
 "use client";
 
-import { ArrowDown, ArrowUp, CaretLeft, CaretRight, Eraser, FilmSlate, PencilSimple, PersonSimpleRun, PencilSimpleLine, Play, Plus, Target, Trash, X } from "@phosphor-icons/react";
+import { ArrowDown, ArrowUp, CaretLeft, CaretRight, Copy, Eraser, FilmSlate, PencilSimple, PersonSimpleRun, Play, Plus, Target, Trash, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SLIDE_H, SLIDE_W, SlideCanvas } from "@/components/match/SlideCanvas";
 import { SlideEditor } from "@/components/match/SlideEditor";
 import { Select } from "@/components/Select";
-import { Card, input } from "@/components/Shell";
+import { Card } from "@/components/Shell";
 import { BoardSlide, boardOfSlide } from "@/components/match/BoardSlide";
 import { boardsOf } from "@/lib/boards";
-import { addSlide, blankSlide, boardSlide, clipSlide, editSlide, moveSlide, removeSlide, slidesOf, type Slide } from "@/lib/deck";
+import { addSlide, blankSlide, boardSlide, clipSlide, duplicateSlide, moveSlide, moveSlideTo, removeSlide, slidesOf, type Slide } from "@/lib/deck";
 import { listLocal, localUrl } from "@/lib/local";
 import { mutate, uid, useStore } from "@/lib/store";
 import type { Match } from "@/lib/types";
@@ -21,12 +21,18 @@ export function DeckView({ match }: { match: Match }) {
   const id = match.match_id;
   const slides = slidesOf(state.decks, id);
   const [playing, setPlaying] = useState<number | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
+  const [pick, setPick] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
   const edits = (state.edits ?? []).filter((e) => e.match_id === id);
   const plays = (state.plays ?? []).filter((p) => p.match_id === id && p.keyframes.length > 1);
   const boards = boardsOf(state);
-  const push = (s: Slide) => mutate((st) => ({ ...st, decks: addSlide(st.decks, id, s) }));
-  const editingSlide = slides.find((s) => s.id === editing) ?? null;
+  // A slide added is the one in front (as in a design tool).
+  const push = (sl: Slide) => {
+    mutate((st) => ({ ...st, decks: addSlide(st.decks, id, sl) }));
+    setPick(sl.id);
+  };
+  const current = slides.find((x) => x.id === pick) ?? slides[0] ?? null;
+  const at = current ? slides.findIndex((x) => x.id === current.id) : -1;
 
   const adders = (
     <div className="flex flex-wrap items-center gap-2">
@@ -82,78 +88,125 @@ export function DeckView({ match }: { match: Match }) {
     </div>
   );
 
-  if (slides.length === 0)
+  if (slides.length === 0 || !current)
     return (
       <div className="space-y-4">
         <Card>
           <p className="text-sm text-pretty text-muted">
             La presentación está vacía. En cualquier gráfico del dashboard, el botón con el icono de pantalla de presentación lo añade como diapositiva; también puedes
-            empezar con una diapositiva en blanco o con un clip editado de Estudio. Aquí las ordenas, les pones título, notas, texto, cuadros y flechas, y las muestras a
-            pantalla completa.
+            empezar con una diapositiva en blanco, un clip editado o una animación de Estudio. Aquí las ordenas, les pones título, notas, texto, formas y flechas, y las
+            muestras a pantalla completa.
           </p>
         </Card>
         {adders}
       </div>
     );
 
+  // What a slide shows inside the workbench when it is not a chart: its animation, or a mark for the clip.
+  const preview =
+    current.kind === "board" ? (
+      <BoardSlide key={current.id} board={boardOfSlide(state, current)} />
+    ) : current.kind === "clip" ? (
+      <div className="absolute inset-0 grid place-items-center bg-bg/60 text-ink">
+        <span className="inline-flex flex-col items-center gap-2 text-sm">
+          <FilmSlate size={40} />
+          Clip de Estudio: se reproduce su MP4 exportado al presentar
+        </span>
+      </div>
+    ) : null;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" className="btn btn-primary" onClick={() => setPlaying(0)}>
+        <button type="button" className="btn btn-primary" onClick={() => setPlaying(Math.max(0, at))}>
           <Play size={14} weight="fill" /> Presentar
         </button>
         {adders}
-        <span className="text-xs text-faint">{slides.length} diapositiva(s). Flechas para pasar, Esc para salir; en vivo: D dibuja, L señala, C borra.</span>
+        <span className="ml-auto text-xs text-faint">
+          {slides.length} diapositiva(s) · al presentar: flechas para pasar, Esc para salir; D dibuja, L señala, C borra
+        </span>
       </div>
-      <ol className="space-y-3">
-        {slides.map((s, i) => (
-          <li key={s.id} className="card flex flex-wrap items-start gap-4 !p-3">
-            <button type="button" className="relative w-56 shrink-0 overflow-hidden rounded-md border border-line bg-bg" onClick={() => setPlaying(i)} aria-label={`Presentar desde «${s.title}»`}>
-              <SlideCanvas slide={s} />
-              {s.kind === "clip" && (
-                <span className="absolute inset-0 grid place-items-center bg-bg/50 text-ink">
-                  <FilmSlate size={28} />
-                </span>
-              )}
-              {s.kind === "board" && (
-                <span className="absolute inset-0 grid place-items-center bg-bg/50 text-ink">
-                  <PersonSimpleRun size={28} />
-                </span>
-              )}
-            </button>
-            <div className="min-w-0 flex-1 space-y-2">
-              <input className={`${input} w-full`} aria-label="Título de la diapositiva" value={s.title} onChange={(e) => mutate((st) => ({ ...st, decks: editSlide(st.decks, id, s.id, { title: e.target.value }) }))} />
-              <textarea
-                className={`${input} min-h-16 w-full`}
-                aria-label="Nota de la diapositiva"
-                placeholder="Nota para decir en voz alta (se muestra bajo la diapositiva)"
-                value={s.note}
-                onChange={(e) => mutate((st) => ({ ...st, decks: editSlide(st.decks, id, s.id, { note: e.target.value }) }))}
-              />
-              {s.kind === "board" && <p className="m-0 text-xs text-faint">Animación: se reproduce al presentar, con sus pasos y dibujos; se puede pausar o mover con la barra.</p>}
-              {s.kind !== "clip" && (
-                <button type="button" className="btn" onClick={() => setEditing(s.id)}>
-                  <PencilSimpleLine size={14} />
-                  Texto, cuadros y flechas{(s.items?.length ?? 0) > 0 ? ` · ${s.items?.length}` : ""}
+
+      <div className="grid min-h-0 gap-4 lg:grid-cols-[11.5rem_minmax(0,1fr)]">
+        {/* Slides, in a column. */}
+        <ol className="m-0 flex max-h-[calc(100vh-11rem)] list-none gap-2 overflow-x-auto p-0 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden lg:pr-1" aria-label="Diapositivas">
+          {slides.map((sl, i) => {
+            const on = sl.id === current.id;
+            return (
+              <li
+                key={sl.id}
+                draggable
+                onDragStart={() => setDragging(sl.id)}
+                onDragEnd={() => setDragging(null)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => {
+                  if (dragging && dragging !== sl.id) mutate((st) => ({ ...st, decks: moveSlideTo(st.decks, id, dragging, i) }));
+                  setDragging(null);
+                }}
+                className={`group relative w-40 shrink-0 lg:w-auto ${dragging === sl.id ? "opacity-40" : ""}`}
+              >
+                <button
+                  type="button"
+                  aria-current={on ? "true" : undefined}
+                  onClick={() => setPick(sl.id)}
+                  className={`flex w-full gap-1.5 rounded-lg p-1.5 text-left transition-colors ${on ? "bg-own/15 shadow-[inset_0_0_0_2px_var(--color-own)]" : "hover:bg-raised"}`}
+                >
+                  <span className="tc w-4 shrink-0 pt-0.5 text-right text-[11px] text-faint">{i + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="relative block overflow-hidden rounded-[5px] shadow-[0_0_0_1px_var(--color-line)]">
+                      <SlideCanvas slide={sl} />
+                      {(sl.kind === "clip" || sl.kind === "board") && (
+                        <span className="absolute inset-0 grid place-items-center bg-bg/50 text-ink">{sl.kind === "clip" ? <FilmSlate size={20} /> : <PersonSimpleRun size={20} />}</span>
+                      )}
+                    </span>
+                    <span className="mt-1 block truncate text-[11px] text-ink-2">{sl.title}</span>
+                  </span>
                 </button>
-              )}
-              {s.kind === "clip" && <p className="m-0 text-xs text-faint">Clip de Estudio: se reproduce su MP4 exportado (Estudio › Jugadas › Exportar).</p>}
-            </div>
-            <div className="flex flex-col gap-1">
-              <button type="button" className="btn btn-ghost !p-1.5" aria-label="Subir" disabled={i === 0} onClick={() => mutate((st) => ({ ...st, decks: moveSlide(st.decks, id, s.id, -1) }))}>
-                <ArrowUp size={14} />
-              </button>
-              <button type="button" className="btn btn-ghost !p-1.5" aria-label="Bajar" disabled={i === slides.length - 1} onClick={() => mutate((st) => ({ ...st, decks: moveSlide(st.decks, id, s.id, 1) }))}>
-                <ArrowDown size={14} />
-              </button>
-              <button type="button" className="btn btn-ghost !p-1.5 hover:text-danger" aria-label="Quitar de la presentación" onClick={() => mutate((st) => ({ ...st, decks: removeSlide(st.decks, id, s.id) }))}>
-                <Trash size={14} />
-              </button>
-            </div>
+                {/* Hover tools of the slide. */}
+                <span className="absolute top-2.5 right-2.5 hidden gap-0.5 rounded-md bg-bg/90 p-0.5 shadow-[0_0_0_1px_var(--color-line)] group-focus-within:flex group-hover:flex">
+                  <button type="button" className="btn btn-ghost !p-1" aria-label="Subir" disabled={i === 0} onClick={() => mutate((st) => ({ ...st, decks: moveSlide(st.decks, id, sl.id, -1) }))}>
+                    <ArrowUp size={12} />
+                  </button>
+                  <button type="button" className="btn btn-ghost !p-1" aria-label="Bajar" disabled={i === slides.length - 1} onClick={() => mutate((st) => ({ ...st, decks: moveSlide(st.decks, id, sl.id, 1) }))}>
+                    <ArrowDown size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost !p-1"
+                    aria-label="Duplicar"
+                    onClick={() => {
+                      const nid = uid("sl");
+                      mutate((st) => ({ ...st, decks: duplicateSlide(st.decks, id, sl.id, nid) }));
+                      setPick(nid);
+                    }}
+                  >
+                    <Copy size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost !p-1 hover:text-danger"
+                    aria-label="Quitar de la presentación"
+                    onClick={() => {
+                      mutate((st) => ({ ...st, decks: removeSlide(st.decks, id, sl.id) }));
+                      if (on) setPick(slides[i + 1]?.id ?? slides[i - 1]?.id ?? null);
+                    }}
+                  >
+                    <Trash size={12} />
+                  </button>
+                </span>
+              </li>
+            );
+          })}
+          <li className="shrink-0">
+            <button type="button" className="btn w-full justify-center" onClick={() => push(blankSlide(uid("sl"), "Diapositiva en blanco"))}>
+              <Plus size={14} />
+              Nueva
+            </button>
           </li>
-        ))}
-      </ol>
-      {editingSlide && <SlideEditor matchId={id} slide={editingSlide} onClose={() => setEditing(null)} />}
+        </ol>
+
+        <SlideEditor key={current.id} matchId={id} slide={current} editable={current.kind !== "clip" && current.kind !== "board"} preview={preview} />
+      </div>
       {playing !== null && <Stage match={match} slides={slides} start={Math.min(playing, slides.length - 1)} onClose={() => setPlaying(null)} />}
     </div>
   );
