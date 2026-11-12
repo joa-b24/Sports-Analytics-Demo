@@ -679,7 +679,9 @@ export function ClipEditor({ match, edit, onClose, startPresenting = false }: { 
       ? `Calibración y posiciones de la carpeta del partido${data.fixedFile?.startsWith("tracks_fixed") ? " (tracking corregido)" : data.fixedFile ? " (tracking sin corregir: identidades del programa)" : " (sin tracking: solo puntos del césped y texto)"}.`
       : data.source === "saved"
         ? "Sin la carpeta del partido: se usan la calibración y las posiciones guardadas con la edición."
-        : "Sin calibración de este tramo: solo se puede poner texto en pantalla. Calibra y procesa el tramo en la pestaña Tracking para dibujar sobre el césped.";
+        : MOBILE
+          ? "Sin calibración de este tramo en la web: solo se puede poner texto en pantalla. Importa el zip completo del partido (con tracking) o prepara el clip en la laptop («Preparar clips para la web») y vuelve a importar."
+          : "Sin calibración de este tramo: solo se puede poner texto en pantalla. Calibra y procesa el tramo en la pestaña Tracking para dibujar sobre el césped.";
 
   const header = (
     <>
