@@ -40,6 +40,8 @@ export interface FixedFile {
   attempts_t?: number[];
   // The separation (m) of the rule of the passes of a team without names (techTracking minPassSeparationM); MIN_APPROX_PASS_M when absent.
   min_pass_separation_m?: number;
+  // The brush that is not a change of team (techTracking flickerS); FLICKER_S when absent. 0 turns the rule off.
+  flicker_s?: number;
   // `view`: what the camera saw in that frame, as a polygon of the normalised pitch (parts.ts viewPolygon). Absent in
   // files saved before 2026-10-20.
   frames: { frame: number; positions: FixedPosition[]; view?: [number, number][] }[];
@@ -456,11 +458,15 @@ export function ballCourse(marks: { frame: number; x: number; y: number }[], fra
   return ang < PASS_THROUGH_DEG && ratio >= PASS_THROUGH_SPEED[0] && ratio <= PASS_THROUGH_SPEED[1] ? "straight" : "deviated";
 }
 
-function dropPassThrough(f: FixedFile, states: BallState[], mx: number, my: number) {
-  const marks = f.ball
+// The measured ball marks on the ground (a hand mark or the tracker), in order: what the course of the ball is read from.
+const measuredMarks = (f: FixedFile) =>
+  f.ball
     .filter((b) => (b.source === "manual" || b.source === "auto") && !b.aerial)
     .map((b) => ({ frame: b.frame, x: b.x, y: b.y }))
     .sort((a, b) => a.frame - b.frame);
+
+function dropPassThrough(f: FixedFile, states: BallState[], mx: number, my: number) {
+  const marks = measuredMarks(f);
   if (marks.length < 3) return;
   let prev: Touch | null = null;
   for (const st of states) {
@@ -539,8 +545,35 @@ export const MIN_APPROX_PASS_M = 5;
 export const ATTEMPT_BEFORE_S = 2;
 export const ATTEMPT_AFTER_S = 1;
 
+// A touch (or a few) of one team that lasts no more than this (s) between two touches of the other team, which takes the ball
+// back at once, is a brush or a deflection, not a change of team: the ball was never theirs (a dribble that goes by a rival).
+export const FLICKER_S = 1.2;
+// The ball this close (m) to a line of the pitch is at the edge: a touch there that ends with the other team on the line too
+// is a ball that went out.
+export const LINE_M = 1.5;
+// A ball that arrives from a teammate and is lost within this time (s) of her touch, on the line, is a bad reception.
+export const RECEIVE_S = 3;
+
+// Runs of touches of one team squeezed between touches of the other, each at most FLICKER_S long and apart from the next.
+export function dropFlickers(ts: Touch[], fps: number, flickerS = FLICKER_S): Touch[] {
+  if (flickerS <= 0) return ts;
+  const out: Touch[] = [];
+  let i = 0;
+  while (i < ts.length) {
+    let j = i;
+    while (j + 1 < ts.length && ts[j + 1].team === ts[i].team) j++;
+    const prev = out[out.length - 1];
+    const next = ts[j + 1];
+    const brush = prev && next && prev.team === next.team && prev.team !== ts[i].team && (ts[i].frame - prev.frame) / fps <= flickerS && (ts[j].frame - ts[i].frame) / fps <= flickerS && (next.frame - ts[j].frame) / fps <= flickerS;
+    if (!brush) for (let k = i; k <= j; k++) out.push(ts[k]);
+    i = j + 1;
+  }
+  return out;
+}
+
 export function passesAndTurnovers(f: FixedFile, jumpMs?: number): { passes: Pass[]; turnovers: Turnover[]; touches: Touch[] } {
-  const ts = touches(f, jumpMs);
+  const raw = touches(f, jumpMs);
+  const ts = dropFlickers(raw, f.fps, f.flicker_s);
   const passes: Pass[] = [];
   const turnovers: Turnover[] = [];
   const maxGap = PASS_MAX_S * f.fps;
@@ -558,6 +591,11 @@ export function passesAndTurnovers(f: FixedFile, jumpMs?: number): { passes: Pas
       for (const fr of f.frames) for (const q of fr.positions) if (!isExtrapolated(q.source)) lastSeen.set(q.id, Math.max(lastSeen.get(q.id) ?? -Infinity, fr.frame));
     }
     return (lastSeen.get(id) ?? -Infinity) < frame;
+  };
+  const marks = measuredMarks(f);
+  const nearLine = (frame: number) => {
+    const b = ballAt.get(frame);
+    return !!b && Math.min(b.x * mx, (PITCH.length - b.x) * mx, b.y * my, (PITCH.width - b.y) * my) <= LINE_M;
   };
   const isAttempt = (frame: number) => {
     const t = frame / f.fps;
@@ -581,9 +619,22 @@ export function passesAndTurnovers(f: FixedFile, jumpMs?: number): { passes: Pas
         if (pa && pb && Math.hypot((pa.x - pb.x) * mx, (pa.y - pb.y) * my) < minSep && vanishesBefore(a.id, b.frame)) continue;
       }
       passes.push({ frame: b.frame, from_frame: a.frame, from: a.id, to: b.id, team: a.team, approx: !named[a.team] });
-    } else turnovers.push({ frame: b.frame, from_frame: a.frame, from: a.id, lost: a.team });
+    } else {
+      // Not a pass cut: the ball went through her without changing course (a rebound: she never touched it), or it came from a
+      // teammate, she lost it on the line and it went out (a bad reception, not a pass).
+      // The last touch of somebody else before her run of touches (a dribble marks the ball many times).
+      let k = i - 2;
+      while (k >= 0 && ts[k].id === a.id) k--;
+      // A rebound: at every touch of her run the ball kept its course (a real kick or control changes it at the first one).
+      let straight = true;
+      for (let r = i - 1; r > k && straight; r--) straight = ballCourse(marks, ts[r].frame, f.fps, mx, my) === "straight";
+      if (straight) continue;
+      const before = k >= 0 ? ts[k] : undefined;
+      if (before && before.team === a.team && before.id !== a.id && a.frame - before.frame <= RECEIVE_S * f.fps && nearLine(a.frame) && nearLine(b.frame)) continue;
+      turnovers.push({ frame: b.frame, from_frame: a.frame, from: a.id, lost: a.team });
+    }
   }
-  return { passes, turnovers, touches: distinctTouches(ts, f.fps) };
+  return { passes, turnovers, touches: distinctTouches(raw, f.fps) };
 }
 
 // --------------------------------------------------------------------------------------------- possession and passes

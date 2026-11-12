@@ -40,6 +40,21 @@ interface Resolution {
   key: string;
 }
 
+// What the pass reader needs besides the positions, put on each file: the tagged shots, crosses and set pieces, and the rules of
+// Detalles técnicos. Used by every screen that reads passes (the analysis and the Laboratorio), so all count the same.
+export function applyPassRules(parts: FixedParts, events: MatchEvent[], match: Match) {
+  const t = trackingParamsOf(match);
+  for (const o of [...parts.parts, ...parts.unoriented.map((file) => ({ file }))]) {
+    o.file.attempts_t = attemptTimes(events, o.file.video_id);
+    o.file.min_pass_separation_m = t.minPassSeparationM;
+    o.file.flicker_s = t.flickerS;
+  }
+}
+export const passRuleOf = (match: Match) => {
+  const t = trackingParamsOf(match);
+  return `${t.minPassSeparationM}|${t.flickerS}`;
+};
+
 export const ATTEMPT_TYPES: string[] = ["shot", "goal", "cross", "corner", "free_kick", "goal_kick", "penalty"];
 const attemptTimes = (events: MatchEvent[], video: string) => events.filter((e) => ATTEMPT_TYPES.includes(e.type) && (e.video_id ?? "v1") === video).map((e) => e.t_video).sort((x, y) => x - y);
 
@@ -64,7 +79,7 @@ async function resolve(ctx: {
 }): Promise<Resolution> {
   const files = await trackingFileList(ctx.folder, ctx.videoIds);
   const attack = Object.fromEntries(ctx.videoIds.map((v) => [v, getPref(`attack:${ctx.matchId}:${v}`) ?? null]));
-  const fingerprint = aggregatesFingerprint({ files, segmentsByVideo: ctx.segmentsByVideo, videoPeriods: ctx.videoPeriods, videoHalves: ctx.videoHalves, attack, events: ctx.events, passRule: trackingParamsOf(ctx.match).minPassSeparationM });
+  const fingerprint = aggregatesFingerprint({ files, segmentsByVideo: ctx.segmentsByVideo, videoPeriods: ctx.videoPeriods, videoHalves: ctx.videoHalves, attack, events: ctx.events, passRule: passRuleOf(ctx.match) });
   const key = `${ctx.folder}|${fingerprint}`;
   const open = resolving.get(key);
   if (open) return open;
@@ -76,10 +91,7 @@ async function resolve(ctx: {
     if (files.length === 0) return { agg: null, parts: null, key };
     const parts = await loadFixedParts(ctx.folder, ctx.videoIds);
     // The tagged shots, crosses and set pieces of each video: the touch after them is not a pass cut (lib/positions.ts).
-    for (const o of [...parts.parts, ...parts.unoriented.map((file) => ({ file }))]) {
-      o.file.attempts_t = attemptTimes(ctx.events, o.file.video_id);
-      o.file.min_pass_separation_m = trackingParamsOf(ctx.match).minPassSeparationM;
-    }
+    applyPassRules(parts, ctx.events, ctx.match);
     if (!MOBILE && parts.parts.length > 0 && !building.has(key)) {
       building.add(key);
       const job = (async () => {

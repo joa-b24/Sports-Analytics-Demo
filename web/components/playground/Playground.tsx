@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { Card } from "@/components/Shell";
 import { useFixedParts } from "@/lib/fixed";
+import { applyPassRules } from "@/lib/useTracking";
 import { possessionIntervals } from "@/lib/possession";
 import { segmentsFromMarks, type Segment } from "@/lib/segments";
 import { useStore } from "@/lib/store";
@@ -59,6 +60,11 @@ export function Playground({ match }: { match: Match }) {
   const videos = useMemo(() => matchVideos(match), [match]);
   const videoIds = useMemo(() => videos.map((v) => v.video_id), [videos]);
   const fixed = useFixedParts(folder, videoIds);
+  // The same pass rules as the analysis (tagged shots and set pieces, Detalles técnicos): what is checked here is what is counted.
+  const myEvents = useMemo(() => state.events.filter((e) => e.match_id === match.match_id), [state.events, match.match_id]);
+  useMemo(() => {
+    if (fixed) applyPassRules(fixed, myEvents, match);
+  }, [fixed, myEvents, match]);
   const params = useMemo(() => possessionParamsOf(match), [match]);
   const segmentsByVideo = useMemo<Record<string, Segment[]>>(
     () => Object.fromEntries(videos.map((v) => [v.video_id, segmentsFromMarks(state.segments.filter((g) => g.match_id === match.match_id && videoOf(g) === v.video_id))])),

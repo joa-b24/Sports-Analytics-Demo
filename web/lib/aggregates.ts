@@ -69,7 +69,7 @@ export function aggregatesFingerprint(input: {
   attack: Record<string, string | null>;
   events: MatchEvent[];
   // The rule of the passes of a team without names (m): a different value gives different passes.
-  passRule?: number;
+  passRule?: string;
 }): string {
   const play = Object.fromEntries(Object.entries(input.segmentsByVideo).map(([v, segs]) => [v, segs.filter((g) => g.tipo === "juego").map((g) => [g.start, g.end])]));
   // Substitutions and red cards (who is on the pitch) and losses and recoveries (the possession is held to them).

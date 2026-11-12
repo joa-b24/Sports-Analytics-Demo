@@ -340,3 +340,40 @@ test("un pase corto del rival sin nombres se descarta solo si la caja de quien p
   assert.equal(passesAndTurnovers({ ...vanishes, min_pass_separation_m: 0 }).passes.length, 1);
   assert.equal(passesAndTurnovers({ ...far, min_pass_separation_m: 8 }).passes.length, 0);
 });
+
+test("un roce del rival en una conducción no es un pase cortado, y se puede apagar", () => {
+  const people = [P(1, "own"), P(2, "opp"), P(3, "own")];
+  const at = () => [q(1, 20, 30), q(2, 24, 30), q(3, 60, 30)];
+  // The ball: hers, a rival's brush half a second later, hers again a second after that.
+  const ball = [M(0, 20.5, 30), M(15, 23.5, 30), M(45, 20.5, 30)];
+  const f = fixed({ n: 40, people, at, ball });
+  assert.equal(passesAndTurnovers(f).turnovers.length, 0);
+  assert.ok(passesAndTurnovers({ ...f, flicker_s: 0 }).turnovers.length >= 1, "with the rule off the brush is a loss");
+  // A rival who keeps it for longer than the brush is a real change of team.
+  const kept = fixed({ n: 40, people, at, ball: [M(0, 20.5, 30), M(15, 23.5, 30), M(60, 23.5, 30), M(120, 20.5, 30)] });
+  assert.ok(passesAndTurnovers(kept).turnovers.length >= 1);
+});
+
+test("una mala recepción en la banda que sale no es un pase cortado; en medio de la cancha sí", () => {
+  const people = [P(1, "own"), P(2, "own"), P(3, "opp")];
+  const line = fixed({ n: 50, people, at: () => [q(1, 10, 30), q(2, 45, 1), q(3, 48, 1)], ball: [M(0, 10.5, 30), M(30, 45.5, 1), M(45, 46, 1), M(129, 48.2, 1)] });
+  assert.equal(passesAndTurnovers(line).turnovers.length, 0);
+  const middle = fixed({ n: 50, people, at: () => [q(1, 10, 30), q(2, 45, 30), q(3, 48, 30)], ball: [M(0, 10.5, 30), M(30, 45.5, 30), M(45, 46, 30), M(129, 48.2, 30)] });
+  assert.equal(passesAndTurnovers(middle).turnovers.length, 1);
+});
+
+test("un rebote: el balón pasa junto a ella sin cambiar de rumbo y no cuenta como su pase cortado", () => {
+  const people = [P(1, "own"), P(2, "own"), P(3, "opp")];
+  // The ball goes by at 10 m/s along y = 30 (a mark every 0.2 s) and keeps going to a rival.
+  const ball = [M(0, 10, 30)];
+  for (let k = 1; k <= 25; k++) ball.push(M(k * 6, 10 + 2 * k, 30));
+  const at = () => [q(1, 10, 30), q(2, 36, 30.5), q(3, 60, 30)];
+  const f = fixed({ n: 55, people, at, ball });
+  assert.equal(passesAndTurnovers(f).turnovers.length, 0);
+  // The same ball that turns sharply at her feet is hers: a real cut pass.
+  const turned = [M(0, 10, 30)];
+  for (let k = 1; k <= 13; k++) turned.push(M(k * 6, 10 + 2 * k, 30));
+  for (let k = 1; k <= 12; k++) turned.push(M((13 + k) * 6, 36, 30 + 2 * k));
+  const g = fixed({ n: 55, people, at: () => [q(1, 10, 30), q(2, 36, 30.5), q(3, 36, 56)], ball: turned });
+  assert.ok(passesAndTurnovers(g).turnovers.length >= 1);
+});
